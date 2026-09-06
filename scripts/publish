@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Build the Rust module to WebAssembly and publish it into the running SpacetimeDB.
+#
+#   scripts/publish              # normal publish, keeps colony data
+#   scripts/publish --fresh      # wipe the database first (breaking schema changes)
+#
+# The wasm is built on the host (fast, uses your cargo cache) and handed to the
+# in-container CLI through the ./backend/spacetimedb bind mount, so no SpacetimeDB
+# install is needed on the host.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+MODULE_DIR="backend/spacetimedb"
+WASM="target/wasm32-unknown-unknown/release/continuum_module.wasm"
+DATABASE="${CONTINUUM_DB:-continuum}"
+
+stdb() { docker compose exec -T spacetimedb spacetime "$@" </dev/null; }
+
+# The CLI's identity and server list live in the `spacetimedb-config` volume, so
+# this only does real work the first time. It matters that the identity persists:
+# a database is owned by whoever published it, and an identity we cannot reproduce
+# means we can never publish an update to it again.
+bootstrap() {
+  stdb server set-default local >/dev/null 2>&1 || true
+  if ! stdb login show 2>/dev/null | grep -q "logged in as"; then
+    echo "==> first run: obtaining a server-issued identity from the local server"
+    # Declining the spacetimedb.com flow makes the CLI fall back to a local,
+    # server-issued login, which is what a self-hosted colony wants.
+    stdb login --no-browser --auth-host http://127.0.0.1:3000 >/dev/null 2>&1 || true
+    stdb server ping local >/dev/null 2>&1 || true
+  fi
+  stdb login show 2>/dev/null | tail -1
+}
+
+EXTRA=()
+if [[ "${1:-}" == "--fresh" ]]; then
+  EXTRA+=(--delete-data always)
+fi
+
+echo "==> cargo test"
+cargo test --manifest-path "$MODULE_DIR/Cargo.toml"
+
+echo "==> building $WASM"
+cargo build --manifest-path "$MODULE_DIR/Cargo.toml" \
+  --release --target wasm32-unknown-unknown
+
+echo "==> checking CLI identity"
+bootstrap
+
+echo "==> publishing to database '$DATABASE'"
+stdb publish --yes "${EXTRA[@]}" -b "/project/$WASM" "$DATABASE"
+
+echo
+echo "==> done. If the schema changed, regenerate the Godot bindings:"
+echo "    scripts/generate-bindings"

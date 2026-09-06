@@ -1,0 +1,20 @@
+[gd_resource type="Resource" script_class="SpacetimeDBPluginConfig" format=3]
+
+[ext_resource type="Script" path="res://addons/SpacetimeDB/core_types/plugin_config.gd" id="1_config"]
+[ext_resource type="Script" path="res://addons/SpacetimeDB/codegen/parsed_schema.gd" id="2_l02ds"]
+[ext_resource type="Script" path="res://addons/SpacetimeDB/core_types/module_config.gd" id="2_module"]
+
+[sub_resource type="Resource" id="Resource_l02ds"]
+script = ExtResource("2_l02ds")
+
+[sub_resource type="Resource" id="Resource_continuum"]
+script = ExtResource("2_module")
+name = "continuum"
+alias = "Continuum"
+parsed_schema = SubResource("Resource_l02ds")
+
+[resource]
+script = ExtResource("1_config")
+module_configs = Dictionary[String, ExtResource("2_module")]({
+"Continuum": SubResource("Resource_continuum")
+})
