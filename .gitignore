@@ -1,0 +1,7 @@
+# Godot
+.godot/
+/android/
+client/godot/spacetime_bindings/codegen_debug/
+
+# Rust
+target/

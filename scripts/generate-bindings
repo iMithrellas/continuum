@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Regenerate the Godot client bindings from the live module schema.
+#
+# The SpacetimeDB Godot SDK reads the published module's schema over HTTP and
+# emits typed GDScript into client/godot/spacetime_bindings/. Run this after any
+# change to the module's tables, reducers or types.
+#
+# Requires the database to be running and the module published.
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+PROJECT="client/godot"
+GODOT="${GODOT:-godot}"
+
+# Godot resolves the addon's `class_name` identifiers through
+# .godot/global_script_class_cache.cfg, which only an import writes. A --script run
+# does not, so a fresh checkout must be imported first.
+echo "==> importing Godot project"
+"$GODOT" --headless --path "$PROJECT" --import >/dev/null
+
+echo "==> generating bindings"
+"$GODOT" --headless --path "$PROJECT" --script res://tools/generate_bindings.gd
+
+echo "==> re-importing generated scripts"
+"$GODOT" --headless --path "$PROJECT" --import >/dev/null
+
+echo "==> done: $PROJECT/spacetime_bindings/"

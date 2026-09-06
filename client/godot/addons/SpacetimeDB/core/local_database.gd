@@ -1,0 +1,283 @@
+class_name LocalDatabase extends Node
+
+var _tables: Dictionary[String, Dictionary] = {}
+var _primary_key_cache: Dictionary = {}
+var _is_event_table_cache: Dictionary = {}
+var _schema: SpacetimeDBSchema
+## it should be "MainModuleClient" but the info is not available before codegen.
+var _module:SpacetimeDBClient
+
+var _cached_normalized_table_names: Dictionary = {}
+var _insert_listeners_by_table: Dictionary = {}
+var _update_listeners_by_table: Dictionary = {}
+var _delete_listeners_by_table: Dictionary = {}
+var _delete_key_listeners_by_table: Dictionary = {}
+var _transactions_completed_listeners_by_table: Dictionary = {}
+
+signal row_inserted(table_name: String, row: _ModuleTableType)
+signal row_updated(table_name: String, old_row: _ModuleTableType, new_row: _ModuleTableType)
+signal row_deleted(table_name: String, row: _ModuleTableType)
+signal row_transactions_completed(table_name: String)
+
+func _init(p_schema: SpacetimeDBSchema, module:SpacetimeDBClient):
+	# Initialize _tables dictionary with known table names
+	_schema = p_schema
+	_module = module
+	for table_name in _schema.module_table_name_to_type_name.keys():
+		_tables.set(table_name, {})
+
+
+func subscribe_to_inserts(table_name: StringName, callable: Callable):
+	if not _insert_listeners_by_table.has(table_name):
+		_insert_listeners_by_table[table_name] = []
+	if not _insert_listeners_by_table[table_name].has(callable):
+		_insert_listeners_by_table[table_name].append(callable)
+
+
+func unsubscribe_from_inserts(table_name: StringName, callable: Callable):
+	if _insert_listeners_by_table.has(table_name):
+		_insert_listeners_by_table[table_name].erase(callable)
+		if _insert_listeners_by_table[table_name].is_empty():
+			_insert_listeners_by_table.erase(table_name)
+
+func subscribe_to_updates(table_name: StringName, callable: Callable):
+	if not _update_listeners_by_table.has(table_name):
+		_update_listeners_by_table[table_name] = []
+	if not _update_listeners_by_table[table_name].has(callable):
+		_update_listeners_by_table[table_name].append(callable)
+
+func unsubscribe_from_updates(table_name: StringName, callable: Callable):
+	if _update_listeners_by_table.has(table_name):
+		_update_listeners_by_table[table_name].erase(callable)
+		if _update_listeners_by_table[table_name].is_empty():
+			_update_listeners_by_table.erase(table_name)
+
+func subscribe_to_deletes(table_name: StringName, callable: Callable):
+	if not _delete_listeners_by_table.has(table_name):
+		_delete_listeners_by_table[table_name] = []
+	if not _delete_listeners_by_table[table_name].has(callable):
+		_delete_listeners_by_table[table_name].append(callable)
+
+func unsubscribe_from_deletes(table_name: StringName, callable: Callable):
+	if _delete_listeners_by_table.has(table_name):
+		_delete_listeners_by_table[table_name].erase(callable)
+		if _delete_listeners_by_table[table_name].is_empty():
+			_delete_listeners_by_table.erase(table_name)
+
+func subscribe_to_transactions_completed(table_name: StringName, callable: Callable):
+	if not _transactions_completed_listeners_by_table.has(table_name):
+		_transactions_completed_listeners_by_table[table_name] = []
+	if not _transactions_completed_listeners_by_table[table_name].has(callable):
+		_transactions_completed_listeners_by_table[table_name].append(callable)
+
+func unsubscribe_from_transactions_completed(table_name: StringName, callable: Callable):
+	if _transactions_completed_listeners_by_table.has(table_name):
+		_transactions_completed_listeners_by_table[table_name].erase(callable)
+		if _transactions_completed_listeners_by_table[table_name].is_empty():
+			_transactions_completed_listeners_by_table.erase(table_name)
+
+# --- Primary Key Handling ---
+# Finds and caches the primary key field name for a given schema
+func _get_primary_key_field(table_name_lower: String) -> StringName:
+	if _primary_key_cache.has(table_name_lower):
+		return _primary_key_cache[table_name_lower]
+
+	if not _schema.get_type_of_table_name(table_name_lower):
+		printerr("LocalDatabase: No schema found for table '", table_name_lower, "' to determine PK.")
+		return &"" # Return empty StringName
+
+	var table_type := _schema.get_type_of_table_name(table_name_lower)
+	var schema := _schema.get_type_script(table_type)
+	var instance = schema.new() # Need instance for metadata/properties
+
+	if instance:
+		var pk_field: StringName = instance["primary_key"]
+		_primary_key_cache[table_name_lower] = pk_field
+		return pk_field
+
+	#printerr("LocalDatabase: Could not determine primary key for table '", table_name_lower, "'. Add metadata or use convention.")
+	print_debug("LocalDatabase: table %s has no primary_key" % table_name_lower)
+	_primary_key_cache[table_name_lower] = &"" # Cache failure
+	return &""
+
+func get_is_event(table_name_original: StringName) -> bool:
+	var table_script = _schema.get_table_script((_schema.module_name +"_"+ table_name_original).to_pascal_case()+"Table")
+	var table_instance = table_script.new()
+	var is_event:bool = table_instance.get_meta("is_event") == "true"
+	_is_event_table_cache[table_name_original] = is_event
+	return is_event
+
+# --- Applying Updates ---
+func apply_database_subscription_applied(db_update:SubscribeAppliedMessage):
+	if not db_update: return
+	var changes:Array[Dictionary] = []
+	for table_update: TableUpdateData in db_update.tables:
+		var updates = apply_table_update(table_update)
+		changes.append(updates)
+	emit_db_callbacks(changes)
+
+func apply_database_unsubscription_applied(db_update:UnsubscribeAppliedMessage):
+	if not db_update: return
+	var changes:Array[Dictionary] = []
+	for table_update: TableUpdateData in db_update.tables:
+		var updates = apply_table_update(table_update)
+		changes.append(updates)
+	emit_db_callbacks(changes)
+
+func apply_database_update(db_update: DatabaseUpdateData):
+	if not db_update: return
+	var changes:Array[Dictionary] = []
+	for table_update: TableUpdateData in db_update.tables:
+		var updates = apply_table_update(table_update)
+		changes.append(updates)
+	emit_db_callbacks(changes)
+
+func emit_db_callbacks(changes:Array[Dictionary]):
+	for change in changes:
+		var table_name = change.get("table_name", ["__null__"])[0]
+		if table_name == "__null__":
+			continue
+		for insert: Array in change.get("inserts", []):
+			for listener: Callable in _insert_listeners_by_table.get(table_name, []):
+				if not listener.is_valid():
+					_insert_listeners_by_table.erase(listener)
+					push_error("LocalDB: insert callback is not valid: skipped")
+					continue
+				listener.call(insert[0])
+			row_inserted.emit(table_name, insert[0])
+
+		for update: Array in change.get("updates", []):
+			for listener: Callable in _update_listeners_by_table.get(table_name, []):
+				if not listener.is_valid():
+					_update_listeners_by_table.erase(listener)
+					push_error("LocalDB: insert callback is not valid: skipped")
+					continue
+				listener.call(update[0], update[1])
+			row_updated.emit(table_name, update[0], update[1])
+
+		for delete: Array in change.get("deletes", []):
+			for listener: Callable in _delete_listeners_by_table.get(table_name, []):
+				if not listener.is_valid():
+					_delete_listeners_by_table.erase(listener)
+					push_error("LocalDB: delete callback is not valid: skipped")
+					continue
+				listener.call(delete[0])
+			row_deleted.emit(table_name, delete[0])
+
+		if _transactions_completed_listeners_by_table.has(table_name):
+			for listener: Callable in _transactions_completed_listeners_by_table.get(table_name, []):
+				if not listener.is_valid():
+					_transactions_completed_listeners_by_table.erase(listener)
+					push_error("LocalDB: Transaction complete callback is not valid: skipped")
+					continue
+				listener.call()
+			row_transactions_completed.emit(table_name)
+
+func apply_table_update(table_update: TableUpdateData) -> Dictionary[String,Array]:
+	var table_name_original: StringName = StringName(table_update.table_name.to_snake_case())
+
+	if not _tables.has(table_name_original):
+		printerr("LocalDatabase: Received update for unknown table: ", table_name_original)
+		return {"table_name": [table_name_original],
+				"inserts": [],
+				"updates": [],
+				"deletes": []}
+	var is_event: bool
+	if _is_event_table_cache.has(table_name_original):
+		is_event = _is_event_table_cache[table_name_original]
+	else:
+		is_event = get_is_event(table_name_original)
+	var pk_field: StringName
+	if _primary_key_cache.has(table_name_original):
+		pk_field = _primary_key_cache[table_name_original]
+	else:
+		pk_field = _get_primary_key_field(table_name_original)
+		_primary_key_cache[table_name_original] = pk_field
+	if pk_field == &"" or is_event:
+		var inserts_no_pk: Array = []
+		for row in table_update.inserts:
+			inserts_no_pk.append([row])
+		var deletes_no_pk: Array = []
+		for row in table_update.deletes:
+			deletes_no_pk.append([row])
+		var changes :Dictionary[String, Array] = {"table_name": [table_name_original],
+			"inserts": inserts_no_pk,
+			"updates": [],
+			"deletes": deletes_no_pk}
+		return changes
+
+	var table_dict: Dictionary = _tables[table_name_original]
+
+	var inserted_pks_set: Dictionary = {} # { pk_value: true }
+	var inserts_to_emit: Array
+	var updates_to_emit: Array
+	var deletes_to_emit: Array
+	for inserted_row: _ModuleTableType in table_update.inserts:
+		var pk_value = inserted_row.get(pk_field)
+		if pk_value == null:
+			push_error("LocalDatabase: Inserted row for table '", table_name_original, "' has null PK value for field '", pk_field, "'. Skipping.")
+			continue
+		inserted_pks_set[pk_value] = true
+		var prev_row_resource: _ModuleTableType = table_dict.get(pk_value, null)
+		table_dict[pk_value] = inserted_row
+		if prev_row_resource != null:
+			if _update_listeners_by_table.has(table_name_original):
+				updates_to_emit.append([prev_row_resource,inserted_row])
+		else:
+			if _insert_listeners_by_table.has(table_name_original):
+				inserts_to_emit.append([inserted_row])
+
+	for deleted_row: _ModuleTableType in table_update.deletes:
+		var pk_value = deleted_row.get(pk_field)
+		if pk_value == null:
+			push_warning("LocalDatabase: Deleted row for table '", table_name_original, "' has null PK value for field '", pk_field, "'. Skipping.")
+			continue
+		if not inserted_pks_set.has(pk_value):
+			if table_dict.erase(pk_value):
+				if _delete_listeners_by_table.has(table_name_original):
+					deletes_to_emit.append([deleted_row])
+
+	var changes :Dictionary[String, Array]= {"table_name": [table_name_original],
+				"inserts": inserts_to_emit,
+				"updates": updates_to_emit,
+				"deletes": deletes_to_emit}
+	return changes
+
+func clear_local_db():
+	var all_deletes_to_emit: Array[Dictionary]
+	for table in _tables:
+		var deletes_to_emit:Array
+		for row in get_all_rows(table):
+			deletes_to_emit.append([row])
+		_tables[table].clear()
+		all_deletes_to_emit.append({"table_name": [table],
+				"inserts": [],
+				"updates": [],
+				"deletes": deletes_to_emit})
+	emit_db_callbacks(all_deletes_to_emit)
+
+# --- Access Methods ---
+func get_row_by_pk(table_name: String, primary_key_value) -> _ModuleTableType:
+	var table_name_lower: String = table_name
+	if _tables.has(table_name_lower):
+		return _tables[table_name_lower].get(primary_key_value)
+	return null
+
+func get_all_rows(table_name: String) -> Array[_ModuleTableType]:
+	var rows: Array = _get_all_rows_untyped(table_name)
+	var typed_result_array: Array[_ModuleTableType] = []
+	typed_result_array.assign(rows)
+
+	return typed_result_array
+
+func count_all_rows(table_name: String) -> int:
+	var rows: Array = _get_all_rows_untyped(table_name)
+	return rows.size()
+
+func _get_all_rows_untyped(table_name: String) -> Array:
+	var table_name_lower: String = table_name
+	if _tables.has(table_name_lower):
+		var table_dict: Dictionary = _tables[table_name_lower]
+		return table_dict.values()
+
+	return []
