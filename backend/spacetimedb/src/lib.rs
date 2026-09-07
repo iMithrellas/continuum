@@ -14,17 +14,13 @@ use spacetimedb::{reducer, table, ReducerContext, Table, TimeDuration};
 
 /// How often the scheduled tick reducer runs, in real time. In-game speed is
 /// controlled by `Config::time_scale`, not by this interval.
-const TICK_INTERVAL_MICROS: i64 = 1_000_000; // 1 real second
+const TICK_INTERVAL_MICROS: i64 = 1_000_000;
 
 /// 4 real hours = 1 in-game day  =>  86400 / 14400 = 6 in-game seconds per real second.
 pub const DEFAULT_TIME_SCALE: f64 = 6.0;
 
 /// Cap on the event log, so a colony running for months does not grow forever.
 const MAX_EVENTS: usize = 200;
-
-// ===========================================================================
-// Tables
-// ===========================================================================
 
 /// Singleton colony configuration and clock. `id` is always 0.
 #[table(accessor = config, public)]
@@ -133,10 +129,6 @@ pub struct TickSchedule {
     pub scheduled_at: spacetimedb::ScheduleAt,
 }
 
-// ===========================================================================
-// Lifecycle
-// ===========================================================================
-
 #[reducer(init)]
 pub fn init(ctx: &ReducerContext) {
     seed_colony(ctx, DEFAULT_TIME_SCALE);
@@ -155,32 +147,32 @@ pub fn init(ctx: &ReducerContext) {
 
 /// Wipe colony state and recreate it from the default layout.
 fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
-    for t in ctx.db.tile().iter() {
-        ctx.db.tile().id().delete(&t.id);
+    for tile in ctx.db.tile().iter() {
+        ctx.db.tile().id().delete(&tile.id);
     }
-    for c in ctx.db.colonist().iter() {
-        ctx.db.colonist().id().delete(&c.id);
+    for colonist in ctx.db.colonist().iter() {
+        ctx.db.colonist().id().delete(&colonist.id);
     }
-    for a in ctx.db.alert().iter() {
-        ctx.db.alert().id().delete(&a.id);
+    for alert in ctx.db.alert().iter() {
+        ctx.db.alert().id().delete(&alert.id);
     }
-    for e in ctx.db.event_log().iter() {
-        ctx.db.event_log().id().delete(&e.id);
+    for event in ctx.db.event_log().iter() {
+        ctx.db.event_log().id().delete(&event.id);
     }
 
     let world = sim::new_world();
 
-    for t in &world.tiles {
+    for tile in &world.tiles {
         ctx.db.tile().insert(Tile {
-            id: t.id,
-            x: t.x,
-            y: t.y,
-            kind: t.kind,
-            enabled: t.enabled,
+            id: tile.id,
+            x: tile.x,
+            y: tile.y,
+            kind: tile.kind,
+            enabled: tile.enabled,
         });
     }
-    for c in &world.colonists {
-        ctx.db.colonist().insert(colonist_row(c));
+    for colonist in &world.colonists {
+        ctx.db.colonist().insert(colonist_row(colonist));
     }
 
     let generation = ctx
@@ -188,7 +180,7 @@ fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         .config()
         .id()
         .find(0)
-        .map(|c| c.generation + 1)
+        .map(|config| config.generation + 1)
         .unwrap_or(1);
     upsert_config(
         ctx,
@@ -230,49 +222,45 @@ fn upsert_colony(ctx: &ReducerContext, row: Colony) {
     }
 }
 
-// ===========================================================================
-// World <-> tables
-// ===========================================================================
-
 fn load_world(ctx: &ReducerContext) -> World {
     let mut tiles: Vec<sim::Tile> = ctx
         .db
         .tile()
         .iter()
-        .map(|t| sim::Tile {
-            id: t.id,
-            x: t.x,
-            y: t.y,
-            kind: t.kind,
-            enabled: t.enabled,
+        .map(|tile| sim::Tile {
+            id: tile.id,
+            x: tile.x,
+            y: tile.y,
+            kind: tile.kind,
+            enabled: tile.enabled,
         })
         .collect();
-    tiles.sort_by_key(|t| t.id);
+    tiles.sort_by_key(|tile| tile.id);
 
     let mut colonists: Vec<sim::Colonist> = ctx
         .db
         .colonist()
         .iter()
-        .map(|c| sim::Colonist {
-            id: c.id,
-            name: c.name,
-            x: c.x,
-            y: c.y,
-            move_progress: c.move_progress,
-            target_x: c.target_x,
-            target_y: c.target_y,
-            activity: c.activity,
-            goal: c.goal,
-            hunger: c.hunger,
-            fatigue: c.fatigue,
-            recreation: c.recreation,
-            mood: c.mood,
-            productivity: c.productivity,
-            sleep_hours: c.sleep_hours,
-            last_sleep_quality: c.last_sleep_quality,
+        .map(|colonist| sim::Colonist {
+            id: colonist.id,
+            name: colonist.name,
+            x: colonist.x,
+            y: colonist.y,
+            move_progress: colonist.move_progress,
+            target_x: colonist.target_x,
+            target_y: colonist.target_y,
+            activity: colonist.activity,
+            goal: colonist.goal,
+            hunger: colonist.hunger,
+            fatigue: colonist.fatigue,
+            recreation: colonist.recreation,
+            mood: colonist.mood,
+            productivity: colonist.productivity,
+            sleep_hours: colonist.sleep_hours,
+            last_sleep_quality: colonist.last_sleep_quality,
         })
         .collect();
-    colonists.sort_by_key(|c| c.id);
+    colonists.sort_by_key(|colonist| colonist.id);
 
     let colony = ctx.db.colony().id().find(0);
     let config = ctx.db.config().id().find(0);
@@ -280,41 +268,46 @@ fn load_world(ctx: &ReducerContext) -> World {
     World {
         tiles,
         colonists,
-        food: colony.as_ref().map(|c| c.food).unwrap_or(0.0),
-        food_capacity: colony.as_ref().map(|c| c.food_capacity).unwrap_or(100.0),
-        game_seconds: config.as_ref().map(|c| c.game_seconds).unwrap_or(0.0),
-        mood_ema: colony.as_ref().map(|c| c.smoothed_mood).unwrap_or(80.0),
+        food: colony.as_ref().map(|colony| colony.food).unwrap_or(0.0),
+        food_capacity: colony
+            .as_ref()
+            .map(|colony| colony.food_capacity)
+            .unwrap_or(100.0),
+        game_seconds: config
+            .as_ref()
+            .map(|config| config.game_seconds)
+            .unwrap_or(0.0),
+        mood_ema: colony
+            .as_ref()
+            .map(|colony| colony.smoothed_mood)
+            .unwrap_or(80.0),
         productivity_ema: colony
             .as_ref()
-            .map(|c| c.smoothed_productivity)
+            .map(|colony| colony.smoothed_productivity)
             .unwrap_or(90.0),
     }
 }
 
-fn colonist_row(c: &sim::Colonist) -> Colonist {
+fn colonist_row(colonist: &sim::Colonist) -> Colonist {
     Colonist {
-        id: c.id,
-        name: c.name.clone(),
-        x: c.x,
-        y: c.y,
-        move_progress: c.move_progress,
-        target_x: c.target_x,
-        target_y: c.target_y,
-        activity: c.activity,
-        goal: c.goal,
-        hunger: c.hunger,
-        fatigue: c.fatigue,
-        recreation: c.recreation,
-        mood: c.mood,
-        productivity: c.productivity,
-        sleep_hours: c.sleep_hours,
-        last_sleep_quality: c.last_sleep_quality,
+        id: colonist.id,
+        name: colonist.name.clone(),
+        x: colonist.x,
+        y: colonist.y,
+        move_progress: colonist.move_progress,
+        target_x: colonist.target_x,
+        target_y: colonist.target_y,
+        activity: colonist.activity,
+        goal: colonist.goal,
+        hunger: colonist.hunger,
+        fatigue: colonist.fatigue,
+        recreation: colonist.recreation,
+        mood: colonist.mood,
+        productivity: colonist.productivity,
+        sleep_hours: colonist.sleep_hours,
+        last_sleep_quality: colonist.last_sleep_quality,
     }
 }
-
-// ===========================================================================
-// The tick
-// ===========================================================================
 
 #[reducer]
 pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
@@ -334,9 +327,8 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
 
     let events = sim::step(&mut world, &tuning, dt_game_seconds);
 
-    // --- persist -----------------------------------------------------------
-    for c in &world.colonists {
-        ctx.db.colonist().id().update(colonist_row(c));
+    for colonist in &world.colonists {
+        ctx.db.colonist().id().update(colonist_row(colonist));
     }
     upsert_colony(
         ctx,
@@ -360,7 +352,6 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
         },
     );
 
-    // --- narrate -----------------------------------------------------------
     emit_sim_events(ctx, &world, &events);
     reconcile_alerts(ctx, &world);
     trim_event_log(ctx);
@@ -375,8 +366,8 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
 /// all: it drives the `recreation_unavailable` alert instead, which is
 /// idempotent, so the log does not fill with the same line every few minutes.
 fn emit_sim_events(ctx: &ReducerContext, world: &World, events: &[SimEvent]) {
-    for e in events {
-        match e {
+    for event in events {
+        match event {
             SimEvent::ActivityChanged { name, to, .. } => {
                 let verb = match to {
                     Activity::Working => "started working",
@@ -421,10 +412,6 @@ fn emit_sim_events(ctx: &ReducerContext, world: &World, events: &[SimEvent]) {
         }
     }
 }
-
-// ===========================================================================
-// Alerts
-// ===========================================================================
 
 struct AlertSpec {
     code: &'static str,
@@ -531,17 +518,13 @@ fn pretty_code(code: &str) -> String {
     code.replace('_', " ")
 }
 
-// ===========================================================================
-// Event log
-// ===========================================================================
-
 fn log_event(ctx: &ReducerContext, severity: Severity, message: String) {
     let world_seconds = ctx
         .db
         .config()
         .id()
         .find(0)
-        .map(|c| c.game_seconds)
+        .map(|config| config.game_seconds)
         .unwrap_or(0.0);
     let day = (world_seconds / sim::SECONDS_PER_DAY) as u32 + 1;
     let sod = world_seconds.rem_euclid(sim::SECONDS_PER_DAY);
@@ -604,10 +587,6 @@ fn trim_event_log(ctx: &ReducerContext) {
     }
 }
 
-// ===========================================================================
-// Intent-level reducers (the client API)
-// ===========================================================================
-
 /// Enable or disable a single tile. Disabling the recreation tiles is what kicks
 /// off the failure chain.
 #[reducer]
@@ -651,7 +630,7 @@ pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> 
         return Err("empty tiles cannot be enabled or disabled".into());
     }
     let mut changed = 0u32;
-    for mut tile in ctx.db.tile().iter().filter(|t| t.kind == kind) {
+    for mut tile in ctx.db.tile().iter().filter(|tile| tile.kind == kind) {
         if tile.enabled != enabled {
             tile.enabled = enabled;
             ctx.db.tile().id().update(tile);
@@ -728,7 +707,7 @@ pub fn reset_colony(ctx: &ReducerContext) -> Result<(), String> {
         .config()
         .id()
         .find(0)
-        .map(|c| c.time_scale)
+        .map(|config| config.time_scale)
         .unwrap_or(DEFAULT_TIME_SCALE);
     seed_colony(ctx, time_scale);
     log_event(ctx, Severity::Info, "Colony was reset.".to_string());
