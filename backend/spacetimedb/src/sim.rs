@@ -18,10 +18,6 @@ pub const GRID_H: i32 = 16;
 /// In-game seconds in one in-game day.
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 
-// ---------------------------------------------------------------------------
-// Value types
-// ---------------------------------------------------------------------------
-
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileKind {
     Empty,
@@ -73,10 +69,6 @@ impl Goal {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Tuning
-// ---------------------------------------------------------------------------
 
 /// All simulation constants in one place. Rates are expressed per **in-game hour**.
 #[derive(Clone, Copy, Debug)]
@@ -173,14 +165,10 @@ impl Default for Tuning {
 
             move_tiles_per_hour: 40.0,
 
-            stat_ema_tau_seconds: 86_400.0, // one in-game day
+            stat_ema_tau_seconds: SECONDS_PER_DAY as f32,
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// World
-// ---------------------------------------------------------------------------
 
 #[derive(Clone, Debug)]
 pub struct Tile {
@@ -267,40 +255,42 @@ impl World {
     }
 
     pub fn has_enabled(&self, kind: TileKind) -> bool {
-        self.tiles.iter().any(|t| t.kind == kind && t.enabled)
+        self.tiles
+            .iter()
+            .any(|tile| tile.kind == kind && tile.enabled)
     }
 
     /// Nearest enabled tile of `kind` by Manhattan distance, ties broken by tile id
     /// so the simulation stays deterministic.
-    fn nearest(&self, kind: TileKind, x: i32, y: i32) -> Option<&Tile> {
+    fn nearest_enabled_tile(&self, kind: TileKind, x: i32, y: i32) -> Option<&Tile> {
         self.tiles
             .iter()
-            .filter(|t| t.kind == kind && t.enabled)
-            .min_by_key(|t| ((t.x - x).abs() + (t.y - y).abs(), t.id))
+            .filter(|tile| tile.kind == kind && tile.enabled)
+            .min_by_key(|tile| ((tile.x - x).abs() + (tile.y - y).abs(), tile.id))
     }
 
     pub fn avg_mood(&self) -> f32 {
-        avg(self.colonists.iter().map(|c| c.mood))
+        average(self.colonists.iter().map(|colonist| colonist.mood))
     }
 
     pub fn avg_productivity(&self) -> f32 {
-        avg(self.colonists.iter().map(|c| c.productivity))
+        average(self.colonists.iter().map(|colonist| colonist.productivity))
     }
 
     pub fn avg_fatigue(&self) -> f32 {
-        avg(self.colonists.iter().map(|c| c.fatigue))
+        average(self.colonists.iter().map(|colonist| colonist.fatigue))
     }
 
     pub fn avg_recreation(&self) -> f32 {
-        avg(self.colonists.iter().map(|c| c.recreation))
+        average(self.colonists.iter().map(|colonist| colonist.recreation))
     }
 }
 
-fn avg(it: impl Iterator<Item = f32>) -> f32 {
+fn average(values: impl Iterator<Item = f32>) -> f32 {
     let mut n = 0u32;
     let mut sum = 0.0;
-    for v in it {
-        sum += v;
+    for value in values {
+        sum += value;
         n += 1;
     }
     if n == 0 {
@@ -310,13 +300,9 @@ fn avg(it: impl Iterator<Item = f32>) -> f32 {
     }
 }
 
-fn clamp01_100(v: f32) -> f32 {
+fn clamp_percentage(v: f32) -> f32 {
     v.clamp(0.0, 100.0)
 }
-
-// ---------------------------------------------------------------------------
-// Default colony layout
-// ---------------------------------------------------------------------------
 
 /// The fixed 16x16 colony layout used by the first vertical slice.
 pub fn default_tiles() -> Vec<Tile> {
@@ -385,10 +371,6 @@ pub fn new_world() -> World {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
 /// Notable things that happened during a step. Emitted only on *changes*, never
 /// once per tick.
 #[derive(Clone, Debug, PartialEq)]
@@ -416,25 +398,21 @@ pub enum SimEvent {
     RecreationDenied { colonist: u64, name: String },
 }
 
-// ---------------------------------------------------------------------------
-// Step
-// ---------------------------------------------------------------------------
-
 /// Advance the world by `dt_game_seconds` in-game seconds.
 ///
 /// Returns the notable events that occurred. Pure: given the same world, tuning
 /// and dt, this always produces the same result.
-pub fn step(world: &mut World, t: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent> {
+pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent> {
     let mut events = Vec::new();
     if dt_game_seconds <= 0.0 {
         return events;
     }
-    let dt_h = (dt_game_seconds / 3600.0) as f32;
+    let dt_hours = (dt_game_seconds / 3600.0) as f32;
     world.game_seconds += dt_game_seconds;
 
     // Snapshot of what the world offers this tick. Colonists all see the same
     // availability, independent of iteration order.
-    let avail = Availability {
+    let availability = Availability {
         // A colonist can only eat if there is both a working kitchen *and*
         // something in the larder.
         food: world.has_enabled(TileKind::Food) && world.food > 0.0,
@@ -444,153 +422,160 @@ pub fn step(world: &mut World, t: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent
         work: world.has_enabled(TileKind::Work),
     };
 
-    let n = world.colonists.len();
-    for i in 0..n {
-        // --- 1. Decide -----------------------------------------------------
-        let decision = decide(&world.colonists[i], t, &avail);
+    let colonist_count = world.colonists.len();
+    for colonist_index in 0..colonist_count {
+        let decision = decide(&world.colonists[colonist_index], tuning, &availability);
         let desired = decision.goal;
 
         if decision.denied_recreation {
-            let c = &world.colonists[i];
+            let colonist = &world.colonists[colonist_index];
             events.push(SimEvent::RecreationDenied {
-                colonist: c.id,
-                name: c.name.clone(),
+                colonist: colonist.id,
+                name: colonist.name.clone(),
             });
         }
         if decision.denied_food {
-            let c = &world.colonists[i];
+            let colonist = &world.colonists[colonist_index];
             events.push(SimEvent::MealMissed {
-                colonist: c.id,
-                name: c.name.clone(),
+                colonist: colonist.id,
+                name: colonist.name.clone(),
             });
         }
 
-        if world.colonists[i].goal != desired {
-            let (cx, cy) = (world.colonists[i].x, world.colonists[i].y);
+        if world.colonists[colonist_index].goal != desired {
+            let (x, y) = (
+                world.colonists[colonist_index].x,
+                world.colonists[colonist_index].y,
+            );
             let dest = desired
                 .tile_kind()
-                .and_then(|k| world.nearest(k, cx, cy))
+                .and_then(|kind| world.nearest_enabled_tile(kind, x, y))
                 .map(|tile| (tile.x, tile.y));
 
-            let c = &mut world.colonists[i];
-            c.goal = desired;
-            c.sleep_hours = 0.0;
+            let colonist = &mut world.colonists[colonist_index];
+            colonist.goal = desired;
+            colonist.sleep_hours = 0.0;
             match dest {
                 Some((tx, ty)) => {
-                    c.target_x = tx;
-                    c.target_y = ty;
-                    c.move_progress = 0.0;
+                    colonist.target_x = tx;
+                    colonist.target_y = ty;
+                    colonist.move_progress = 0.0;
                 }
                 None => {
-                    c.target_x = c.x;
-                    c.target_y = c.y;
+                    colonist.target_x = colonist.x;
+                    colonist.target_y = colonist.y;
                 }
             }
         }
 
-        // --- 2. Act --------------------------------------------------------
         let arrived = {
-            let c = &world.colonists[i];
-            c.x == c.target_x && c.y == c.target_y
+            let colonist = &world.colonists[colonist_index];
+            colonist.x == colonist.target_x && colonist.y == colonist.target_y
         };
 
-        let next_activity = if world.colonists[i].goal == Goal::Nothing {
+        let next_activity = if world.colonists[colonist_index].goal == Goal::Nothing {
             Activity::Idle
         } else if arrived {
-            world.colonists[i].goal.activity()
+            world.colonists[colonist_index].goal.activity()
         } else {
             Activity::Travelling
         };
 
-        let prev_activity = world.colonists[i].activity;
+        let prev_activity = world.colonists[colonist_index].activity;
         if prev_activity != next_activity {
             // Report going to bed in a bad mood before the sleep is simulated.
             if next_activity == Activity::Sleeping {
-                let c = &world.colonists[i];
-                if c.mood < t.low_mood_sleep_threshold {
+                let colonist = &world.colonists[colonist_index];
+                if colonist.mood < tuning.low_mood_sleep_threshold {
                     events.push(SimEvent::SleptWithLowMood {
-                        colonist: c.id,
-                        name: c.name.clone(),
-                        mood: c.mood,
+                        colonist: colonist.id,
+                        name: colonist.name.clone(),
+                        mood: colonist.mood,
                     });
                 }
             }
             // Report a sleep that ended without actually clearing the fatigue.
             if prev_activity == Activity::Sleeping {
-                let c = &world.colonists[i];
-                if c.fatigue > t.poorly_rested_fatigue {
+                let colonist = &world.colonists[colonist_index];
+                if colonist.fatigue > tuning.poorly_rested_fatigue {
                     events.push(SimEvent::WokePoorlyRested {
-                        colonist: c.id,
-                        name: c.name.clone(),
-                        fatigue: c.fatigue,
-                        quality: c.last_sleep_quality,
+                        colonist: colonist.id,
+                        name: colonist.name.clone(),
+                        fatigue: colonist.fatigue,
+                        quality: colonist.last_sleep_quality,
                     });
                 }
             }
-            let c = &mut world.colonists[i];
-            c.activity = next_activity;
+            let colonist = &mut world.colonists[colonist_index];
+            colonist.activity = next_activity;
             if next_activity == Activity::Sleeping {
-                c.sleep_hours = 0.0;
+                colonist.sleep_hours = 0.0;
             }
             events.push(SimEvent::ActivityChanged {
-                colonist: c.id,
-                name: c.name.clone(),
+                colonist: colonist.id,
+                name: colonist.name.clone(),
                 from: prev_activity,
                 to: next_activity,
             });
         }
 
         match next_activity {
-            Activity::Travelling => step_travel(&mut world.colonists[i], t, dt_h),
-            Activity::Eating => step_eat(world, i, t, dt_h),
-            Activity::Sleeping => step_sleep(&mut world.colonists[i], t, dt_h),
-            Activity::Recreating => step_recreate(&mut world.colonists[i], t, dt_h),
-            Activity::Working => step_work(world, i, t, dt_h),
+            Activity::Travelling => {
+                step_travel(&mut world.colonists[colonist_index], tuning, dt_hours)
+            }
+            Activity::Eating => step_eat(world, colonist_index, tuning, dt_hours),
+            Activity::Sleeping => {
+                step_sleep(&mut world.colonists[colonist_index], tuning, dt_hours)
+            }
+            Activity::Recreating => {
+                step_recreate(&mut world.colonists[colonist_index], tuning, dt_hours)
+            }
+            Activity::Working => step_work(world, colonist_index, tuning, dt_hours),
             Activity::Idle => {}
         }
 
-        // --- 3. Needs drift -------------------------------------------------
         {
-            let c = &mut world.colonists[i];
-            let act = c.activity;
-            c.hunger = clamp01_100(c.hunger + t.hunger_per_hour * dt_h);
-            if act != Activity::Sleeping {
-                let extra = if act == Activity::Working {
-                    t.work_fatigue_per_hour
+            let colonist = &mut world.colonists[colonist_index];
+            let activity = colonist.activity;
+            colonist.hunger = clamp_percentage(colonist.hunger + tuning.hunger_per_hour * dt_hours);
+            if activity != Activity::Sleeping {
+                let extra_fatigue = if activity == Activity::Working {
+                    tuning.work_fatigue_per_hour
                 } else {
                     0.0
                 };
-                c.fatigue = clamp01_100(c.fatigue + (t.fatigue_per_hour + extra) * dt_h);
+                colonist.fatigue = clamp_percentage(
+                    colonist.fatigue + (tuning.fatigue_per_hour + extra_fatigue) * dt_hours,
+                );
             }
-            if act != Activity::Recreating {
-                c.recreation = clamp01_100(c.recreation + t.recreation_per_hour * dt_h);
+            if activity != Activity::Recreating {
+                colonist.recreation =
+                    clamp_percentage(colonist.recreation + tuning.recreation_per_hour * dt_hours);
             }
         }
 
-        // --- 4. Derived stats ------------------------------------------------
         {
-            let c = &mut world.colonists[i];
-            let target = clamp01_100(
-                t.mood_base
-                    - t.mood_w_hunger * c.hunger
-                    - t.mood_w_fatigue * c.fatigue
-                    - t.mood_w_recreation * c.recreation,
+            let colonist = &mut world.colonists[colonist_index];
+            let target = clamp_percentage(
+                tuning.mood_base
+                    - tuning.mood_w_hunger * colonist.hunger
+                    - tuning.mood_w_fatigue * colonist.fatigue
+                    - tuning.mood_w_recreation * colonist.recreation,
             );
-            let max_step = t.mood_rate_per_hour * dt_h;
-            let delta = (target - c.mood).clamp(-max_step, max_step);
-            c.mood = clamp01_100(c.mood + delta);
+            let max_step = tuning.mood_rate_per_hour * dt_hours;
+            let delta = (target - colonist.mood).clamp(-max_step, max_step);
+            colonist.mood = clamp_percentage(colonist.mood + delta);
 
-            c.productivity = clamp01_100(
-                t.prod_base
-                    - t.prod_w_fatigue * c.fatigue
-                    - t.prod_w_mood_deficit * (100.0 - c.mood),
+            colonist.productivity = clamp_percentage(
+                tuning.prod_base
+                    - tuning.prod_w_fatigue * colonist.fatigue
+                    - tuning.prod_w_mood_deficit * (100.0 - colonist.mood),
             );
         }
     }
 
-    // --- 5. Smoothed colony-level statistics ---------------------------------
     let dt = dt_game_seconds as f32;
-    let alpha = dt / (t.stat_ema_tau_seconds.max(dt) + dt);
+    let alpha = dt / (tuning.stat_ema_tau_seconds.max(dt) + dt);
     world.mood_ema += (world.avg_mood() - world.mood_ema) * alpha;
     world.productivity_ema += (world.avg_productivity() - world.productivity_ema) * alpha;
 
@@ -602,8 +587,9 @@ pub fn step(world: &mut World, t: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent
 /// This is the hinge of the failure chain: unmet recreation lowers mood, low mood
 /// lowers sleep quality, and low sleep quality means the `max_sleep_hours` cap is
 /// hit before the fatigue is actually cleared.
-pub fn sleep_quality(mood: f32, t: &Tuning) -> f32 {
-    t.sleep_quality_floor + (1.0 - t.sleep_quality_floor) * (mood.clamp(0.0, 100.0) / 100.0)
+pub fn sleep_quality(mood: f32, tuning: &Tuning) -> f32 {
+    tuning.sleep_quality_floor
+        + (1.0 - tuning.sleep_quality_floor) * (mood.clamp(0.0, 100.0) / 100.0)
 }
 
 /// What the colony can currently offer. Computed once per tick so that every
@@ -627,7 +613,7 @@ struct Decision {
 }
 
 impl Decision {
-    fn just(goal: Goal) -> Self {
+    fn for_goal(goal: Goal) -> Self {
         Self {
             goal,
             denied_recreation: false,
@@ -636,20 +622,23 @@ impl Decision {
     }
 }
 
-fn decide(c: &Colonist, t: &Tuning, avail: &Availability) -> Decision {
+fn decide(colonist: &Colonist, tuning: &Tuning, availability: &Availability) -> Decision {
     // Some activities are "locked in" until they finish, so colonists do not
     // thrash between goals every tick.
-    match c.activity {
-        Activity::Eating if c.hunger > t.eat_stop && avail.food => {
-            return Decision::just(Goal::Eat)
+    match colonist.activity {
+        Activity::Eating if colonist.hunger > tuning.eat_stop && availability.food => {
+            return Decision::for_goal(Goal::Eat)
         }
         Activity::Sleeping
-            if c.fatigue > t.sleep_stop_fatigue && c.sleep_hours < t.max_sleep_hours =>
+            if colonist.fatigue > tuning.sleep_stop_fatigue
+                && colonist.sleep_hours < tuning.max_sleep_hours =>
         {
-            return Decision::just(Goal::Sleep)
+            return Decision::for_goal(Goal::Sleep)
         }
-        Activity::Recreating if c.recreation > t.recreate_stop && avail.recreation => {
-            return Decision::just(Goal::Recreate)
+        Activity::Recreating
+            if colonist.recreation > tuning.recreate_stop && availability.recreation =>
+        {
+            return Decision::for_goal(Goal::Recreate)
         }
         _ => {}
     }
@@ -657,34 +646,34 @@ fn decide(c: &Colonist, t: &Tuning, avail: &Availability) -> Decision {
     let mut denied_recreation = false;
     let mut denied_food = false;
 
-    if c.hunger >= t.crit_hunger {
-        if avail.food {
-            return Decision::just(Goal::Eat);
+    if colonist.hunger >= tuning.crit_hunger {
+        if availability.food {
+            return Decision::for_goal(Goal::Eat);
         }
         // Wanted food, could not get it. Reported once per goal transition (not
         // once per tick) by only firing while the colonist is not already
         // falling back to work.
-        denied_food = c.goal != Goal::Work && avail.kitchen;
+        denied_food = colonist.goal != Goal::Work && availability.kitchen;
     }
-    if c.fatigue >= t.crit_fatigue && avail.sleep {
+    if colonist.fatigue >= tuning.crit_fatigue && availability.sleep {
         return Decision {
             goal: Goal::Sleep,
             denied_recreation,
             denied_food,
         };
     }
-    if c.recreation >= t.crit_recreation {
-        if avail.recreation {
+    if colonist.recreation >= tuning.crit_recreation {
+        if availability.recreation {
             return Decision {
                 goal: Goal::Recreate,
                 denied_recreation,
                 denied_food,
             };
         }
-        denied_recreation = c.goal != Goal::Work;
+        denied_recreation = colonist.goal != Goal::Work;
     }
     Decision {
-        goal: if avail.work {
+        goal: if availability.work {
             Goal::Work
         } else {
             Goal::Nothing
@@ -694,60 +683,58 @@ fn decide(c: &Colonist, t: &Tuning, avail: &Availability) -> Decision {
     }
 }
 
-fn step_travel(c: &mut Colonist, t: &Tuning, dt_h: f32) {
-    let mut steps = c.move_progress + t.move_tiles_per_hour * dt_h;
-    while steps >= 1.0 && (c.x != c.target_x || c.y != c.target_y) {
+fn step_travel(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
+    let mut steps = colonist.move_progress + tuning.move_tiles_per_hour * dt_hours;
+    while steps >= 1.0 && (colonist.x != colonist.target_x || colonist.y != colonist.target_y) {
         steps -= 1.0;
-        // Manhattan movement: close the x axis first, then the y axis.
-        if c.x != c.target_x {
-            c.x += (c.target_x - c.x).signum();
-        } else if c.y != c.target_y {
-            c.y += (c.target_y - c.y).signum();
+        if colonist.x != colonist.target_x {
+            colonist.x += (colonist.target_x - colonist.x).signum();
+        } else if colonist.y != colonist.target_y {
+            colonist.y += (colonist.target_y - colonist.y).signum();
         }
     }
-    c.move_progress = if c.x == c.target_x && c.y == c.target_y {
+    colonist.move_progress = if colonist.x == colonist.target_x && colonist.y == colonist.target_y {
         0.0
     } else {
         steps
     };
 }
 
-fn step_eat(world: &mut World, i: usize, t: &Tuning, dt_h: f32) {
-    let want = (t.eat_rate_per_hour * dt_h).min(world.colonists[i].hunger);
+fn step_eat(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
+    let want = (tuning.eat_rate_per_hour * dt_hours).min(world.colonists[colonist_index].hunger);
     if want <= 0.0 {
         return;
     }
-    let needed = want * t.food_per_hunger;
+    let needed = want * tuning.food_per_hunger;
     let taken = needed.min(world.food.max(0.0));
-    let removed = if t.food_per_hunger > 0.0 {
-        taken / t.food_per_hunger
+    let removed = if tuning.food_per_hunger > 0.0 {
+        taken / tuning.food_per_hunger
     } else {
         want
     };
     world.food = (world.food - taken).max(0.0);
-    world.colonists[i].hunger = clamp01_100(world.colonists[i].hunger - removed);
+    world.colonists[colonist_index].hunger =
+        clamp_percentage(world.colonists[colonist_index].hunger - removed);
 }
 
-fn step_sleep(c: &mut Colonist, t: &Tuning, dt_h: f32) {
-    let quality = sleep_quality(c.mood, t);
-    c.last_sleep_quality = quality;
-    c.fatigue = clamp01_100(c.fatigue - t.sleep_recovery_per_hour * quality * dt_h);
-    c.sleep_hours += dt_h;
+fn step_sleep(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
+    let quality = sleep_quality(colonist.mood, tuning);
+    colonist.last_sleep_quality = quality;
+    colonist.fatigue =
+        clamp_percentage(colonist.fatigue - tuning.sleep_recovery_per_hour * quality * dt_hours);
+    colonist.sleep_hours += dt_hours;
 }
 
-fn step_recreate(c: &mut Colonist, t: &Tuning, dt_h: f32) {
-    c.recreation = clamp01_100(c.recreation - t.recreate_rate_per_hour * dt_h);
+fn step_recreate(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
+    colonist.recreation =
+        clamp_percentage(colonist.recreation - tuning.recreate_rate_per_hour * dt_hours);
 }
 
-fn step_work(world: &mut World, i: usize, t: &Tuning, dt_h: f32) {
-    let prod = world.colonists[i].productivity / 100.0;
-    let produced = t.work_food_per_hour * prod * dt_h;
+fn step_work(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
+    let productivity = world.colonists[colonist_index].productivity / 100.0;
+    let produced = tuning.work_food_per_hour * productivity * dt_hours;
     world.food = (world.food + produced).min(world.food_capacity);
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -774,7 +761,6 @@ mod tests {
             }
         }
 
-        // Tick at one in-game minute of resolution.
         let dt = 60.0;
         let ticks = (days * SECONDS_PER_DAY / dt) as usize;
 
@@ -795,7 +781,11 @@ mod tests {
             mood += w.avg_mood() as f64;
             fatigue += w.avg_fatigue() as f64;
             prod += w.avg_productivity() as f64;
-            quality += avg(w.colonists.iter().map(|c| sleep_quality(c.mood, &t))) as f64;
+            quality += average(
+                w.colonists
+                    .iter()
+                    .map(|colonist| sleep_quality(colonist.mood, &t)),
+            ) as f64;
         }
 
         let n = ticks as f64;
@@ -905,8 +895,6 @@ mod tests {
         }
     }
 
-    // ---- The failure chain -------------------------------------------------
-
     /// recreation disabled -> unmet recreation need
     #[test]
     fn chain_1_disabling_recreation_leaves_the_need_unmet() {
@@ -940,7 +928,6 @@ mod tests {
     /// mood falls -> sleep quality falls
     #[test]
     fn chain_3_low_mood_lowers_sleep_quality() {
-        // Direct, unit-level statement of the coupling.
         let t = Tuning::default();
         assert!(sleep_quality(20.0, &t) < sleep_quality(90.0, &t));
 
@@ -1032,8 +1019,6 @@ mod tests {
         );
     }
 
-    // ---- Events ------------------------------------------------------------
-
     #[test]
     fn events_are_not_emitted_every_tick() {
         let t = Tuning::default();
@@ -1081,7 +1066,6 @@ mod tests {
         let t = Tuning::default();
         let mut w = new_world();
         w.food = 0.0;
-        // Kill production so the larder stays empty.
         for tile in w.tiles.iter_mut() {
             if tile.kind == TileKind::Work {
                 tile.enabled = false;
