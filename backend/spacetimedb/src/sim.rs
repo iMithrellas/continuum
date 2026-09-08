@@ -18,6 +18,9 @@ pub const GRID_H: i32 = 16;
 /// In-game seconds in one in-game day.
 pub const SECONDS_PER_DAY: f64 = 86_400.0;
 
+/// Maximum decision/activity interval processed by the simulation core.
+const MAX_STEP_SECONDS: f64 = 60.0;
+
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileKind {
     Empty,
@@ -225,7 +228,7 @@ impl Default for Tuning {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Tile {
     pub id: u32,
     pub x: i32,
@@ -234,7 +237,7 @@ pub struct Tile {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Colonist {
     pub id: u64,
     pub name: String,
@@ -339,7 +342,7 @@ impl Resources {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct World {
     pub tiles: Vec<Tile>,
     pub colonists: Vec<Colonist>,
@@ -523,12 +526,26 @@ pub enum SimEvent {
 /// Advance the world by `dt_game_seconds` in-game seconds.
 ///
 /// Returns the notable events that occurred. Pure: given the same world, tuning
-/// and dt, this always produces the same result.
+/// and dt, this always produces the same result. Large durations are processed
+/// as ordered, bounded intervals so decisions and activities can change during
+/// accelerated time. Non-positive and non-finite durations are ignored.
 pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent> {
     let mut events = Vec::new();
-    if dt_game_seconds <= 0.0 {
+    if !dt_game_seconds.is_finite() || dt_game_seconds <= 0.0 {
         return events;
     }
+
+    let mut remaining = dt_game_seconds;
+    while remaining > MAX_STEP_SECONDS {
+        events.extend(step_bounded(world, tuning, MAX_STEP_SECONDS));
+        remaining -= MAX_STEP_SECONDS;
+    }
+    events.extend(step_bounded(world, tuning, remaining));
+    events
+}
+
+fn step_bounded(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent> {
+    let mut events = Vec::new();
     let dt_hours = (dt_game_seconds / 3600.0) as f32;
     world.game_seconds += dt_game_seconds;
 
@@ -1555,6 +1572,53 @@ mod tests {
             assert_eq!(ca.x, cb.x);
             assert_eq!(ca.y, cb.y);
             assert_eq!(ca.mood, cb.mood);
+        }
+    }
+
+    #[test]
+    fn large_step_matches_repeated_bounded_steps() {
+        let t = Tuning::default();
+        let mut actual = new_world();
+        let mut expected = actual.clone();
+        let full_steps = 360;
+        let remainder = 17.25;
+
+        let actual_events = step(
+            &mut actual,
+            &t,
+            full_steps as f64 * MAX_STEP_SECONDS + remainder,
+        );
+        let mut expected_events = Vec::new();
+        for _ in 0..full_steps {
+            expected_events.extend(step(&mut expected, &t, MAX_STEP_SECONDS));
+        }
+        expected_events.extend(step(&mut expected, &t, remainder));
+
+        assert!(!actual_events.is_empty());
+        assert_eq!(actual_events, expected_events);
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn large_step_advances_time_through_remainder() {
+        let t = Tuning::default();
+        let mut w = new_world();
+        let start = w.game_seconds;
+
+        step(&mut w, &t, 2.0 * MAX_STEP_SECONDS + 12.5);
+
+        assert_eq!(w.game_seconds, start + 132.5);
+    }
+
+    #[test]
+    fn invalid_step_durations_are_ignored() {
+        let t = Tuning::default();
+        let initial = new_world();
+
+        for dt in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let mut w = initial.clone();
+            assert!(step(&mut w, &t, dt).is_empty());
+            assert_eq!(w, initial);
         }
     }
 }
