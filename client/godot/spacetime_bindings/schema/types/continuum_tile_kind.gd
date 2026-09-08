@@ -4,22 +4,28 @@ class_name ContinuumTileKind extends RustEnum
 
 enum Options {
 	empty,
-	food,
 	sleep,
-	work,
+	forest,
+	storage,
+	farm,
+	mine,
+	dining,
 	recreation,
 }
 
-const enum_options: Array[StringName] = ['', '', '', '', '']
+const enum_options: Array[StringName] = ['', '', '', '', '', '', '', '']
 const bsatn_enum_type: StringName = &'ContinuumTileKind'
 
 static func parse_enum_name(i: int) -> String:
 	match i:
 		0: return &'empty'
-		1: return &'food'
-		2: return &'sleep'
-		3: return &'work'
-		4: return &'recreation'
+		1: return &'sleep'
+		2: return &'forest'
+		3: return &'storage'
+		4: return &'farm'
+		5: return &'mine'
+		6: return &'dining'
+		7: return &'recreation'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -33,14 +39,23 @@ static func create(p_type: int, p_data: Variant = null) -> ContinuumTileKind:
 static func create_empty() -> ContinuumTileKind:
 	return create(Options.empty)
 
-static func create_food() -> ContinuumTileKind:
-	return create(Options.food)
-
 static func create_sleep() -> ContinuumTileKind:
 	return create(Options.sleep)
 
-static func create_work() -> ContinuumTileKind:
-	return create(Options.work)
+static func create_forest() -> ContinuumTileKind:
+	return create(Options.forest)
+
+static func create_storage() -> ContinuumTileKind:
+	return create(Options.storage)
+
+static func create_farm() -> ContinuumTileKind:
+	return create(Options.farm)
+
+static func create_mine() -> ContinuumTileKind:
+	return create(Options.mine)
+
+static func create_dining() -> ContinuumTileKind:
+	return create(Options.dining)
 
 static func create_recreation() -> ContinuumTileKind:
 	return create(Options.recreation)

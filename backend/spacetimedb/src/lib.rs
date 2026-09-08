@@ -9,7 +9,7 @@
 
 pub mod sim;
 
-use sim::{Activity, Goal, SimEvent, TileKind, Tuning, World};
+use sim::{Activity, Goal, Resources, SimEvent, TileKind, Tuning, WorkType, World};
 use spacetimedb::{reducer, table, ReducerContext, Table, TimeDuration};
 
 /// How often the scheduled tick reducer runs, in real time. In-game speed is
@@ -41,6 +41,12 @@ pub struct Colony {
     pub id: u32,
     pub food: f32,
     pub food_capacity: f32,
+    pub wood: f32,
+    pub wood_capacity: f32,
+    pub stone: f32,
+    pub stone_capacity: f32,
+    pub meat: f32,
+    pub meat_capacity: f32,
     /// Instantaneous colony averages.
     pub avg_mood: f32,
     pub avg_productivity: f32,
@@ -72,6 +78,7 @@ pub struct Colonist {
     pub target_x: i32,
     pub target_y: i32,
     pub activity: Activity,
+    pub work: WorkType,
     pub goal: Goal,
     pub hunger: f32,
     pub fatigue: f32,
@@ -195,8 +202,14 @@ fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         ctx,
         Colony {
             id: 0,
-            food: world.food,
-            food_capacity: world.food_capacity,
+            food: world.resources.food,
+            food_capacity: world.resources.food_capacity,
+            wood: world.resources.wood,
+            wood_capacity: world.resources.wood_capacity,
+            stone: world.resources.stone,
+            stone_capacity: world.resources.stone_capacity,
+            meat: world.resources.meat,
+            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
@@ -250,6 +263,7 @@ fn load_world(ctx: &ReducerContext) -> World {
             target_x: colonist.target_x,
             target_y: colonist.target_y,
             activity: colonist.activity,
+            work: colonist.work,
             goal: colonist.goal,
             hunger: colonist.hunger,
             fatigue: colonist.fatigue,
@@ -268,11 +282,28 @@ fn load_world(ctx: &ReducerContext) -> World {
     World {
         tiles,
         colonists,
-        food: colony.as_ref().map(|colony| colony.food).unwrap_or(0.0),
-        food_capacity: colony
-            .as_ref()
-            .map(|colony| colony.food_capacity)
-            .unwrap_or(100.0),
+        resources: Resources {
+            food: colony.as_ref().map(|colony| colony.food).unwrap_or(0.0),
+            food_capacity: colony
+                .as_ref()
+                .map(|colony| colony.food_capacity)
+                .unwrap_or(100.0),
+            wood: colony.as_ref().map(|colony| colony.wood).unwrap_or(0.0),
+            wood_capacity: colony
+                .as_ref()
+                .map(|colony| colony.wood_capacity)
+                .unwrap_or(100.0),
+            stone: colony.as_ref().map(|colony| colony.stone).unwrap_or(0.0),
+            stone_capacity: colony
+                .as_ref()
+                .map(|colony| colony.stone_capacity)
+                .unwrap_or(100.0),
+            meat: colony.as_ref().map(|colony| colony.meat).unwrap_or(0.0),
+            meat_capacity: colony
+                .as_ref()
+                .map(|colony| colony.meat_capacity)
+                .unwrap_or(100.0),
+        },
         game_seconds: config
             .as_ref()
             .map(|config| config.game_seconds)
@@ -298,6 +329,7 @@ fn colonist_row(colonist: &sim::Colonist) -> Colonist {
         target_x: colonist.target_x,
         target_y: colonist.target_y,
         activity: colonist.activity,
+        work: colonist.work,
         goal: colonist.goal,
         hunger: colonist.hunger,
         fatigue: colonist.fatigue,
@@ -334,8 +366,14 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
         ctx,
         Colony {
             id: 0,
-            food: world.food,
-            food_capacity: world.food_capacity,
+            food: world.resources.food,
+            food_capacity: world.resources.food_capacity,
+            wood: world.resources.wood,
+            wood_capacity: world.resources.wood_capacity,
+            stone: world.resources.stone,
+            stone_capacity: world.resources.stone_capacity,
+            meat: world.resources.meat,
+            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
@@ -424,8 +462,8 @@ struct AlertSpec {
 }
 
 fn reconcile_alerts(ctx: &ReducerContext, world: &World) {
-    let food_pct = if world.food_capacity > 0.0 {
-        world.food / world.food_capacity * 100.0
+    let food_pct = if world.resources.food_capacity > 0.0 {
+        world.resources.food / world.resources.food_capacity * 100.0
     } else {
         0.0
     };
@@ -448,7 +486,7 @@ fn reconcile_alerts(ctx: &ReducerContext, world: &World) {
             clear: food_pct > 40.0,
             message: format!(
                 "Food reached low threshold ({:.0} / {:.0}).",
-                world.food, world.food_capacity
+                world.resources.food, world.resources.food_capacity
             ),
         },
         AlertSpec {
