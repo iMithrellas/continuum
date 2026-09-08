@@ -38,10 +38,23 @@ func _initialize() -> void:
 ## for the token fetch) must be inside the tree before `connect_db`, and `add_child`
 ## in `_initialize` has not taken effect yet.
 func _connect() -> void:
+	var host := _cli_option("--stdb-host", "http://127.0.0.1:3000")
+	var database := _cli_option("--stdb-db", "continuum")
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
 	options.debug_mode = false
-	client.connect_db("http://127.0.0.1:3000", "continuum", options)
+	options.one_time_token = false
+	options.save_token = true
+	client.token_save_path = "user://continuum_identity_%s.token" % \
+			(host + "/" + database).md5_text()
+	client.connect_db(host, database, options)
+
+
+func _cli_option(option: String, fallback: String) -> String:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with(option + "="):
+			return argument.substr(option.length() + 1)
+	return fallback
 
 
 func _process(delta: float) -> bool:
