@@ -37,7 +37,9 @@ godot --path client/godot
 
 `./scripts/publish` builds on the host and uses the matching SpacetimeDB CLI in
 the container. Its login identity is stored in a Docker volume so later publishes
-retain ownership of the database.
+retain ownership of the database. On first publish, that identity is also recorded
+as Continuum's admin. Because authorization is initialized with the database, use
+`./scripts/publish --fresh` when first upgrading an existing unauthenticated colony.
 
 Use `./scripts/publish --fresh` only when a breaking schema change requires
 deleting existing colony data.
@@ -56,6 +58,9 @@ Run the headless Godot end-to-end test:
 godot --headless --path client/godot --script res://tools/smoke_test.gd
 ```
 
+The smoke test accepts the same `--stdb-host` and `--stdb-db` user arguments as
+the client.
+
 Observe the live colony in a terminal:
 
 ```bash
@@ -70,6 +75,38 @@ Call reducers or query state through the containerized CLI:
 ./scripts/stdb call continuum set_zone_enabled '{"recreation":{}}' false
 ./scripts/stdb call continuum reset_colony
 ```
+
+### Authorization
+
+Continuum has two roles. Operators may enable or disable tiles and zones and
+acknowledge alerts. Admins inherit those permissions and are additionally the only
+callers allowed to change simulation speed, reset the colony, or authorize and
+revoke operators. The scheduled tick accepts only the database scheduler identity.
+Membership is stored in a private table; command and membership-change event-log
+entries include the caller's full identity for auditing.
+
+The publishing CLI identity becomes the sole admin when the database is created.
+To authorize a Godot client:
+
+1. Start the client once and copy the full `Continuum identity: ...` line from its
+   terminal output. The client stores a token under `user://`, keyed by server and
+   database, so subsequent runs against that colony keep the same identity.
+2. Using the persistent publishing/admin CLI identity, authorize it:
+
+```bash
+./scripts/stdb call continuum set_operator '"<CLIENT_IDENTITY>"' true
+```
+
+Revoke the same client with:
+
+```bash
+./scripts/stdb call continuum set_operator '"<CLIENT_IDENTITY>"' false
+```
+
+Keep the `spacetimedb-config` Docker volume: losing its publishing token loses the
+sole admin identity. A new or unauthorized client can still subscribe and observe
+the colony, but command reducers reject it. The headless smoke test uses the same
+persisted Godot token and must be authorized before its reducer phase can pass.
 
 After changing Rust tables, reducers, or types, publish and regenerate bindings:
 

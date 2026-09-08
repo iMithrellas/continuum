@@ -14,6 +14,11 @@ func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 func reset_colony() -> SpacetimeDBReducerCall:
 	return _client.call_reducer('reset_colony', [], [])
 
+## 0. identity: PackedByteArray [br]
+## 1. authorized: bool [br]
+func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_operator', [identity, authorized], [&'__identity__', &'Bool'])
+
 ## 0. tile_id: int [br]
 ## 1. enabled: bool [br]
 func set_tile_enabled(tile_id: int, enabled: bool) -> SpacetimeDBReducerCall:

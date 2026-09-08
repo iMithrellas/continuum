@@ -16,6 +16,7 @@ var phase_started := 0.0
 var recreation_was_enabled := false
 var failed := false
 var started := false
+var unauthorized_client: ContinuumModuleClient
 
 
 func _initialize() -> void:
@@ -31,10 +32,23 @@ func _initialize() -> void:
 ## for the token fetch) must be inside the tree before `connect_db`, and `add_child`
 ## in `_initialize` has not taken effect yet.
 func _connect() -> void:
+	var host := _cli_option("--stdb-host", "http://127.0.0.1:3000")
+	var database := _cli_option("--stdb-db", "continuum")
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
 	options.debug_mode = false
-	client.connect_db("http://127.0.0.1:3000", "continuum", options)
+	options.one_time_token = false
+	options.save_token = true
+	client.token_save_path = "user://continuum_identity_%s.token" % \
+			(host + "/" + database).md5_text()
+	client.connect_db(host, database, options)
+
+
+func _cli_option(option: String, fallback: String) -> String:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with(option + "="):
+			return argument.substr(option.length() + 1)
+	return fallback
 
 
 func _process(delta: float) -> bool:
@@ -129,9 +143,56 @@ func _phase_restore() -> bool:
 	for event: ContinuumEventLog in events.slice(maxi(0, events.size() - 6)):
 		print("   d%d %02d:%02d  %s" % [event.day, event.hour, event.minute, event.message])
 
-	print("SMOKE_PASS")
+	phase = 3
+	_start_unauthorized_check()
+	return false
+
+
+func _start_unauthorized_check() -> void:
+	unauthorized_client = ContinuumModuleClient.new()
+	root.add_child(unauthorized_client)
+	unauthorized_client.connection_error.connect(func(code: int, reason: String) -> void:
+		_fail("unauthorized client connection error %d: %s" % [code, reason]))
+	unauthorized_client.connected.connect(_on_unauthorized_connected)
+	call_deferred("_connect_unauthorized_client")
+
+
+func _connect_unauthorized_client() -> void:
+	var host := _cli_option("--stdb-host", "http://127.0.0.1:3000")
+	var database := _cli_option("--stdb-db", "continuum")
+	var options := SpacetimeDBConnectionOptions.new()
+	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
+	options.debug_mode = false
+	options.one_time_token = true
+	options.save_token = false
+	unauthorized_client.connect_db(host, database, options)
+
+
+func _on_unauthorized_connected(_identity: PackedByteArray, _token: String) -> void:
+	var zone_call := unauthorized_client.reducers.set_zone_enabled(
+			ContinuumTileKind.create_recreation(), false)
+	if not await _expect_rejected(zone_call, "set_zone_enabled"):
+		return
+
+	var speed_call := unauthorized_client.reducers.set_time_scale(6.0)
+	if not await _expect_rejected(speed_call, "set_time_scale"):
+		return
+
+	print("OK unauthorized reducers rejected")
+	unauthorized_client.disconnect_db()
 	client.disconnect_db()
+	print("SMOKE_PASS")
 	quit(0)
+
+
+func _expect_rejected(call: SpacetimeDBReducerCall, reducer_name: String) -> bool:
+	if call.error != OK:
+		_fail("%s could not be sent by unauthorized client (%d)" % [reducer_name, call.error])
+		return false
+	var response: ReducerResultMessage = await call.response
+	if response.reducer_result.value != ReducerOutcomeEnum.Options.err:
+		_fail("unauthorized %s was accepted" % reducer_name)
+		return false
 	return true
 
 

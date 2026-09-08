@@ -10,7 +10,7 @@
 pub mod sim;
 
 use sim::{Activity, Goal, Resources, SimEvent, TileKind, Tuning, WorkType, World};
-use spacetimedb::{reducer, table, ReducerContext, Table, TimeDuration};
+use spacetimedb::{reducer, table, Identity, ReducerContext, Table, TimeDuration};
 
 /// How often the scheduled tick reducer runs, in real time. In-game speed is
 /// controlled by `Config::time_scale`, not by this interval.
@@ -21,6 +21,62 @@ pub const DEFAULT_TIME_SCALE: f64 = 6.0;
 
 /// Cap on the event log, so a colony running for months does not grow forever.
 const MAX_EVENTS: usize = 200;
+
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Role {
+    Admin,
+    Operator,
+}
+
+/// Private authorization state. The publishing identity is the sole initial
+/// admin; admins can add and remove operators with `set_operator`.
+#[table(accessor = membership)]
+pub struct Membership {
+    #[primary_key]
+    pub identity: Identity,
+    pub role: Role,
+}
+
+#[derive(Clone, Copy)]
+enum RequiredRole {
+    Scheduler,
+    Operator,
+    Admin,
+}
+
+/// The single authorization gate for every externally callable reducer.
+fn authorize(ctx: &ReducerContext, required: RequiredRole) -> Result<Role, String> {
+    if matches!(required, RequiredRole::Scheduler) {
+        return (ctx.sender() == ctx.database_identity())
+            .then_some(Role::Admin)
+            .ok_or_else(|| "`tick` may only be invoked by the scheduler".to_string());
+    }
+
+    let role = ctx
+        .db
+        .membership()
+        .identity()
+        .find(ctx.sender())
+        .map(|member| member.role)
+        .ok_or_else(|| "caller is not an authorized colony member".to_string())?;
+
+    if role_allows(role, required) {
+        Ok(role)
+    } else {
+        Err("this command requires a colony admin".to_string())
+    }
+}
+
+fn role_allows(role: Role, required: RequiredRole) -> bool {
+    matches!(
+        (required, role),
+        (RequiredRole::Operator, Role::Operator | Role::Admin) | (RequiredRole::Admin, Role::Admin)
+    )
+}
+
+fn identity_hex(identity: Identity) -> String {
+    identity.to_hex().to_string()
+}
 
 /// Singleton colony configuration and clock. `id` is always 0.
 #[table(accessor = config, public)]
@@ -137,7 +193,16 @@ pub struct TickSchedule {
 }
 
 #[reducer(init)]
-pub fn init(ctx: &ReducerContext) {
+pub fn init(ctx: &ReducerContext) -> Result<(), String> {
+    let owner = ctx.sender();
+    if owner == Identity::ZERO || owner == ctx.database_identity() {
+        return Err("database initialization requires an authenticated publishing identity".into());
+    }
+    ctx.db.membership().insert(Membership {
+        identity: owner,
+        role: Role::Admin,
+    });
+
     seed_colony(ctx, DEFAULT_TIME_SCALE);
 
     ctx.db.tick_schedule().insert(TickSchedule {
@@ -148,23 +213,27 @@ pub fn init(ctx: &ReducerContext) {
     log_event(
         ctx,
         Severity::Info,
-        "Colony founded. Simulation running.".to_string(),
+        format!(
+            "Colony founded by admin {}. Simulation running.",
+            identity_hex(owner)
+        ),
     );
+    Ok(())
 }
 
 /// Wipe colony state and recreate it from the default layout.
 fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
     for tile in ctx.db.tile().iter() {
-        ctx.db.tile().id().delete(&tile.id);
+        ctx.db.tile().id().delete(tile.id);
     }
     for colonist in ctx.db.colonist().iter() {
-        ctx.db.colonist().id().delete(&colonist.id);
+        ctx.db.colonist().id().delete(colonist.id);
     }
     for alert in ctx.db.alert().iter() {
-        ctx.db.alert().id().delete(&alert.id);
+        ctx.db.alert().id().delete(alert.id);
     }
     for event in ctx.db.event_log().iter() {
-        ctx.db.event_log().id().delete(&event.id);
+        ctx.db.event_log().id().delete(event.id);
     }
 
     let world = sim::new_world();
@@ -343,9 +412,7 @@ fn colonist_row(colonist: &sim::Colonist) -> Colonist {
 
 #[reducer]
 pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
-    if ctx.sender() != ctx.database_identity() {
-        return Err("`tick` may only be invoked by the scheduler".into());
-    }
+    authorize(ctx, RequiredRole::Scheduler)?;
 
     let Some(config) = ctx.db.config().id().find(0) else {
         return Ok(());
@@ -621,7 +688,7 @@ fn trim_event_log(ctx: &ReducerContext) {
     let mut ids: Vec<u64> = ctx.db.event_log().iter().map(|e| e.id).collect();
     ids.sort_unstable();
     for id in ids.into_iter().take(count - MAX_EVENTS) {
-        ctx.db.event_log().id().delete(&id);
+        ctx.db.event_log().id().delete(id);
     }
 }
 
@@ -629,6 +696,7 @@ fn trim_event_log(ctx: &ReducerContext) {
 /// off the failure chain.
 #[reducer]
 pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
     let mut tile = ctx
         .db
         .tile()
@@ -652,9 +720,10 @@ pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Re
         ctx,
         Severity::Info,
         format!(
-            "{:?} tile ({x},{y}) was {} by a colony operator",
+            "{:?} tile ({x},{y}) was {} by operator {}",
             kind,
-            if enabled { "enabled" } else { "disabled" }
+            if enabled { "enabled" } else { "disabled" },
+            identity_hex(ctx.sender())
         ),
     );
     Ok(())
@@ -664,6 +733,7 @@ pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Re
 /// uses for its "Recreation: on/off" toggle.
 #[reducer]
 pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
     if kind == TileKind::Empty {
         return Err("empty tiles cannot be enabled or disabled".into());
     }
@@ -680,9 +750,10 @@ pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> 
             ctx,
             Severity::Info,
             format!(
-                "{:?} zone was {} by a colony operator ({changed} tiles)",
+                "{:?} zone was {} by operator {} ({changed} tiles)",
                 kind,
-                if enabled { "enabled" } else { "disabled" }
+                if enabled { "enabled" } else { "disabled" },
+                identity_hex(ctx.sender())
             ),
         );
     }
@@ -691,6 +762,7 @@ pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> 
 
 #[reducer]
 pub fn acknowledge_alert(ctx: &ReducerContext, alert_id: u64) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
     let mut alert = ctx
         .db
         .alert()
@@ -706,7 +778,10 @@ pub fn acknowledge_alert(ctx: &ReducerContext, alert_id: u64) -> Result<(), Stri
     log_event(
         ctx,
         Severity::Info,
-        format!("Alert acknowledged: {message}"),
+        format!(
+            "Alert acknowledged by operator {}: {message}",
+            identity_hex(ctx.sender())
+        ),
     );
     Ok(())
 }
@@ -715,6 +790,7 @@ pub fn acknowledge_alert(ctx: &ReducerContext, alert_id: u64) -> Result<(), Stri
 /// `6.0` is the intended rate (4 real hours per in-game day).
 #[reducer]
 pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
     if !(0.0..=100_000.0).contains(&time_scale) {
         return Err("time_scale must be between 0 and 100000".into());
     }
@@ -732,7 +808,10 @@ pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), Strin
     log_event(
         ctx,
         Severity::Info,
-        format!("Simulation speed changed: {previous:.0}x -> {time_scale:.0}x in-game seconds per real second"),
+        format!(
+            "Simulation speed changed by admin {}: {previous:.0}x -> {time_scale:.0}x in-game seconds per real second",
+            identity_hex(ctx.sender())
+        ),
     );
     Ok(())
 }
@@ -740,6 +819,7 @@ pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), Strin
 /// Development helper: wipe the colony and start over from the default layout.
 #[reducer]
 pub fn reset_colony(ctx: &ReducerContext) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
     let time_scale = ctx
         .db
         .config()
@@ -748,6 +828,74 @@ pub fn reset_colony(ctx: &ReducerContext) -> Result<(), String> {
         .map(|config| config.time_scale)
         .unwrap_or(DEFAULT_TIME_SCALE);
     seed_colony(ctx, time_scale);
-    log_event(ctx, Severity::Info, "Colony was reset.".to_string());
+    log_event(
+        ctx,
+        Severity::Info,
+        format!("Colony was reset by admin {}.", identity_hex(ctx.sender())),
+    );
     Ok(())
+}
+
+/// Admin-only membership management. Admin membership cannot be changed through
+/// this reducer, preventing accidental removal of the bootstrap owner.
+#[reducer]
+pub fn set_operator(
+    ctx: &ReducerContext,
+    identity: Identity,
+    authorized: bool,
+) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
+    if identity == Identity::ZERO || identity == ctx.database_identity() {
+        return Err("the anonymous and database identities cannot be operators".into());
+    }
+
+    let existing = ctx.db.membership().identity().find(identity);
+    if existing
+        .as_ref()
+        .is_some_and(|member| member.role == Role::Admin)
+    {
+        return Err("admin membership cannot be changed with `set_operator`".into());
+    }
+
+    let changed = if authorized {
+        if existing.is_some() {
+            false
+        } else {
+            ctx.db.membership().insert(Membership {
+                identity,
+                role: Role::Operator,
+            });
+            true
+        }
+    } else {
+        ctx.db.membership().identity().delete(identity)
+    };
+
+    if changed {
+        log_event(
+            ctx,
+            Severity::Info,
+            format!(
+                "Operator {} was {} by admin {}.",
+                identity_hex(identity),
+                if authorized { "authorized" } else { "revoked" },
+                identity_hex(ctx.sender())
+            ),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod authorization_tests {
+    use super::{role_allows, RequiredRole, Role};
+
+    #[test]
+    fn admins_inherit_operator_access_but_operators_do_not_get_admin_access() {
+        assert!(role_allows(Role::Admin, RequiredRole::Admin));
+        assert!(role_allows(Role::Admin, RequiredRole::Operator));
+        assert!(role_allows(Role::Operator, RequiredRole::Operator));
+        assert!(!role_allows(Role::Operator, RequiredRole::Admin));
+        assert!(!role_allows(Role::Admin, RequiredRole::Scheduler));
+    }
 }

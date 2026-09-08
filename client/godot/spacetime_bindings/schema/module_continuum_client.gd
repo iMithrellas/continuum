@@ -14,6 +14,7 @@ const Goal = Types.Goal
 const Colony = Types.Colony
 const Config = Types.Config
 const EventLog = Types.EventLog
+const Role = Types.Role
 const TileKind = Types.TileKind
 const Tile = Types.Tile
 
