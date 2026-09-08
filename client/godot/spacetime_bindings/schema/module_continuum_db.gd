@@ -2,19 +2,19 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["event_log", "colony", "alert", "config", "tile", "colonist"]
+const table_names : Array[String] = ["colonist", "event_log", "tile", "alert", "colony", "config"]
 
-var event_log: ContinuumEventLogTable
-var colony: ContinuumColonyTable
-var alert: ContinuumAlertTable
-var config: ContinuumConfigTable
-var tile: ContinuumTileTable
 var colonist: ContinuumColonistTable
+var event_log: ContinuumEventLogTable
+var tile: ContinuumTileTable
+var alert: ContinuumAlertTable
+var colony: ContinuumColonyTable
+var config: ContinuumConfigTable
 
 func _init(p_local_db: LocalDatabase) -> void:
-	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
-	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
-	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
-	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
-	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
 	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
+	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
+	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
+	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
+	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
+	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)

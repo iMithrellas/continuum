@@ -5,6 +5,7 @@ const Alert = preload('res://spacetime_bindings/schema/types/continuum_alert.gd'
 const Severity = preload('res://spacetime_bindings/schema/types/continuum_severity.gd')
 const Colonist = preload('res://spacetime_bindings/schema/types/continuum_colonist.gd')
 const Activity = preload('res://spacetime_bindings/schema/types/continuum_activity.gd')
+const WorkType = preload('res://spacetime_bindings/schema/types/continuum_work_type.gd')
 const Goal = preload('res://spacetime_bindings/schema/types/continuum_goal.gd')
 const Colony = preload('res://spacetime_bindings/schema/types/continuum_colony.gd')
 const Config = preload('res://spacetime_bindings/schema/types/continuum_config.gd')

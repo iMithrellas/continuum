@@ -34,7 +34,7 @@ bootstrap() {
 
 EXTRA=()
 if [[ "${1:-}" == "--fresh" ]]; then
-  EXTRA+=(--delete-data always)
+  EXTRA+=(--delete-data=always)
 fi
 
 echo "==> cargo test"

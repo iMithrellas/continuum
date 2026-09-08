@@ -17,9 +17,12 @@ pub const SECONDS_PER_DAY: f64 = 86_400.0;
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileKind {
     Empty,
-    Food,
     Sleep,
-    Work,
+    Forest,
+    Storage,
+    Farm,
+    Mine,
+    Dining,
     Recreation,
 }
 
@@ -31,6 +34,58 @@ pub enum Activity {
     Eating,
     Sleeping,
     Recreating,
+}
+
+#[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WorkType {
+    None,
+    Logging,
+    Mining,
+    Hunting,
+    Hauling,
+    Farming,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ResourceKind {
+    Food,
+    Wood,
+    Stone,
+    Meat,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct WorkDefinition {
+    pub facility: TileKind,
+    pub output: Option<ResourceKind>,
+}
+
+impl WorkType {
+    pub fn definition(self) -> Option<WorkDefinition> {
+        match self {
+            WorkType::None => None,
+            WorkType::Logging => Some(WorkDefinition {
+                facility: TileKind::Forest,
+                output: Some(ResourceKind::Wood),
+            }),
+            WorkType::Mining => Some(WorkDefinition {
+                facility: TileKind::Mine,
+                output: Some(ResourceKind::Stone),
+            }),
+            WorkType::Hunting => Some(WorkDefinition {
+                facility: TileKind::Forest,
+                output: Some(ResourceKind::Meat),
+            }),
+            WorkType::Hauling => Some(WorkDefinition {
+                facility: TileKind::Storage,
+                output: None,
+            }),
+            WorkType::Farming => Some(WorkDefinition {
+                facility: TileKind::Farm,
+                output: Some(ResourceKind::Food),
+            }),
+        }
+    }
 }
 
 /// What a colonist is currently trying to achieve. `Activity` is the observable
@@ -45,13 +100,13 @@ pub enum Goal {
 }
 
 impl Goal {
-    pub fn tile_kind(self) -> Option<TileKind> {
+    pub fn tile_kind(self, work: WorkType) -> Option<TileKind> {
         match self {
             Goal::Nothing => None,
-            Goal::Eat => Some(TileKind::Food),
+            Goal::Eat => Some(TileKind::Dining),
             Goal::Sleep => Some(TileKind::Sleep),
             Goal::Recreate => Some(TileKind::Recreation),
-            Goal::Work => Some(TileKind::Work),
+            Goal::Work => work.definition().map(|definition| definition.facility),
         }
     }
 
@@ -99,8 +154,8 @@ pub struct Tuning {
     pub recreate_rate_per_hour: f32,
     pub recreate_stop: f32,
 
-    /// Food produced per in-game hour by a colonist at 100% productivity.
-    pub work_food_per_hour: f32,
+    /// Resource units produced per in-game hour by a colonist at 100% productivity.
+    pub work_resource_per_hour: f32,
 
     pub mood_base: f32,
     pub mood_w_hunger: f32,
@@ -147,7 +202,7 @@ impl Default for Tuning {
             recreate_rate_per_hour: 60.0,
             recreate_stop: 5.0,
 
-            work_food_per_hour: 2.2,
+            work_resource_per_hour: 2.2,
 
             mood_base: 110.0,
             mood_w_hunger: 0.20,
@@ -186,6 +241,7 @@ pub struct Colonist {
     pub target_x: i32,
     pub target_y: i32,
     pub activity: Activity,
+    pub work: WorkType,
     pub goal: Goal,
 
     pub hunger: f32,
@@ -210,6 +266,7 @@ impl Colonist {
             target_x: x,
             target_y: y,
             activity: Activity::Idle,
+            work: WorkType::None,
             goal: Goal::Nothing,
             hunger: 10.0,
             fatigue: 10.0,
@@ -222,12 +279,67 @@ impl Colonist {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct Resources {
+    pub food: f32,
+    pub food_capacity: f32,
+    pub wood: f32,
+    pub wood_capacity: f32,
+    pub stone: f32,
+    pub stone_capacity: f32,
+    pub meat: f32,
+    pub meat_capacity: f32,
+}
+
+impl Resources {
+    pub fn amount(&self, kind: ResourceKind) -> f32 {
+        match kind {
+            ResourceKind::Food => self.food,
+            ResourceKind::Wood => self.wood,
+            ResourceKind::Stone => self.stone,
+            ResourceKind::Meat => self.meat,
+        }
+    }
+
+    pub fn capacity(&self, kind: ResourceKind) -> f32 {
+        match kind {
+            ResourceKind::Food => self.food_capacity,
+            ResourceKind::Wood => self.wood_capacity,
+            ResourceKind::Stone => self.stone_capacity,
+            ResourceKind::Meat => self.meat_capacity,
+        }
+    }
+
+    fn add(&mut self, kind: ResourceKind, amount: f32) {
+        let capacity = self.capacity(kind);
+        match kind {
+            ResourceKind::Food => {
+                self.food = (self.food + amount).min(capacity);
+            }
+            ResourceKind::Wood => self.wood = (self.wood + amount).min(capacity),
+            ResourceKind::Stone => self.stone = (self.stone + amount).min(capacity),
+            ResourceKind::Meat => self.meat = (self.meat + amount).min(capacity),
+        }
+    }
+
+    fn take(&mut self, kind: ResourceKind, amount: f32) -> f32 {
+        let available = self.amount(kind).max(0.0);
+        let taken = amount.min(available);
+        match kind {
+            ResourceKind::Food => self.food = (self.food - taken).max(0.0),
+            ResourceKind::Wood => self.wood = (self.wood - taken).max(0.0),
+            ResourceKind::Stone => self.stone = (self.stone - taken).max(0.0),
+            ResourceKind::Meat => self.meat = (self.meat - taken).max(0.0),
+        }
+        taken
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct World {
     pub tiles: Vec<Tile>,
     pub colonists: Vec<Colonist>,
-    pub food: f32,
-    pub food_capacity: f32,
+    pub resources: Resources,
     /// Total elapsed in-game seconds since the colony was founded.
     pub game_seconds: f64,
     /// Day-scale smoothed colony mood. This, not the instantaneous average, is
@@ -307,11 +419,11 @@ pub fn default_tiles() -> Vec<Tile> {
     for y in 0..GRID_H {
         for x in 0..GRID_W {
             let kind = if in_rect(x, y, 2, 2, 3, 3) {
-                TileKind::Food
+                TileKind::Dining
             } else if in_rect(x, y, 12, 2, 13, 3) {
                 TileKind::Sleep
             } else if in_rect(x, y, 6, 10, 8, 12) {
-                TileKind::Work
+                TileKind::Farm
             } else if in_rect(x, y, 2, 12, 3, 13) {
                 TileKind::Recreation
             } else {
@@ -341,9 +453,11 @@ pub fn default_colonists() -> Vec<Colonist> {
         Colonist::new(1, "Ada", 7, 7),
         Colonist::new(2, "Bram", 8, 7),
         Colonist::new(3, "Cyra", 7, 8),
+        // Colonist::new(4, "Mithrel", 8, 8),
     ];
     let offsets = [(6.0, 30.0, 12.0), (26.0, 8.0, 34.0), (44.0, 20.0, 2.0)];
     for (colonist, (hunger, fatigue, recreation)) in colonists.iter_mut().zip(offsets) {
+        colonist.work = WorkType::Farming;
         colonist.hunger = hunger;
         colonist.fatigue = fatigue;
         colonist.recreation = recreation;
@@ -355,8 +469,16 @@ pub fn new_world() -> World {
     World {
         tiles: default_tiles(),
         colonists: default_colonists(),
-        food: 90.0,
-        food_capacity: 100.0,
+        resources: Resources {
+            food: 90.0,
+            food_capacity: 100.0,
+            wood: 0.0,
+            wood_capacity: 100.0,
+            stone: 0.0,
+            stone_capacity: 100.0,
+            meat: 0.0,
+            meat_capacity: 100.0,
+        },
         game_seconds: 8.0 * 3600.0,
         mood_ema: 80.0,
         productivity_ema: 90.0,
@@ -402,16 +524,25 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
     world.game_seconds += dt_game_seconds;
 
     let interval_availability = Availability {
-        food: world.has_enabled(TileKind::Food) && world.food > 0.0,
-        kitchen: world.has_enabled(TileKind::Food),
+        food: world.has_enabled(TileKind::Dining)
+            && world.resources.amount(ResourceKind::Food) > 0.0,
+        kitchen: world.has_enabled(TileKind::Dining),
         sleep: world.has_enabled(TileKind::Sleep),
         recreation: world.has_enabled(TileKind::Recreation),
-        work: world.has_enabled(TileKind::Work),
     };
 
     let colonist_count = world.colonists.len();
     for colonist_index in 0..colonist_count {
-        let decision = decide(&world.colonists[colonist_index], tuning, &interval_availability);
+        let work_available = world.colonists[colonist_index]
+            .work
+            .definition()
+            .is_some_and(|definition| world.has_enabled(definition.facility));
+        let decision = decide(
+            &world.colonists[colonist_index],
+            tuning,
+            &interval_availability,
+            work_available,
+        );
         let desired = decision.goal;
 
         if decision.denied_recreation {
@@ -435,7 +566,7 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
                 world.colonists[colonist_index].y,
             );
             let dest = desired
-                .tile_kind()
+                .tile_kind(world.colonists[colonist_index].work)
                 .and_then(|kind| world.nearest_enabled_tile(kind, x, y))
                 .map(|tile| (tile.x, tile.y));
 
@@ -586,7 +717,6 @@ struct Availability {
     kitchen: bool,
     sleep: bool,
     recreation: bool,
-    work: bool,
 }
 
 struct Decision {
@@ -607,7 +737,12 @@ impl Decision {
     }
 }
 
-fn decide(colonist: &Colonist, tuning: &Tuning, interval_availability: &Availability) -> Decision {
+fn decide(
+    colonist: &Colonist,
+    tuning: &Tuning,
+    interval_availability: &Availability,
+    work_available: bool,
+) -> Decision {
     match colonist.activity {
         Activity::Eating if colonist.hunger > tuning.eat_stop && interval_availability.food => {
             return Decision::for_goal(Goal::Eat)
@@ -653,7 +788,7 @@ fn decide(colonist: &Colonist, tuning: &Tuning, interval_availability: &Availabi
         denied_recreation = colonist.goal != Goal::Work;
     }
     Decision {
-        goal: if interval_availability.work {
+        goal: if work_available {
             Goal::Work
         } else {
             Goal::Nothing
@@ -686,13 +821,12 @@ fn step_eat(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours:
         return;
     }
     let needed = want * tuning.food_per_hunger;
-    let taken = needed.min(world.food.max(0.0));
+    let taken = world.resources.take(ResourceKind::Food, needed);
     let removed = if tuning.food_per_hunger > 0.0 {
         taken / tuning.food_per_hunger
     } else {
         want
     };
-    world.food = (world.food - taken).max(0.0);
     world.colonists[colonist_index].hunger =
         clamp_percentage(world.colonists[colonist_index].hunger - removed);
 }
@@ -711,9 +845,16 @@ fn step_recreate(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
 }
 
 fn step_work(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
+    let Some(output) = world.colonists[colonist_index]
+        .work
+        .definition()
+        .and_then(|definition| definition.output)
+    else {
+        return;
+    };
     let productivity = world.colonists[colonist_index].productivity / 100.0;
-    let produced = tuning.work_food_per_hour * productivity * dt_hours;
-    world.food = (world.food + produced).min(world.food_capacity);
+    let produced = tuning.work_resource_per_hour * productivity * dt_hours;
+    world.resources.add(output, produced);
 }
 
 #[cfg(test)]
@@ -746,9 +887,9 @@ mod tests {
         // Give the colony a larder that never runs out and never fills up, so the
         // measurement isolates production from storage limits. (Kept small enough
         // that f32 still resolves the per-tick increments.)
-        w.food = 5_000.0;
-        w.food_capacity = 1.0e9;
-        let start_food = w.food;
+        w.resources.food = 5_000.0;
+        w.resources.food_capacity = 1.0e9;
+        let start_food = w.resources.food;
 
         let mut mood = 0.0f64;
         let mut fatigue = 0.0f64;
@@ -773,7 +914,7 @@ mod tests {
             avg_fatigue: (fatigue / n) as f32,
             avg_productivity: (prod / n) as f32,
             avg_sleep_quality: (quality / n) as f32,
-            net_food_change: w.food - start_food,
+            net_food_change: w.resources.food - start_food,
             recreation_end: w.avg_recreation(),
         }
     }
@@ -783,14 +924,108 @@ mod tests {
         let w = new_world();
         assert_eq!(w.tiles.len(), (GRID_W * GRID_H) as usize);
         for kind in [
-            TileKind::Food,
+            TileKind::Dining,
             TileKind::Sleep,
-            TileKind::Work,
+            TileKind::Farm,
             TileKind::Recreation,
         ] {
             assert!(w.has_enabled(kind), "missing tile kind {kind:?}");
         }
         assert_eq!(w.colonists.len(), 3);
+        assert!(w
+            .colonists
+            .iter()
+            .all(|colonist| colonist.work == WorkType::Farming));
+    }
+
+    #[test]
+    fn work_definitions_are_the_source_of_facilities_and_outputs() {
+        assert_eq!(WorkType::None.definition(), None);
+        assert_eq!(Goal::Work.tile_kind(WorkType::None), None);
+
+        for (work, facility, output) in [
+            (WorkType::Farming, TileKind::Farm, Some(ResourceKind::Food)),
+            (
+                WorkType::Logging,
+                TileKind::Forest,
+                Some(ResourceKind::Wood),
+            ),
+            (WorkType::Mining, TileKind::Mine, Some(ResourceKind::Stone)),
+            (
+                WorkType::Hunting,
+                TileKind::Forest,
+                Some(ResourceKind::Meat),
+            ),
+            (WorkType::Hauling, TileKind::Storage, None),
+        ] {
+            let definition = work.definition().unwrap();
+            assert_eq!(definition.facility, facility);
+            assert_eq!(definition.output, output);
+            assert_eq!(Goal::Work.tile_kind(work), Some(facility));
+        }
+    }
+
+    #[test]
+    fn producing_work_updates_only_its_declared_resource() {
+        const KINDS: [ResourceKind; 4] = [
+            ResourceKind::Food,
+            ResourceKind::Wood,
+            ResourceKind::Stone,
+            ResourceKind::Meat,
+        ];
+        let tuning = Tuning::default();
+
+        for (work, output) in [
+            (WorkType::Farming, ResourceKind::Food),
+            (WorkType::Logging, ResourceKind::Wood),
+            (WorkType::Mining, ResourceKind::Stone),
+            (WorkType::Hunting, ResourceKind::Meat),
+        ] {
+            let mut world = new_world();
+            world.colonists[0].work = work;
+            let before = world.resources.clone();
+
+            step_work(&mut world, 0, &tuning, 1.0);
+
+            for kind in KINDS {
+                if kind == output {
+                    assert!(world.resources.amount(kind) > before.amount(kind));
+                } else {
+                    assert_eq!(world.resources.amount(kind), before.amount(kind));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_producing_work_does_not_manufacture_resources() {
+        let tuning = Tuning::default();
+        for work in [WorkType::None, WorkType::Hauling] {
+            let mut world = new_world();
+            world.colonists[0].work = work;
+            let before = world.resources.clone();
+
+            step_work(&mut world, 0, &tuning, 1.0);
+
+            assert_eq!(world.resources, before);
+        }
+    }
+
+    #[test]
+    fn unassigned_colonists_do_not_work_or_produce() {
+        let t = Tuning::default();
+        let mut w = new_world();
+        for colonist in &mut w.colonists {
+            colonist.work = WorkType::None;
+        }
+        let food = w.resources.food;
+
+        step(&mut w, &t, 60.0);
+
+        assert_eq!(w.resources.food, food);
+        assert!(w.colonists.iter().all(|colonist| {
+            colonist.goal == Goal::Nothing && colonist.activity == Activity::Idle
+        }));
     }
 
     #[test]
@@ -819,27 +1054,27 @@ mod tests {
     fn working_produces_food_and_eating_consumes_it() {
         let t = Tuning::default();
         let mut w = new_world();
-        w.food = 50.0;
-        let mut min_food = w.food;
-        let mut max_food = w.food;
+        w.resources.food = 50.0;
+        let mut min_food = w.resources.food;
+        let mut max_food = w.resources.food;
         for _ in 0..(2.0 * SECONDS_PER_DAY / 60.0) as usize {
             step(&mut w, &t, 60.0);
-            min_food = min_food.min(w.food);
-            max_food = max_food.max(w.food);
+            min_food = min_food.min(w.resources.food);
+            max_food = max_food.max(w.resources.food);
         }
         assert!(max_food > 50.0, "food never increased ({max_food})");
         assert!(min_food < max_food, "food never decreased");
-        assert!(w.food <= w.food_capacity);
+        assert!(w.resources.food <= w.resources.food_capacity);
     }
 
     #[test]
     fn food_is_capped_at_capacity() {
         let t = Tuning::default();
         let mut w = new_world();
-        w.food = w.food_capacity;
+        w.resources.food = w.resources.food_capacity;
         for _ in 0..2000 {
             step(&mut w, &t, 60.0);
-            assert!(w.food <= w.food_capacity + 1e-3);
+            assert!(w.resources.food <= w.resources.food_capacity + 1e-3);
         }
     }
 
@@ -867,7 +1102,7 @@ mod tests {
                 assert!(c.x >= 0 && c.x < GRID_W);
                 assert!(c.y >= 0 && c.y < GRID_H);
             }
-            assert!(w.food >= 0.0);
+            assert!(w.resources.food >= 0.0);
         }
     }
 
@@ -1034,9 +1269,9 @@ mod tests {
     fn missing_food_is_reported() {
         let t = Tuning::default();
         let mut w = new_world();
-        w.food = 0.0;
+        w.resources.food = 0.0;
         for tile in w.tiles.iter_mut() {
-            if tile.kind == TileKind::Work {
+            if tile.kind == TileKind::Farm {
                 tile.enabled = false;
             }
         }
@@ -1065,8 +1300,8 @@ mod tests {
                     }
                 }
             }
-            w.food = 5_000.0;
-            w.food_capacity = 1.0e9;
+            w.resources.food = 5_000.0;
+            w.resources.food_capacity = 1.0e9;
             let (mut lo_p, mut hi_p, mut lo_m, mut hi_m) = (100.0f32, 0.0f32, 100.0f32, 0.0f32);
             let warmup = (2.0 * SECONDS_PER_DAY / 60.0) as usize;
             for i in 0..(10.0 * SECONDS_PER_DAY / 60.0) as usize {
@@ -1115,23 +1350,23 @@ mod tests {
                     }
                 }
             }
-            let mut low = w.food;
+            let mut low = w.resources.food;
             for _ in 0..(days * SECONDS_PER_DAY / 60.0) as usize {
                 step(&mut w, &t, 60.0);
-                low = low.min(w.food);
+                low = low.min(w.resources.food);
             }
-            (w.food, low)
+            (w.resources.food, low)
         }
 
         let (healthy_food, _) = food_after(true, 10.0);
         let (broken_food, _) = food_after(false, 10.0);
 
         assert!(
-            healthy_food > 0.5 * new_world().food_capacity,
+            healthy_food > 0.5 * new_world().resources.food_capacity,
             "a working colony should keep its larder stocked, got {healthy_food}"
         );
         assert!(
-            broken_food < 0.25 * new_world().food_capacity,
+            broken_food < 0.25 * new_world().resources.food_capacity,
             "a colony without recreation should drain its larder, got {broken_food}"
         );
     }

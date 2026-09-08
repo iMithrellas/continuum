@@ -9,6 +9,7 @@ const Alert = Types.Alert
 const Severity = Types.Severity
 const Colonist = Types.Colonist
 const Activity = Types.Activity
+const WorkType = Types.WorkType
 const Goal = Types.Goal
 const Colony = Types.Colony
 const Config = Types.Config
