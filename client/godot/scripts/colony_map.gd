@@ -10,9 +10,9 @@ signal tile_selected(tile_id: int)
 
 const TILE_COLORS: Dictionary[int, Color] = {
 	ContinuumTileKind.Options.empty: Color("2a2e37"),
-	ContinuumTileKind.Options.food: Color("3f9b52"),
+	ContinuumTileKind.Options.dining: Color("3f9b52"),
 	ContinuumTileKind.Options.sleep: Color("4a5bb5"),
-	ContinuumTileKind.Options.work: Color("b1802c"),
+	ContinuumTileKind.Options.farm: Color("b1802c"),
 	ContinuumTileKind.Options.recreation: Color("9350b8"),
 }
 

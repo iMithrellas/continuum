@@ -14,6 +14,7 @@ const table_names: Array[String] = ['colonist']
 @export var target_x: int
 @export var target_y: int
 @export var activity: ContinuumActivity
+@export var work: ContinuumWorkType
 @export var goal: ContinuumGoal
 @export var hunger: float
 @export var fatigue: float
@@ -34,6 +35,7 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"target_x": "I32",
 	"target_y": "I32",
 	"activity": "ContinuumActivity",
+	"work": "ContinuumWorkType",
 	"goal": "ContinuumGoal",
 	"hunger": "F32",
 	"fatigue": "F32",
@@ -52,15 +54,16 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 ## 6. target_x: int[br]
 ## 7. target_y: int[br]
 ## 8. activity: ContinuumActivity[br]
-## 9. goal: ContinuumGoal[br]
-## 10. hunger: float[br]
-## 11. fatigue: float[br]
-## 12. recreation: float[br]
-## 13. mood: float[br]
-## 14. productivity: float[br]
-## 15. sleep_hours: float[br]
-## 16. last_sleep_quality: float[br]
-static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progress: float, p_target_x: int, p_target_y: int, p_activity: ContinuumActivity, p_goal: ContinuumGoal, p_hunger: float, p_fatigue: float, p_recreation: float, p_mood: float, p_productivity: float, p_sleep_hours: float, p_last_sleep_quality: float) -> ContinuumColonist:
+## 9. work: ContinuumWorkType[br]
+## 10. goal: ContinuumGoal[br]
+## 11. hunger: float[br]
+## 12. fatigue: float[br]
+## 13. recreation: float[br]
+## 14. mood: float[br]
+## 15. productivity: float[br]
+## 16. sleep_hours: float[br]
+## 17. last_sleep_quality: float[br]
+static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progress: float, p_target_x: int, p_target_y: int, p_activity: ContinuumActivity, p_work: ContinuumWorkType, p_goal: ContinuumGoal, p_hunger: float, p_fatigue: float, p_recreation: float, p_mood: float, p_productivity: float, p_sleep_hours: float, p_last_sleep_quality: float) -> ContinuumColonist:
 	var result: ContinuumColonist = ContinuumColonist.new()
 	result.id = p_id
 	result.name = p_name
@@ -70,6 +73,7 @@ static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progres
 	result.target_x = p_target_x
 	result.target_y = p_target_y
 	result.activity = p_activity
+	result.work = p_work
 	result.goal = p_goal
 	result.hunger = p_hunger
 	result.fatigue = p_fatigue
