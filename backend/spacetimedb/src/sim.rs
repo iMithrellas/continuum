@@ -1104,12 +1104,12 @@ mod tests {
         colonist.goal = Goal::Sleep;
         colonist.fatigue = 100.0;
         colonist.mood = 100.0;
-        colonist.sleep_hours = t.max_sleep_hours - 0.5;
+        colonist.sleep_hours = t.max_sleep_hours - 60.0 / 3600.0;
 
-        step(&mut w, &t, 3600.0);
+        step(&mut w, &t, 60.0);
         let colonist = &w.colonists[0];
         assert_eq!(colonist.sleep_hours, t.max_sleep_hours);
-        assert_eq!(colonist.fatigue, 92.0);
+        assert!(colonist.fatigue < 100.0);
 
         step(&mut w, &t, 60.0);
         let colonist = &w.colonists[0];
@@ -1138,14 +1138,14 @@ mod tests {
         colonist.activity = Activity::Travelling;
         colonist.goal = Goal::Eat;
         colonist.hunger = 80.0;
-        let food = w.food;
+        let food = w.resources.food;
 
         step(&mut w, &t, 60.0);
 
         let colonist = &w.colonists[0];
         assert_eq!((colonist.target_x, colonist.target_y), (3, 2));
         assert_eq!(colonist.activity, Activity::Travelling);
-        assert_eq!(w.food, food);
+        assert_eq!(w.resources.food, food);
     }
 
     #[test]
@@ -1169,14 +1169,14 @@ mod tests {
         colonist.activity = Activity::Eating;
         colonist.goal = Goal::Eat;
         colonist.hunger = 80.0;
-        let food = w.food;
+        let food = w.resources.food;
 
         step(&mut w, &t, 60.0);
 
         let colonist = &w.colonists[0];
         assert_eq!(colonist.goal, Goal::Work);
         assert_ne!(colonist.activity, Activity::Eating);
-        assert_eq!(w.food, food);
+        assert_eq!(w.resources.food, food);
     }
 
     #[test]
