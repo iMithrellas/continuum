@@ -4,22 +4,16 @@ class_name ContinuumWorkType extends RustEnum
 
 enum Options {
 	none,
-	logging,
-	mining,
-	hunting,
-	hauling,
+	farming,
 }
 
-const enum_options: Array[StringName] = ['', '', '', '', '']
+const enum_options: Array[StringName] = ['', '']
 const bsatn_enum_type: StringName = &'ContinuumWorkType'
 
 static func parse_enum_name(i: int) -> String:
 	match i:
 		0: return &'none'
-		1: return &'logging'
-		2: return &'mining'
-		3: return &'hunting'
-		4: return &'hauling'
+		1: return &'farming'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -33,14 +27,5 @@ static func create(p_type: int, p_data: Variant = null) -> ContinuumWorkType:
 static func create_none() -> ContinuumWorkType:
 	return create(Options.none)
 
-static func create_logging() -> ContinuumWorkType:
-	return create(Options.logging)
-
-static func create_mining() -> ContinuumWorkType:
-	return create(Options.mining)
-
-static func create_hunting() -> ContinuumWorkType:
-	return create(Options.hunting)
-
-static func create_hauling() -> ContinuumWorkType:
-	return create(Options.hauling)
+static func create_farming() -> ContinuumWorkType:
+	return create(Options.farming)
