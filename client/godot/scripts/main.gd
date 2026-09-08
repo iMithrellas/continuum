@@ -12,13 +12,7 @@ const REFRESH_INTERVAL := 0.25
 const MAX_FEED_LINES := 40
 
 ## `time_scale` is in-game seconds per real second. 6.0 is the intended rate
-## (4 real hours per in-game day); the rest are development accelerations.
-const TIME_SCALE_PRESETS := [
-	{"label": "1x (4h/day)", "value": 6.0},
-	{"label": "10x", "value": 60.0},
-	{"label": "100x", "value": 600.0},
-	{"label": "600x", "value": 3600.0},
-]
+## (4 real hours per in-game day).
 const BASE_TIME_SCALE := 6.0
 const RECONNECT_DELAY := 2.0
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
@@ -81,12 +75,15 @@ func _ready() -> void:
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
 	options.debug_mode = false
+	options.one_time_token = false
+	options.save_token = true
 
 	# Host/database can be overridden on the command line, which makes running two
 	# clients against one colony (or against a remote one) trivial:
 	#   godot -- --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
 	_host = _cli_option("--stdb-host", "http://127.0.0.1:3000")
 	_database = _cli_option("--stdb-db", "continuum")
+	client.token_save_path = _identity_token_path(_host, _database)
 
 	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
 	client.connect_db(_host, _database, options)
@@ -97,6 +94,10 @@ func _cli_option(option: String, fallback: String) -> String:
 		if argument.begins_with(option + "="):
 			return argument.substr(option.length() + 1)
 	return fallback
+
+
+func _identity_token_path(host: String, database: String) -> String:
+	return "user://continuum_identity_%s.token" % (host + "/" + database).md5_text()
 
 
 func _process(delta: float) -> void:
@@ -125,6 +126,7 @@ func _notification(what: int) -> void:
 
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_reconnect_timer = null
+	print("Continuum identity: %s" % identity.hex_encode())
 	_set_connection_text("connected as %s..." % identity.hex_encode().substr(0, 12),
 			Color("6fcf7f"))
 	# Held for the life of the screen: a drop suspends this handle and the
@@ -167,6 +169,9 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 	_reconnect_timer = null
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
+	options.debug_mode = false
+	options.one_time_token = false
+	options.save_token = true
 	SpacetimeDB.Continuum.connect_db(_host, _database, options)
 
 
@@ -213,10 +218,6 @@ func _toggle_selected_tile() -> void:
 
 func _acknowledge(alert_id: int) -> void:
 	_report(SpacetimeDB.Continuum.reducers.acknowledge_alert(alert_id), "acknowledge_alert")
-
-
-func _set_time_scale(value: float) -> void:
-	_report(SpacetimeDB.Continuum.reducers.set_time_scale(value), "set_time_scale")
 
 
 ## Surface a rejected reducer instead of letting it fail silently. The server is
@@ -267,21 +268,6 @@ func _build_side_panel() -> void:
 
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
-
-	var speed_label := Label.new()
-	speed_label.text = "Simulation speed"
-	speed_label.add_theme_font_size_override("font_size", 11)
-	side.add_child(speed_label)
-
-	var speed_row := HBoxContainer.new()
-	for preset: Dictionary in TIME_SCALE_PRESETS:
-		var button := Button.new()
-		button.text = str(preset["label"])
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.add_theme_font_size_override("font_size", 10)
-		button.pressed.connect(_set_time_scale.bind(float(preset["value"])))
-		speed_row.add_child(button)
-	side.add_child(speed_row)
 
 	side.add_child(_heading("Alerts"))
 	_alert_box = VBoxContainer.new()
