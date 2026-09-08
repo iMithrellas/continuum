@@ -556,7 +556,7 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
             &availability,
             work_available,
         );
-        let desired = decision.goal;
+        let mut desired = decision.goal;
 
         if decision.denied_recreation {
             let colonist = &world.colonists[colonist_index];
@@ -573,7 +573,17 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
             });
         }
 
-        if world.colonists[colonist_index].goal != desired {
+        let work = world.colonists[colonist_index].work;
+        let destination_invalid = desired.tile_kind(work).is_some_and(|kind| {
+            let colonist = &world.colonists[colonist_index];
+            !world.tiles.iter().any(|tile| {
+                tile.x == colonist.target_x
+                    && tile.y == colonist.target_y
+                    && tile.kind == kind
+                    && tile.enabled
+            })
+        });
+        if world.colonists[colonist_index].goal != desired || destination_invalid {
             let (x, y) = (
                 world.colonists[colonist_index].x,
                 world.colonists[colonist_index].y,
@@ -582,6 +592,10 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
                 .tile_kind(world.colonists[colonist_index].work)
                 .and_then(|kind| world.nearest_enabled_tile(kind, x, y))
                 .map(|tile| (tile.x, tile.y));
+
+            if desired.tile_kind(work).is_some() && dest.is_none() {
+                desired = Goal::Nothing;
+            }
 
             let colonist = &mut world.colonists[colonist_index];
             colonist.goal = desired;
@@ -766,7 +780,8 @@ fn decide(
         }
         Activity::Sleeping
             if colonist.fatigue > tuning.sleep_stop_fatigue
-                && colonist.sleep_hours < tuning.max_sleep_hours =>
+                && colonist.sleep_hours < tuning.max_sleep_hours
+                && availability.sleep =>
         {
             return Decision::for_goal(Goal::Sleep)
         }
@@ -790,7 +805,9 @@ fn decide(
         // falling back to work.
         denied_food = colonist.goal != Goal::Work && availability.kitchen;
     }
-    if colonist.fatigue >= tuning.crit_fatigue && availability.sleep {
+    let sleep_cap_reached =
+        colonist.activity == Activity::Sleeping && colonist.sleep_hours >= tuning.max_sleep_hours;
+    if colonist.fatigue >= tuning.crit_fatigue && availability.sleep && !sleep_cap_reached {
         return Decision {
             goal: Goal::Sleep,
             denied_recreation,
@@ -852,11 +869,12 @@ fn step_eat(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours:
 }
 
 fn step_sleep(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
+    let sleep_hours = dt_hours.min((tuning.max_sleep_hours - colonist.sleep_hours).max(0.0));
     let quality = sleep_quality(colonist.mood, tuning);
     colonist.last_sleep_quality = quality;
     colonist.fatigue =
-        clamp_percentage(colonist.fatigue - tuning.sleep_recovery_per_hour * quality * dt_hours);
-    colonist.sleep_hours += dt_hours;
+        clamp_percentage(colonist.fatigue - tuning.sleep_recovery_per_hour * quality * sleep_hours);
+    colonist.sleep_hours = (colonist.sleep_hours + sleep_hours).min(tuning.max_sleep_hours);
 }
 
 fn step_recreate(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
@@ -1050,6 +1068,98 @@ mod tests {
         assert!(w.colonists.iter().all(|colonist| {
             colonist.goal == Goal::Nothing && colonist.activity == Activity::Idle
         }));
+    }
+
+    #[test]
+    fn sleep_cap_wakes_a_still_critically_fatigued_colonist() {
+        let t = Tuning {
+            move_tiles_per_hour: 0.0,
+            ..Tuning::default()
+        };
+        let mut w = new_world();
+        w.colonists.truncate(1);
+        let colonist = &mut w.colonists[0];
+        colonist.x = 12;
+        colonist.y = 2;
+        colonist.target_x = 12;
+        colonist.target_y = 2;
+        colonist.activity = Activity::Sleeping;
+        colonist.goal = Goal::Sleep;
+        colonist.fatigue = 100.0;
+        colonist.mood = 100.0;
+        colonist.sleep_hours = t.max_sleep_hours - 0.5;
+
+        step(&mut w, &t, 3600.0);
+        let colonist = &w.colonists[0];
+        assert_eq!(colonist.sleep_hours, t.max_sleep_hours);
+        assert_eq!(colonist.fatigue, 92.0);
+
+        step(&mut w, &t, 60.0);
+        let colonist = &w.colonists[0];
+        assert_ne!(colonist.goal, Goal::Sleep);
+        assert_ne!(colonist.activity, Activity::Sleeping);
+    }
+
+    #[test]
+    fn disabled_target_retargets_an_enabled_facility_of_the_same_kind() {
+        let t = Tuning {
+            move_tiles_per_hour: 0.0,
+            ..Tuning::default()
+        };
+        let mut w = new_world();
+        w.colonists.truncate(1);
+        for tile in &mut w.tiles {
+            if tile.kind == TileKind::Dining {
+                tile.enabled = tile.x == 3 && tile.y == 2;
+            }
+        }
+        let colonist = &mut w.colonists[0];
+        colonist.x = 0;
+        colonist.y = 0;
+        colonist.target_x = 2;
+        colonist.target_y = 2;
+        colonist.activity = Activity::Travelling;
+        colonist.goal = Goal::Eat;
+        colonist.hunger = 80.0;
+        let food = w.food;
+
+        step(&mut w, &t, 60.0);
+
+        let colonist = &w.colonists[0];
+        assert_eq!((colonist.target_x, colonist.target_y), (3, 2));
+        assert_eq!(colonist.activity, Activity::Travelling);
+        assert_eq!(w.food, food);
+    }
+
+    #[test]
+    fn disabled_only_facility_falls_back_without_performing_the_activity() {
+        let t = Tuning {
+            move_tiles_per_hour: 0.0,
+            ..Tuning::default()
+        };
+        let mut w = new_world();
+        w.colonists.truncate(1);
+        for tile in &mut w.tiles {
+            if tile.kind == TileKind::Dining {
+                tile.enabled = false;
+            }
+        }
+        let colonist = &mut w.colonists[0];
+        colonist.x = 2;
+        colonist.y = 2;
+        colonist.target_x = 2;
+        colonist.target_y = 2;
+        colonist.activity = Activity::Eating;
+        colonist.goal = Goal::Eat;
+        colonist.hunger = 80.0;
+        let food = w.food;
+
+        step(&mut w, &t, 60.0);
+
+        let colonist = &w.colonists[0];
+        assert_eq!(colonist.goal, Goal::Work);
+        assert_ne!(colonist.activity, Activity::Eating);
+        assert_eq!(w.food, food);
     }
 
     #[test]
