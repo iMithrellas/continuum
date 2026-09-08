@@ -43,27 +43,50 @@ pub enum Activity {
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WorkType {
     None,
+    Logging,
+    Mining,
+    Hunting,
+    Hauling,
     Farming,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ResourceKind {
     Food,
+    Wood,
+    Stone,
+    Meat,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WorkDefinition {
     pub facility: TileKind,
-    pub output: ResourceKind,
+    pub output: Option<ResourceKind>,
 }
 
 impl WorkType {
     pub fn definition(self) -> Option<WorkDefinition> {
         match self {
             WorkType::None => None,
+            WorkType::Logging => Some(WorkDefinition {
+                facility: TileKind::Forest,
+                output: Some(ResourceKind::Wood),
+            }),
+            WorkType::Mining => Some(WorkDefinition {
+                facility: TileKind::Mine,
+                output: Some(ResourceKind::Stone),
+            }),
+            WorkType::Hunting => Some(WorkDefinition {
+                facility: TileKind::Forest,
+                output: Some(ResourceKind::Meat),
+            }),
+            WorkType::Hauling => Some(WorkDefinition {
+                facility: TileKind::Storage,
+                output: None,
+            }),
             WorkType::Farming => Some(WorkDefinition {
                 facility: TileKind::Farm,
-                output: ResourceKind::Food,
+                output: Some(ResourceKind::Food),
             }),
         }
     }
@@ -135,8 +158,8 @@ pub struct Tuning {
     pub recreate_rate_per_hour: f32,
     pub recreate_stop: f32,
 
-    /// Food produced per in-game hour by a colonist at 100% productivity.
-    pub work_food_per_hour: f32,
+    /// Resource units produced per in-game hour by a colonist at 100% productivity.
+    pub work_resource_per_hour: f32,
 
     pub mood_base: f32,
     pub mood_w_hunger: f32,
@@ -183,7 +206,7 @@ impl Default for Tuning {
             recreate_rate_per_hour: 60.0,
             recreate_stop: 5.0,
 
-            work_food_per_hour: 2.2,
+            work_resource_per_hour: 2.2,
 
             mood_base: 110.0,
             mood_w_hunger: 0.20,
@@ -260,22 +283,34 @@ impl Colonist {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Resources {
     pub food: f32,
     pub food_capacity: f32,
+    pub wood: f32,
+    pub wood_capacity: f32,
+    pub stone: f32,
+    pub stone_capacity: f32,
+    pub meat: f32,
+    pub meat_capacity: f32,
 }
 
 impl Resources {
     pub fn amount(&self, kind: ResourceKind) -> f32 {
         match kind {
             ResourceKind::Food => self.food,
+            ResourceKind::Wood => self.wood,
+            ResourceKind::Stone => self.stone,
+            ResourceKind::Meat => self.meat,
         }
     }
 
     pub fn capacity(&self, kind: ResourceKind) -> f32 {
         match kind {
             ResourceKind::Food => self.food_capacity,
+            ResourceKind::Wood => self.wood_capacity,
+            ResourceKind::Stone => self.stone_capacity,
+            ResourceKind::Meat => self.meat_capacity,
         }
     }
 
@@ -285,6 +320,9 @@ impl Resources {
             ResourceKind::Food => {
                 self.food = (self.food + amount).min(capacity);
             }
+            ResourceKind::Wood => self.wood = (self.wood + amount).min(capacity),
+            ResourceKind::Stone => self.stone = (self.stone + amount).min(capacity),
+            ResourceKind::Meat => self.meat = (self.meat + amount).min(capacity),
         }
     }
 
@@ -293,6 +331,9 @@ impl Resources {
         let taken = amount.min(available);
         match kind {
             ResourceKind::Food => self.food = (self.food - taken).max(0.0),
+            ResourceKind::Wood => self.wood = (self.wood - taken).max(0.0),
+            ResourceKind::Stone => self.stone = (self.stone - taken).max(0.0),
+            ResourceKind::Meat => self.meat = (self.meat - taken).max(0.0),
         }
         taken
     }
@@ -439,6 +480,12 @@ pub fn new_world() -> World {
         resources: Resources {
             food: 90.0,
             food_capacity: 100.0,
+            wood: 0.0,
+            wood_capacity: 100.0,
+            stone: 0.0,
+            stone_capacity: 100.0,
+            meat: 0.0,
+            meat_capacity: 100.0,
         },
         game_seconds: 8.0 * 3600.0, // colony wakes up at 08:00 on day 1
         mood_ema: 80.0,
@@ -818,12 +865,16 @@ fn step_recreate(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
 }
 
 fn step_work(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
-    let Some(definition) = world.colonists[colonist_index].work.definition() else {
+    let Some(output) = world.colonists[colonist_index]
+        .work
+        .definition()
+        .and_then(|definition| definition.output)
+    else {
         return;
     };
     let productivity = world.colonists[colonist_index].productivity / 100.0;
-    let produced = tuning.work_food_per_hour * productivity * dt_hours;
-    world.resources.add(definition.output, produced);
+    let produced = tuning.work_resource_per_hour * productivity * dt_hours;
+    world.resources.add(output, produced);
 }
 
 #[cfg(test)]
@@ -916,13 +967,72 @@ mod tests {
         assert_eq!(WorkType::None.definition(), None);
         assert_eq!(Goal::Work.tile_kind(WorkType::None), None);
 
-        let farming = WorkType::Farming.definition().unwrap();
-        assert_eq!(farming.facility, TileKind::Farm);
-        assert_eq!(farming.output, ResourceKind::Food);
-        assert_eq!(
-            Goal::Work.tile_kind(WorkType::Farming),
-            Some(TileKind::Farm)
-        );
+        for (work, facility, output) in [
+            (WorkType::Farming, TileKind::Farm, Some(ResourceKind::Food)),
+            (
+                WorkType::Logging,
+                TileKind::Forest,
+                Some(ResourceKind::Wood),
+            ),
+            (WorkType::Mining, TileKind::Mine, Some(ResourceKind::Stone)),
+            (
+                WorkType::Hunting,
+                TileKind::Forest,
+                Some(ResourceKind::Meat),
+            ),
+            (WorkType::Hauling, TileKind::Storage, None),
+        ] {
+            let definition = work.definition().unwrap();
+            assert_eq!(definition.facility, facility);
+            assert_eq!(definition.output, output);
+            assert_eq!(Goal::Work.tile_kind(work), Some(facility));
+        }
+    }
+
+    #[test]
+    fn producing_work_updates_only_its_declared_resource() {
+        const KINDS: [ResourceKind; 4] = [
+            ResourceKind::Food,
+            ResourceKind::Wood,
+            ResourceKind::Stone,
+            ResourceKind::Meat,
+        ];
+        let tuning = Tuning::default();
+
+        for (work, output) in [
+            (WorkType::Farming, ResourceKind::Food),
+            (WorkType::Logging, ResourceKind::Wood),
+            (WorkType::Mining, ResourceKind::Stone),
+            (WorkType::Hunting, ResourceKind::Meat),
+        ] {
+            let mut world = new_world();
+            world.colonists[0].work = work;
+            let before = world.resources.clone();
+
+            step_work(&mut world, 0, &tuning, 1.0);
+
+            for kind in KINDS {
+                if kind == output {
+                    assert!(world.resources.amount(kind) > before.amount(kind));
+                } else {
+                    assert_eq!(world.resources.amount(kind), before.amount(kind));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn non_producing_work_does_not_manufacture_resources() {
+        let tuning = Tuning::default();
+        for work in [WorkType::None, WorkType::Hauling] {
+            let mut world = new_world();
+            world.colonists[0].work = work;
+            let before = world.resources.clone();
+
+            step_work(&mut world, 0, &tuning, 1.0);
+
+            assert_eq!(world.resources, before);
+        }
     }
 
     #[test]

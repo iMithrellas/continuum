@@ -41,6 +41,12 @@ pub struct Colony {
     pub id: u32,
     pub food: f32,
     pub food_capacity: f32,
+    pub wood: f32,
+    pub wood_capacity: f32,
+    pub stone: f32,
+    pub stone_capacity: f32,
+    pub meat: f32,
+    pub meat_capacity: f32,
     /// Instantaneous colony averages.
     pub avg_mood: f32,
     pub avg_productivity: f32,
@@ -198,6 +204,12 @@ fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
             id: 0,
             food: world.resources.food,
             food_capacity: world.resources.food_capacity,
+            wood: world.resources.wood,
+            wood_capacity: world.resources.wood_capacity,
+            stone: world.resources.stone,
+            stone_capacity: world.resources.stone_capacity,
+            meat: world.resources.meat,
+            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
@@ -276,6 +288,21 @@ fn load_world(ctx: &ReducerContext) -> World {
                 .as_ref()
                 .map(|colony| colony.food_capacity)
                 .unwrap_or(100.0),
+            wood: colony.as_ref().map(|colony| colony.wood).unwrap_or(0.0),
+            wood_capacity: colony
+                .as_ref()
+                .map(|colony| colony.wood_capacity)
+                .unwrap_or(100.0),
+            stone: colony.as_ref().map(|colony| colony.stone).unwrap_or(0.0),
+            stone_capacity: colony
+                .as_ref()
+                .map(|colony| colony.stone_capacity)
+                .unwrap_or(100.0),
+            meat: colony.as_ref().map(|colony| colony.meat).unwrap_or(0.0),
+            meat_capacity: colony
+                .as_ref()
+                .map(|colony| colony.meat_capacity)
+                .unwrap_or(100.0),
         },
         game_seconds: config
             .as_ref()
@@ -341,6 +368,12 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
             id: 0,
             food: world.resources.food,
             food_capacity: world.resources.food_capacity,
+            wood: world.resources.wood,
+            wood_capacity: world.resources.wood_capacity,
+            stone: world.resources.stone,
+            stone_capacity: world.resources.stone_capacity,
+            meat: world.resources.meat,
+            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
