@@ -9,7 +9,7 @@
 
 pub mod sim;
 
-use sim::{Activity, Goal, SimEvent, TileKind, Tuning, World};
+use sim::{Activity, Goal, SimEvent, TileKind, Tuning, WorkType, World};
 use spacetimedb::{reducer, table, ReducerContext, Table, TimeDuration};
 
 /// How often the scheduled tick reducer runs, in real time. In-game speed is
@@ -72,6 +72,7 @@ pub struct Colonist {
     pub target_x: i32,
     pub target_y: i32,
     pub activity: Activity,
+    pub work: WorkType,
     pub goal: Goal,
     pub hunger: f32,
     pub fatigue: f32,
@@ -250,6 +251,7 @@ fn load_world(ctx: &ReducerContext) -> World {
             target_x: colonist.target_x,
             target_y: colonist.target_y,
             activity: colonist.activity,
+            work: colonist.work,
             goal: colonist.goal,
             hunger: colonist.hunger,
             fatigue: colonist.fatigue,
@@ -298,6 +300,7 @@ fn colonist_row(colonist: &sim::Colonist) -> Colonist {
         target_x: colonist.target_x,
         target_y: colonist.target_y,
         activity: colonist.activity,
+        work: colonist.work,
         goal: colonist.goal,
         hunger: colonist.hunger,
         fatigue: colonist.fatigue,

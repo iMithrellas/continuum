@@ -21,9 +21,12 @@ pub const SECONDS_PER_DAY: f64 = 86_400.0;
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TileKind {
     Empty,
-    Food,
     Sleep,
-    Work,
+    Forest,
+    Storage,
+    Farm,
+    Mine,
+    Dining,
     Recreation,
 }
 
@@ -35,6 +38,15 @@ pub enum Activity {
     Eating,
     Sleeping,
     Recreating,
+}
+
+#[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WorkType {
+    None,
+    Logging,
+    Mining,
+    Hunting,
+    Hauling,
 }
 
 /// What a colonist is currently trying to achieve. `Activity` is the observable
@@ -52,10 +64,10 @@ impl Goal {
     pub fn tile_kind(self) -> Option<TileKind> {
         match self {
             Goal::Nothing => None,
-            Goal::Eat => Some(TileKind::Food),
+            Goal::Eat => Some(TileKind::Dining),
             Goal::Sleep => Some(TileKind::Sleep),
             Goal::Recreate => Some(TileKind::Recreation),
-            Goal::Work => Some(TileKind::Work),
+            Goal::Work => Some(TileKind::Farm),
         }
     }
 
@@ -190,6 +202,7 @@ pub struct Colonist {
     pub target_x: i32,
     pub target_y: i32,
     pub activity: Activity,
+    pub work: WorkType,
     pub goal: Goal,
 
     pub hunger: f32,
@@ -214,6 +227,7 @@ impl Colonist {
             target_x: x,
             target_y: y,
             activity: Activity::Idle,
+            work: WorkType::None,
             goal: Goal::Nothing,
             hunger: 10.0,
             fatigue: 10.0,
@@ -311,11 +325,11 @@ pub fn default_tiles() -> Vec<Tile> {
     for y in 0..GRID_H {
         for x in 0..GRID_W {
             let kind = if in_rect(x, y, 2, 2, 3, 3) {
-                TileKind::Food
+                TileKind::Dining
             } else if in_rect(x, y, 12, 2, 13, 3) {
                 TileKind::Sleep
             } else if in_rect(x, y, 6, 10, 8, 12) {
-                TileKind::Work
+                TileKind::Farm
             } else if in_rect(x, y, 2, 12, 3, 13) {
                 TileKind::Recreation
             } else {
@@ -349,6 +363,7 @@ pub fn default_colonists() -> Vec<Colonist> {
         Colonist::new(1, "Ada", 7, 7),
         Colonist::new(2, "Bram", 8, 7),
         Colonist::new(3, "Cyra", 7, 8),
+        // Colonist::new(4, "Mithrel", 8, 8),
     ];
     let offsets = [(6.0, 30.0, 12.0), (26.0, 8.0, 34.0), (44.0, 20.0, 2.0)];
     for (colonist, (hunger, fatigue, recreation)) in colonists.iter_mut().zip(offsets) {
@@ -415,11 +430,11 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
     let availability = Availability {
         // A colonist can only eat if there is both a working kitchen *and*
         // something in the larder.
-        food: world.has_enabled(TileKind::Food) && world.food > 0.0,
-        kitchen: world.has_enabled(TileKind::Food),
+        food: world.has_enabled(TileKind::Dining) && world.food > 0.0,
+        kitchen: world.has_enabled(TileKind::Dining),
         sleep: world.has_enabled(TileKind::Sleep),
         recreation: world.has_enabled(TileKind::Recreation),
-        work: world.has_enabled(TileKind::Work),
+        work: world.has_enabled(TileKind::Farm),
     };
 
     let colonist_count = world.colonists.len();
@@ -807,9 +822,9 @@ mod tests {
         let w = new_world();
         assert_eq!(w.tiles.len(), (GRID_W * GRID_H) as usize);
         for kind in [
-            TileKind::Food,
+            TileKind::Dining,
             TileKind::Sleep,
-            TileKind::Work,
+            TileKind::Farm,
             TileKind::Recreation,
         ] {
             assert!(w.has_enabled(kind), "missing tile kind {kind:?}");
@@ -1067,7 +1082,7 @@ mod tests {
         let mut w = new_world();
         w.food = 0.0;
         for tile in w.tiles.iter_mut() {
-            if tile.kind == TileKind::Work {
+            if tile.kind == TileKind::Farm {
                 tile.enabled = false;
             }
         }
