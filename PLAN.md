@@ -73,7 +73,7 @@
 
 ## Observability
 - [ ] Basic in-game status overview
-- [ ] Historical graphs
+- [ ] Historical graphs (client-only bounded session history; no server persistence)
 - [ ] Event log / audit timeline
 - [ ] Explain why systems stopped or degraded
 - [ ] Production throughput metrics
