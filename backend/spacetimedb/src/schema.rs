@@ -31,6 +31,16 @@ pub struct Config {
     pub haul_policy: HaulPolicy,
 }
 
+/// Singleton admin policy for speed changes. Missing rows on additive updates
+/// behave as the disabled default until the first policy or speed write.
+#[table(accessor = speed_control, public)]
+pub struct SpeedControl {
+    #[primary_key]
+    pub id: u32,
+    pub cooldown_seconds: u32,
+    pub last_changed_at: Option<spacetimedb::Timestamp>,
+}
+
 #[table(accessor = colony, public)]
 pub struct Colony {
     #[primary_key]

@@ -2,9 +2,10 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["colony", "event_log", "item_stack", "config", "colonist", "work_order", "alert", "tile"]
+const table_names : Array[String] = ["colony", "speed_control", "event_log", "item_stack", "config", "colonist", "work_order", "alert", "tile"]
 
 var colony: ContinuumColonyTable
+var speed_control: ContinuumSpeedControlTable
 var event_log: ContinuumEventLogTable
 var item_stack: ContinuumItemStackTable
 var config: ContinuumConfigTable
@@ -15,6 +16,7 @@ var tile: ContinuumTileTable
 
 func _init(p_local_db: LocalDatabase) -> void:
 	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
+	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
 	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
 	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
 	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)

@@ -6,6 +6,7 @@ mod events;
 mod persistence;
 mod schema;
 pub mod sim;
+mod speed_policy;
 
 use auth::{authorize, identity_hex, RequiredRole};
 use events::{emit_sim_events, log_event, reconcile_alerts, trim_event_log};
@@ -267,13 +268,31 @@ pub fn acknowledge_alert(ctx: &ReducerContext, alert_id: u64) -> Result<(), Stri
 #[reducer]
 pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), String> {
     authorize(ctx, RequiredRole::Admin)?;
-    if !(0.0..=100_000.0).contains(&time_scale) {
-        return Err("time_scale must be between 0 and 100000".into());
-    }
+    speed_policy::validate_time_scale(time_scale)?;
     let Some(config) = ctx.db.config().id().find(0) else {
         return Err("colony is not initialised".into());
     };
     let previous = config.time_scale;
+    if previous == time_scale {
+        return Ok(());
+    }
+    let control = ctx.db.speed_control().id().find(0).unwrap_or(SpeedControl {
+        id: 0,
+        cooldown_seconds: 0,
+        last_changed_at: None,
+    });
+    if let Some(last_changed_at) = control.last_changed_at {
+        let remaining = speed_policy::remaining_cooldown_seconds(
+            control.cooldown_seconds,
+            ctx.timestamp.to_micros_since_unix_epoch(),
+            last_changed_at.to_micros_since_unix_epoch(),
+        );
+        if remaining > 0 {
+            return Err(format!(
+                "speed changes are on cooldown; {remaining} seconds remaining"
+            ));
+        }
+    }
     upsert_config(
         ctx,
         Config {
@@ -281,11 +300,56 @@ pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), Strin
             ..config
         },
     );
+    let updated_control = SpeedControl {
+        last_changed_at: Some(ctx.timestamp),
+        ..control
+    };
+    if ctx.db.speed_control().id().find(0).is_some() {
+        ctx.db.speed_control().id().update(updated_control);
+    } else {
+        ctx.db.speed_control().insert(updated_control);
+    }
     log_event(
         ctx,
         Severity::Info,
         format!(
             "Simulation speed changed by admin {}: {previous:.0}x -> {time_scale:.0}x in-game seconds per real second",
+            identity_hex(ctx.sender())
+        ),
+    );
+    Ok(())
+}
+
+/// Set the admin-only real-time cooldown between actual speed changes.
+#[reducer]
+pub fn set_speed_change_cooldown(
+    ctx: &ReducerContext,
+    cooldown_seconds: u32,
+) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
+    speed_policy::validate_cooldown(cooldown_seconds)?;
+    let control = ctx.db.speed_control().id().find(0).unwrap_or(SpeedControl {
+        id: 0,
+        cooldown_seconds: 0,
+        last_changed_at: None,
+    });
+    if control.cooldown_seconds == cooldown_seconds {
+        return Ok(());
+    }
+    let updated_control = SpeedControl {
+        cooldown_seconds,
+        ..control
+    };
+    if ctx.db.speed_control().id().find(0).is_some() {
+        ctx.db.speed_control().id().update(updated_control);
+    } else {
+        ctx.db.speed_control().insert(updated_control);
+    }
+    log_event(
+        ctx,
+        Severity::Info,
+        format!(
+            "Speed-change cooldown set to {cooldown_seconds} seconds by admin {}.",
             identity_hex(ctx.sender())
         ),
     );

@@ -66,6 +66,17 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         },
     );
     upsert_colony(ctx, colony_row(&world));
+    // Reset explicitly owns policy state: a reset starts with cooldown disabled.
+    let control = SpeedControl {
+        id: 0,
+        cooldown_seconds: 0,
+        last_changed_at: None,
+    };
+    if ctx.db.speed_control().id().find(0).is_some() {
+        ctx.db.speed_control().id().update(control);
+    } else {
+        ctx.db.speed_control().insert(control);
+    }
 }
 
 pub(crate) fn upsert_config(ctx: &ReducerContext, row: Config) {
