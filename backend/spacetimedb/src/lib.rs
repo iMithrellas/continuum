@@ -9,7 +9,10 @@
 
 pub mod sim;
 
-use sim::{Activity, Goal, Resources, SimEvent, TileKind, Tuning, WorkType, World};
+use sim::{
+    Activity, Goal, HaulPolicy, HaulRole, ResourceKind, Resources, SimEvent, TileKind, Tuning,
+    WorkType, World,
+};
 use spacetimedb::{reducer, table, Identity, ReducerContext, Table, TimeDuration};
 
 /// How often the scheduled tick reducer runs, in real time. In-game speed is
@@ -89,6 +92,7 @@ pub struct Config {
     pub game_seconds: f64,
     /// Bumped every time the colony is reset; handy when debugging clients.
     pub generation: u32,
+    pub haul_policy: HaulPolicy,
 }
 
 #[table(accessor = colony, public)]
@@ -96,13 +100,9 @@ pub struct Colony {
     #[primary_key]
     pub id: u32,
     pub food: f32,
-    pub food_capacity: f32,
     pub wood: f32,
-    pub wood_capacity: f32,
     pub stone: f32,
-    pub stone_capacity: f32,
     pub meat: f32,
-    pub meat_capacity: f32,
     /// Instantaneous colony averages.
     pub avg_mood: f32,
     pub avg_productivity: f32,
@@ -135,6 +135,9 @@ pub struct Colonist {
     pub target_y: i32,
     pub activity: Activity,
     pub work: WorkType,
+    pub haul_role: HaulRole,
+    pub carried_kind: ResourceKind,
+    pub carried_amount: f32,
     pub goal: Goal,
     pub hunger: f32,
     pub fatigue: f32,
@@ -143,6 +146,17 @@ pub struct Colonist {
     pub productivity: f32,
     pub sleep_hours: f32,
     pub last_sleep_quality: f32,
+}
+
+#[table(accessor = item_stack, public)]
+pub struct ItemStack {
+    #[primary_key]
+    pub id: u64,
+    pub tile_id: u32,
+    pub x: i32,
+    pub y: i32,
+    pub kind: ResourceKind,
+    pub amount: f32,
 }
 
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
@@ -223,6 +237,9 @@ pub fn init(ctx: &ReducerContext) -> Result<(), String> {
 
 /// Wipe colony state and recreate it from the default layout.
 fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
+    for stack in ctx.db.item_stack().iter() {
+        ctx.db.item_stack().id().delete(stack.id);
+    }
     for tile in ctx.db.tile().iter() {
         ctx.db.tile().id().delete(tile.id);
     }
@@ -265,6 +282,7 @@ fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
             time_scale,
             game_seconds: world.game_seconds,
             generation,
+            haul_policy: world.haul_policy,
         },
     );
     upsert_colony(
@@ -272,13 +290,9 @@ fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         Colony {
             id: 0,
             food: world.resources.food,
-            food_capacity: world.resources.food_capacity,
             wood: world.resources.wood,
-            wood_capacity: world.resources.wood_capacity,
             stone: world.resources.stone,
-            stone_capacity: world.resources.stone_capacity,
             meat: world.resources.meat,
-            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
@@ -333,6 +347,9 @@ fn load_world(ctx: &ReducerContext) -> World {
             target_y: colonist.target_y,
             activity: colonist.activity,
             work: colonist.work,
+            haul_role: colonist.haul_role,
+            carried_kind: colonist.carried_kind,
+            carried_amount: colonist.carried_amount,
             goal: colonist.goal,
             hunger: colonist.hunger,
             fatigue: colonist.fatigue,
@@ -345,33 +362,37 @@ fn load_world(ctx: &ReducerContext) -> World {
         .collect();
     colonists.sort_by_key(|colonist| colonist.id);
 
+    let mut stacks: Vec<sim::ItemStack> = ctx
+        .db
+        .item_stack()
+        .iter()
+        .map(|stack| sim::ItemStack {
+            id: stack.id,
+            tile_id: stack.tile_id,
+            x: stack.x,
+            y: stack.y,
+            kind: stack.kind,
+            amount: stack.amount,
+        })
+        .collect();
+    stacks.sort_by_key(|stack| stack.id);
+
     let colony = ctx.db.colony().id().find(0);
     let config = ctx.db.config().id().find(0);
 
     World {
         tiles,
         colonists,
+        stacks,
+        haul_policy: config
+            .as_ref()
+            .map(|config| config.haul_policy)
+            .unwrap_or(HaulPolicy::SelfHaul),
         resources: Resources {
             food: colony.as_ref().map(|colony| colony.food).unwrap_or(0.0),
-            food_capacity: colony
-                .as_ref()
-                .map(|colony| colony.food_capacity)
-                .unwrap_or(100.0),
             wood: colony.as_ref().map(|colony| colony.wood).unwrap_or(0.0),
-            wood_capacity: colony
-                .as_ref()
-                .map(|colony| colony.wood_capacity)
-                .unwrap_or(100.0),
             stone: colony.as_ref().map(|colony| colony.stone).unwrap_or(0.0),
-            stone_capacity: colony
-                .as_ref()
-                .map(|colony| colony.stone_capacity)
-                .unwrap_or(100.0),
             meat: colony.as_ref().map(|colony| colony.meat).unwrap_or(0.0),
-            meat_capacity: colony
-                .as_ref()
-                .map(|colony| colony.meat_capacity)
-                .unwrap_or(100.0),
         },
         game_seconds: config
             .as_ref()
@@ -399,6 +420,9 @@ fn colonist_row(colonist: &sim::Colonist) -> Colonist {
         target_y: colonist.target_y,
         activity: colonist.activity,
         work: colonist.work,
+        haul_role: colonist.haul_role,
+        carried_kind: colonist.carried_kind,
+        carried_amount: colonist.carried_amount,
         goal: colonist.goal,
         hunger: colonist.hunger,
         fatigue: colonist.fatigue,
@@ -429,18 +453,38 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
     for colonist in &world.colonists {
         ctx.db.colonist().id().update(colonist_row(colonist));
     }
+    for stack in ctx.db.item_stack().iter() {
+        if world
+            .stacks
+            .binary_search_by_key(&stack.id, |stack| stack.id)
+            .is_err()
+        {
+            ctx.db.item_stack().id().delete(stack.id);
+        }
+    }
+    for stack in &world.stacks {
+        let row = ItemStack {
+            id: stack.id,
+            tile_id: stack.tile_id,
+            x: stack.x,
+            y: stack.y,
+            kind: stack.kind,
+            amount: stack.amount,
+        };
+        if ctx.db.item_stack().id().find(stack.id).is_some() {
+            ctx.db.item_stack().id().update(row);
+        } else {
+            ctx.db.item_stack().insert(row);
+        }
+    }
     upsert_colony(
         ctx,
         Colony {
             id: 0,
             food: world.resources.food,
-            food_capacity: world.resources.food_capacity,
             wood: world.resources.wood,
-            wood_capacity: world.resources.wood_capacity,
             stone: world.resources.stone,
-            stone_capacity: world.resources.stone_capacity,
             meat: world.resources.meat,
-            meat_capacity: world.resources.meat_capacity,
             avg_mood: world.avg_mood(),
             avg_productivity: world.avg_productivity(),
             smoothed_mood: world.mood_ema,
@@ -476,6 +520,7 @@ fn emit_sim_events(ctx: &ReducerContext, world: &World, events: &[SimEvent]) {
             SimEvent::ActivityChanged { name, to, .. } => {
                 let verb = match to {
                     Activity::Working => "started working",
+                    Activity::Hauling => "started hauling",
                     Activity::Eating => "started eating",
                     Activity::Sleeping => "went to sleep",
                     Activity::Recreating => "started recreating",
@@ -529,11 +574,7 @@ struct AlertSpec {
 }
 
 fn reconcile_alerts(ctx: &ReducerContext, world: &World) {
-    let food_pct = if world.resources.food_capacity > 0.0 {
-        world.resources.food / world.resources.food_capacity * 100.0
-    } else {
-        0.0
-    };
+    let food_per_colonist = world.resources.food / world.colonists.len().max(1) as f32;
     let mood = world.mood_ema;
     let prod = world.productivity_ema;
     let recreation_available = world.has_enabled(TileKind::Recreation);
@@ -549,11 +590,11 @@ fn reconcile_alerts(ctx: &ReducerContext, world: &World) {
         AlertSpec {
             code: "low_food",
             severity: Severity::Critical,
-            raise: food_pct < 25.0,
-            clear: food_pct > 40.0,
+            raise: food_per_colonist < 10.0,
+            clear: food_per_colonist > 20.0,
             message: format!(
-                "Food reached low threshold ({:.0} / {:.0}).",
-                world.resources.food, world.resources.food_capacity
+                "Food reserves are low ({:.0} stored, {:.0} per colonist).",
+                world.resources.food, food_per_colonist
             ),
         },
         AlertSpec {
@@ -757,6 +798,31 @@ pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> 
             ),
         );
     }
+    Ok(())
+}
+
+#[reducer]
+pub fn set_haul_policy(ctx: &ReducerContext, policy: HaulPolicy) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
+    let mut config = ctx
+        .db
+        .config()
+        .id()
+        .find(0)
+        .ok_or_else(|| "colony is not initialised".to_string())?;
+    if config.haul_policy == policy {
+        return Ok(());
+    }
+    config.haul_policy = policy;
+    ctx.db.config().id().update(config);
+    log_event(
+        ctx,
+        Severity::Info,
+        format!(
+            "Hauling mode changed to {policy:?} by operator {}.",
+            identity_hex(ctx.sender())
+        ),
+    );
     Ok(())
 }
 
