@@ -18,7 +18,7 @@ const RECONNECT_DELAY := 2.0
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
-	"SELECT * FROM item_stack",
+	"SELECT * FROM item_stack", "SELECT * FROM work_order",
 ])
 
 const SEVERITY_COLORS: Array[Color] = [
@@ -40,6 +40,16 @@ var _status_label: RichTextLabel
 var _colonist_box: VBoxContainer
 var _alert_box: VBoxContainer
 var _tile_action_box: VBoxContainer
+var _tile_info: Label
+var _tile_button: Button
+var _order_summary: Label
+var _order_controls: Dictionary = {}
+var _speed_buttons: Dictionary = {}
+var _speed_label: Label
+var _intent_feedback: Label
+var _intent_request: SpacetimeDBReducerCall
+var _intent_seconds := 0.0
+var _intent_name := ""
 var _recreation_button: Button
 var _feed: RichTextLabel
 var _connection_label: Label
@@ -108,6 +118,12 @@ func _identity_token_path(host: String, database: String) -> String:
 
 
 func _process(delta: float) -> void:
+	if _intent_request != null:
+		_intent_seconds -= delta
+		if _intent_seconds <= 0.0:
+			_intent_request = null
+			_intent_feedback.text = "%s: no response. Outcome unknown; check server state before retrying." % _intent_name
+			_dirty = true
 	if _haul_request != null:
 		_haul_request_seconds -= delta
 		if _haul_request_seconds <= 0.0:
@@ -133,10 +149,6 @@ func _notification(what: int) -> void:
 		_closing = true
 		SpacetimeDB.Continuum.disconnect_db()
 
-
-# ---------------------------------------------------------------------------
-# Connection lifecycle
-# ---------------------------------------------------------------------------
 
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_reconnect_timer = null
@@ -171,6 +183,9 @@ func _on_connection_error(code: int, reason: String) -> void:
 
 func _schedule_reconnect() -> void:
 	_state_ready = false
+	if _intent_request != null:
+		_intent_request = null
+		_intent_feedback.text = "%s: connection lost; outcome unknown. Waiting for server state." % _intent_name
 	if _haul_request != null:
 		_haul_request = null
 		_haul_feedback.text = "Connection lost. Hauling request outcome unknown; waiting for server state."
@@ -198,16 +213,13 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 
 func _on_table_changed(table_name: String) -> void:
 	_dirty = true
-	if table_name in ["tile", "colonist", "item_stack", "colony", "config"]:
+	if table_name in ["tile", "colonist", "item_stack", "work_order", "colony", "config"]:
 		_map_dirty = true
 
 
-# ---------------------------------------------------------------------------
-# Intents
-# ---------------------------------------------------------------------------
-
 func _on_tile_selected(tile_id: int) -> void:
 	_selected_tile_id = tile_id
+	_refresh_controls()
 	_dirty = true
 
 
@@ -230,11 +242,78 @@ func _toggle_recreation_zone() -> void:
 
 
 func _toggle_selected_tile() -> void:
+	if not _state_ready or _intent_request != null:
+		return
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
 	if tile == null:
 		return
-	_report(SpacetimeDB.Continuum.reducers.set_tile_enabled(tile.id, not tile.enabled),
-			"set_tile_enabled")
+	_track_intent(SpacetimeDB.Continuum.reducers.set_tile_enabled(tile.id, not tile.enabled),
+			"Tile #%d" % tile.id)
+
+
+func _change_order(work: int, action: String, priority: int = 2) -> void:
+	# Undo the button's built-in toggle even if its order disappeared before the click.
+	_refresh_controls()
+	if not _state_ready or _intent_request != null:
+		return
+	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
+	if tile == null or work not in ColonyMap.compatible_work(tile.kind.value):
+		return
+	var order: ContinuumWorkOrder = null
+	for candidate: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
+		if candidate.tile_id == tile.id and candidate.work.value == work:
+			order = candidate
+			break
+	var call: SpacetimeDBReducerCall
+	if action == "remove":
+		if order == null:
+			return
+		call = SpacetimeDB.Continuum.reducers.remove_work_order(order.id)
+	else:
+		var enabled := true
+		if order != null:
+			enabled = not order.enabled if action == "toggle" else order.enabled
+			if action == "toggle":
+				priority = order.priority
+		elif action != "toggle":
+			return
+		var work_type := ContinuumWorkType.create(work)
+		call = SpacetimeDB.Continuum.reducers.set_work_order(tile.id, work_type, priority, enabled)
+	_track_intent(call, "%s on tile #%d" % [ContinuumWorkType.parse_enum_name(work).capitalize(), tile.id])
+
+
+func _change_speed(speed: float) -> void:
+	_refresh_controls()
+	# Authorization remains entirely in the reducer; there is no client-side admin guess.
+	if _state_ready and _intent_request == null:
+		_track_intent(SpacetimeDB.Continuum.reducers.set_time_scale(speed), "Simulation speed")
+
+
+func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
+	_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	if call.error != OK:
+		_intent_feedback.text = "%s could not be sent (%d)." % [description, call.error]
+		_refresh_controls()
+		return
+	_intent_request = call
+	_intent_name = description
+	_intent_seconds = 10.0
+	_intent_feedback.text = "%s: pending. Displayed values follow the server." % description
+	call.response.connect(func(response: ReducerResultMessage) -> void:
+		if _intent_request != call:
+			return
+		_intent_request = null
+		_dirty = true
+		_intent_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+			_intent_feedback.text = "%s rejected: %s" % [description, response.reducer_result.get_err()]
+		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+			_intent_feedback.text = "%s failed: %s" % [description, response.reducer_result.get_internal_error()]
+		else:
+			_intent_feedback.text = "%s accepted. Values follow server state." % description
+			_intent_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+	, CONNECT_ONE_SHOT)
+	_refresh_controls()
 
 
 func _acknowledge(alert_id: int) -> void:
@@ -294,10 +373,6 @@ func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 			reducer_name, response.reducer_result.get_internal_error()], Color("ff5c6c"))
 
 
-# ---------------------------------------------------------------------------
-# Side panel construction
-# ---------------------------------------------------------------------------
-
 func _build_side_panel() -> void:
 	var side: VBoxContainer = $Layout/SidePanel/Margin/Scroll/Side
 	side.add_theme_constant_override("separation", 10)
@@ -331,18 +406,76 @@ func _build_side_panel() -> void:
 	_status_label.scroll_active = false
 	side.add_child(_status_label)
 
-	side.add_child(_heading("Colonists"))
-	_colonist_box = VBoxContainer.new()
-	_colonist_box.add_theme_constant_override("separation", 8)
-	side.add_child(_colonist_box)
+	side.add_child(_heading("Simulation speed (admin-only)"))
+	_speed_label = Label.new()
+	side.add_child(_speed_label)
+	var speeds := HBoxContainer.new()
+	for speed: int in [0, 6, 60, 600, 3600]:
+		var button := Button.new()
+		button.text = "Pause" if speed == 0 else "%dx" % (speed / 6)
+		button.toggle_mode = true
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.pressed.connect(_change_speed.bind(float(speed)))
+		speeds.add_child(button)
+		_speed_buttons[speed] = button
+	side.add_child(speeds)
+
+	side.add_child(_heading("Selected tile / standing orders"))
+	_tile_action_box = VBoxContainer.new()
+	side.add_child(_tile_action_box)
+	_tile_info = Label.new()
+	_tile_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_tile_action_box.add_child(_tile_info)
+	_tile_button = Button.new()
+	_tile_button.pressed.connect(_toggle_selected_tile)
+	_tile_action_box.add_child(_tile_button)
+	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
+			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
+		var box := VBoxContainer.new()
+		var label := Label.new()
+		box.add_child(label)
+		var actions := HBoxContainer.new()
+		var toggle := Button.new()
+		toggle.pressed.connect(_change_order.bind(work, "toggle"))
+		actions.add_child(toggle)
+		var remove := Button.new()
+		remove.text = "Remove"
+		remove.pressed.connect(_change_order.bind(work, "remove"))
+		actions.add_child(remove)
+		var priorities: Array[Button] = []
+		for priority: int in [1, 2, 3]:
+			var button := Button.new()
+			button.text = ColonyMap.PRIORITY_NAMES[priority]
+			button.toggle_mode = true
+			button.pressed.connect(_change_order.bind(work, "priority", priority))
+			actions.add_child(button)
+			priorities.append(button)
+		box.add_child(actions)
+		_tile_action_box.add_child(box)
+		_order_controls[work] = {"box": box, "label": label, "toggle": toggle,
+			"remove": remove, "priorities": priorities}
+	_order_summary = Label.new()
+	_order_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(_order_summary)
+	var explanation := Label.new()
+	explanation.text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
+	explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	explanation.add_theme_font_size_override("font_size", 11)
+	side.add_child(explanation)
+	_intent_feedback = Label.new()
+	_intent_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_intent_feedback.add_theme_font_size_override("font_size", 11)
+	side.add_child(_intent_feedback)
 
 	side.add_child(_heading("Control"))
 	_recreation_button = Button.new()
 	_recreation_button.pressed.connect(_toggle_recreation_zone)
 	side.add_child(_recreation_button)
 
-	_tile_action_box = VBoxContainer.new()
-	side.add_child(_tile_action_box)
+	side.add_child(_heading("Colonists"))
+	_colonist_box = VBoxContainer.new()
+	_colonist_box.add_theme_constant_override("separation", 8)
+	side.add_child(_colonist_box)
 
 	side.add_child(_heading("Alerts"))
 	_alert_box = VBoxContainer.new()
@@ -371,10 +504,6 @@ func _set_connection_text(text: String, colour: Color) -> void:
 	_connection_label.text = text
 	_connection_label.add_theme_color_override("font_color", colour)
 
-
-# ---------------------------------------------------------------------------
-# Refresh
-# ---------------------------------------------------------------------------
 
 func _refresh() -> void:
 	_refresh_status()
@@ -546,43 +675,68 @@ func _refresh_controls() -> void:
 		_recreation_button.text = "Recreation zone: unknown"
 		_recreation_button.disabled = true
 	else:
-		_recreation_button.disabled = false
+		_recreation_button.disabled = not _state_ready
 		_recreation_button.text = ("Disable recreation zone" if any_enabled
 				else "Enable recreation zone")
 
-	for child in _tile_action_box.get_children():
-		child.queue_free()
-
-	var info := Label.new()
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	info.add_theme_font_size_override("font_size", 11)
-
+	var busy := not _state_ready or _intent_request != null
+	_speed_label.text = "Waiting for config..." if config == null else (
+		"Server: paused" if config.time_scale == 0.0 else "Server: %.2fx (1x = 4h/day)" % (config.time_scale / BASE_TIME_SCALE))
+	if not _state_ready and config != null:
+		_speed_label.text += " (last known)"
+	for speed: int in _speed_buttons:
+		var speed_button: Button = _speed_buttons[speed]
+		speed_button.disabled = busy or config == null
+		speed_button.set_pressed_no_signal(config != null and is_equal_approx(config.time_scale, float(speed)))
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
+	var compatible: Array[int] = []
+	if tile != null:
+		compatible = ColonyMap.compatible_work(tile.kind.value)
+	var orders: Dictionary = {}
+	var active_counts: Dictionary = {}
+	for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
+		if order.tile_id == _selected_tile_id:
+			orders[order.work.value] = order
+		if order.enabled:
+			active_counts[order.work.value] = int(active_counts.get(order.work.value, 0)) + 1
+	var counts := PackedStringArray()
+	for work: int in _order_controls:
+		var controls: Dictionary = _order_controls[work]
+		var work_name := ContinuumWorkType.parse_enum_name(work).capitalize()
+		counts.append("%s %d" % [work_name, active_counts.get(work, 0)])
+		controls.box.visible = work in compatible
+		var order: ContinuumWorkOrder = orders.get(work)
+		controls.label.text = "%s: %s" % [work_name, "no order" if order == null else
+			("%s / %s" % ["enabled" if order.enabled else "paused", ColonyMap.PRIORITY_NAMES.get(order.priority, "Unknown")])]
+		controls.toggle.text = "Create" if order == null else ("Pause" if order.enabled else "Enable")
+		controls.toggle.disabled = busy
+		controls.remove.disabled = busy or order == null
+		for index in 3:
+			var button: Button = controls.priorities[index]
+			button.disabled = busy or order == null
+			button.set_pressed_no_signal(order != null and order.priority == index + 1)
+	_order_summary.text = "Enabled orders%s: %s" % [" (last known)" if not _state_ready else "", ", ".join(counts)]
+	_tile_button.visible = tile != null
 	if tile == null:
-		info.text = "Click a tile on the map to select it."
-		_tile_action_box.add_child(info)
+		_tile_info.text = "Click a tile on the map to select it."
 		return
 
-	info.text = "Selected: %s tile #%d at (%d, %d) - %s" % [
+	_tile_info.text = "Selected: %s tile #%d at (%d, %d) - %s" % [
 		ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.id, tile.x, tile.y,
 		"enabled" if tile.enabled else "disabled",
 	]
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
 		if stack.x == tile.x and stack.y == tile.y:
-			info.text += "\nGround: %.1f %s" % [stack.amount,
+			_tile_info.text += "\nGround: %.1f %s" % [stack.amount,
 				ContinuumResourceKind.parse_enum_name(stack.kind.value)]
 	if tile.kind.value == ContinuumTileKind.Options.storage:
-		info.text += "\nStorage tiles share the colony's unlimited stored totals; stocks are not per tile."
-	_tile_action_box.add_child(info)
-
-	var button := Button.new()
-	button.disabled = tile.kind.value == ContinuumTileKind.Options.empty
-	if button.disabled:
-		button.text = "Empty tiles cannot be toggled"
-	else:
-		button.text = "Disable this tile" if tile.enabled else "Enable this tile"
-	button.pressed.connect(_toggle_selected_tile)
-	_tile_action_box.add_child(button)
+		_tile_info.text += "\nStorage tiles share the colony's unlimited stored totals; stocks are not per tile."
+	if not compatible.is_empty() and not tile.enabled:
+		_tile_info.text += "\nTile disabled: enabled orders cannot produce here."
+	if not _state_ready:
+		_tile_info.text += "\nLast known state; waiting for subscription."
+	_tile_button.disabled = busy or tile.kind.value == ContinuumTileKind.Options.empty
+	_tile_button.text = "Disable this tile" if tile.enabled else "Enable this tile"
 
 
 func _refresh_alerts() -> void:

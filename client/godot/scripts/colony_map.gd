@@ -35,7 +35,8 @@ const COLONIST_COLORS: Array[Color] = [
 const DISABLED_COLOR := Color("50202a")
 const GRID_LINE_COLOR := Color(1, 1, 1, 0.06)
 const SELECTION_COLOR := Color("ffffff")
-const LEGEND_HEIGHT := 72.0
+const LEGEND_HEIGHT := 90.0
+const PRIORITY_NAMES := {1: "High", 2: "Normal", 3: "Low"}
 
 var selected_tile_id: int = -1
 
@@ -54,6 +55,17 @@ var _stock_pulses: Dictionary[int, float] = {}
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	set_process(true)
+
+
+static func compatible_work(kind: int) -> Array[int]:
+	match kind:
+		ContinuumTileKind.Options.farm:
+			return [ContinuumWorkType.Options.farming]
+		ContinuumTileKind.Options.mine:
+			return [ContinuumWorkType.Options.mining]
+		ContinuumTileKind.Options.forest:
+			return [ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]
+	return []
 
 
 func _process(delta: float) -> void:
@@ -160,6 +172,7 @@ func _draw() -> void:
 		draw_line(Vector2(origin.x, y), Vector2(origin.x + cell * _grid.x, y), GRID_LINE_COLOR)
 
 	_draw_zone_labels(origin, cell)
+	_draw_work_orders(origin, cell)
 	_draw_delivery_routes(origin, cell)
 	_draw_storage(origin, cell)
 	_draw_colonists(origin, cell)
@@ -187,6 +200,20 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 				origin + Vector2(anchor.x * cell + 3.0, anchor.y * cell + font_size + 2.0),
 				ContinuumTileKind.parse_enum_name(kind).capitalize(), HORIZONTAL_ALIGNMENT_LEFT, -1,
 				font_size, Color(1, 1, 1, 0.85))
+
+
+func _draw_work_orders(origin: Vector2, cell: float) -> void:
+	for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
+		var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(order.tile_id)
+		if tile == null or not tile.enabled or not order.enabled:
+			continue
+		var column := 0.5 if order.work.value == ContinuumWorkType.Options.hunting else 0.0
+		var rect := Rect2(origin + Vector2(tile.x + column, tile.y) * cell,
+			Vector2(cell * 0.5, maxf(10.0, cell * 0.3)))
+		var text := "%s%d" % [ContinuumWorkType.parse_enum_name(order.work.value).left(1).to_upper(), order.priority]
+		draw_rect(rect, Color("151920"))
+		draw_string(_font, rect.position + Vector2(1, rect.size.y - 1), text,
+			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, clampi(int(cell * 0.27), 8, 11), Color("f5d76e"))
 
 
 static func format_amount(amount: float) -> String:
@@ -285,6 +312,8 @@ func _draw_legend() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("ccd3df"))
 	draw_string(_font, Vector2(12, y + 39), "Shared storage: no limit. Stock flashes on increases. Hover or select a pile's tile for amounts.",
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("9aa4b2"))
+	draw_string(_font, Vector2(12, y + 57), "Active orders: F/M/L/H = profession; 1 High, 2 Normal, 3 Low. Hover for paused/missing orders.",
+			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("f5d76e"))
 
 
 func _draw_colonists(origin: Vector2, cell: float) -> void:
@@ -352,6 +381,16 @@ func _get_tooltip(at_position: Vector2) -> String:
 			lines.append("%s (%d, %d) / %s" % [
 				ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.x, tile.y,
 				"enabled" if tile.enabled else "disabled"])
+			for work: int in compatible_work(tile.kind.value):
+				var description := "no order (no production)"
+				for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
+					if order.tile_id == tile.id and order.work.value == work:
+						description = "#%d: %s / %s" % [order.id, "enabled" if order.enabled else "paused",
+							PRIORITY_NAMES.get(order.priority, "Unknown")]
+						break
+				lines.append("%s order: %s" % [ContinuumWorkType.parse_enum_name(work).capitalize(), description])
+			if not compatible_work(tile.kind.value).is_empty():
+				lines.append("Priority ranks sites within the profession. Old goods remain haulable.")
 			break
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
 		if Vector2i(stack.x, stack.y) == grid_pos:
