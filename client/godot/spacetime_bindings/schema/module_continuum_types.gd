@@ -17,3 +17,4 @@ const ItemStack = preload('res://spacetime_bindings/schema/types/continuum_item_
 const Role = preload('res://spacetime_bindings/schema/types/continuum_role.gd')
 const TileKind = preload('res://spacetime_bindings/schema/types/continuum_tile_kind.gd')
 const Tile = preload('res://spacetime_bindings/schema/types/continuum_tile.gd')
+const WorkOrder = preload('res://spacetime_bindings/schema/types/continuum_work_order.gd')
