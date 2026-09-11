@@ -8,9 +8,10 @@ enum Options {
 	sleep,
 	recreate,
 	work,
+	haul,
 }
 
-const enum_options: Array[StringName] = ['', '', '', '', '']
+const enum_options: Array[StringName] = ['', '', '', '', '', '']
 const bsatn_enum_type: StringName = &'ContinuumGoal'
 
 static func parse_enum_name(i: int) -> String:
@@ -20,6 +21,7 @@ static func parse_enum_name(i: int) -> String:
 		2: return &'sleep'
 		3: return &'recreate'
 		4: return &'work'
+		5: return &'haul'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -44,4 +46,7 @@ static func create_recreate() -> ContinuumGoal:
 
 static func create_work() -> ContinuumGoal:
 	return create(Options.work)
+
+static func create_haul() -> ContinuumGoal:
+	return create(Options.haul)
 

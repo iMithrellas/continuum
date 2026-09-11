@@ -6,12 +6,13 @@ enum Options {
 	idle,
 	travelling,
 	working,
+	hauling,
 	eating,
 	sleeping,
 	recreating,
 }
 
-const enum_options: Array[StringName] = ['', '', '', '', '', '']
+const enum_options: Array[StringName] = ['', '', '', '', '', '', '']
 const bsatn_enum_type: StringName = &'ContinuumActivity'
 
 static func parse_enum_name(i: int) -> String:
@@ -19,9 +20,10 @@ static func parse_enum_name(i: int) -> String:
 		0: return &'idle'
 		1: return &'travelling'
 		2: return &'working'
-		3: return &'eating'
-		4: return &'sleeping'
-		5: return &'recreating'
+		3: return &'hauling'
+		4: return &'eating'
+		5: return &'sleeping'
+		6: return &'recreating'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -40,6 +42,9 @@ static func create_travelling() -> ContinuumActivity:
 
 static func create_working() -> ContinuumActivity:
 	return create(Options.working)
+
+static func create_hauling() -> ContinuumActivity:
+	return create(Options.hauling)
 
 static func create_eating() -> ContinuumActivity:
 	return create(Options.eating)

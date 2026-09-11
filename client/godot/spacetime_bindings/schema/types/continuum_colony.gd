@@ -8,13 +8,9 @@ const table_names: Array[String] = ['colony']
 
 @export var id: int
 @export var food: float
-@export var food_capacity: float
 @export var wood: float
-@export var wood_capacity: float
 @export var stone: float
-@export var stone_capacity: float
 @export var meat: float
-@export var meat_capacity: float
 @export var avg_mood: float
 @export var avg_productivity: float
 @export var smoothed_mood: float
@@ -26,13 +22,9 @@ const primary_key: StringName = &'id'
 const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"id": "U32",
 	"food": "F32",
-	"food_capacity": "F32",
 	"wood": "F32",
-	"wood_capacity": "F32",
 	"stone": "F32",
-	"stone_capacity": "F32",
 	"meat": "F32",
-	"meat_capacity": "F32",
 	"avg_mood": "F32",
 	"avg_productivity": "F32",
 	"smoothed_mood": "F32",
@@ -42,29 +34,21 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 
 ## 1. id: int[br]
 ## 2. food: float[br]
-## 3. food_capacity: float[br]
-## 4. wood: float[br]
-## 5. wood_capacity: float[br]
-## 6. stone: float[br]
-## 7. stone_capacity: float[br]
-## 8. meat: float[br]
-## 9. meat_capacity: float[br]
-## 10. avg_mood: float[br]
-## 11. avg_productivity: float[br]
-## 12. smoothed_mood: float[br]
-## 13. smoothed_productivity: float[br]
-## 14. population: int[br]
-static func create(p_id: int, p_food: float, p_food_capacity: float, p_wood: float, p_wood_capacity: float, p_stone: float, p_stone_capacity: float, p_meat: float, p_meat_capacity: float, p_avg_mood: float, p_avg_productivity: float, p_smoothed_mood: float, p_smoothed_productivity: float, p_population: int) -> ContinuumColony:
+## 3. wood: float[br]
+## 4. stone: float[br]
+## 5. meat: float[br]
+## 6. avg_mood: float[br]
+## 7. avg_productivity: float[br]
+## 8. smoothed_mood: float[br]
+## 9. smoothed_productivity: float[br]
+## 10. population: int[br]
+static func create(p_id: int, p_food: float, p_wood: float, p_stone: float, p_meat: float, p_avg_mood: float, p_avg_productivity: float, p_smoothed_mood: float, p_smoothed_productivity: float, p_population: int) -> ContinuumColony:
 	var result: ContinuumColony = ContinuumColony.new()
 	result.id = p_id
 	result.food = p_food
-	result.food_capacity = p_food_capacity
 	result.wood = p_wood
-	result.wood_capacity = p_wood_capacity
 	result.stone = p_stone
-	result.stone_capacity = p_stone_capacity
 	result.meat = p_meat
-	result.meat_capacity = p_meat_capacity
 	result.avg_mood = p_avg_mood
 	result.avg_productivity = p_avg_productivity
 	result.smoothed_mood = p_smoothed_mood

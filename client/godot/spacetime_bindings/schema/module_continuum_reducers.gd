@@ -14,6 +14,10 @@ func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 func reset_colony() -> SpacetimeDBReducerCall:
 	return _client.call_reducer('reset_colony', [], [])
 
+## 0. policy: ContinuumHaulPolicy [br]
+func set_haul_policy(policy: ContinuumHaulPolicy) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_haul_policy', [policy], [&'ContinuumHaulPolicy'])
+
 ## 0. identity: PackedByteArray [br]
 ## 1. authorized: bool [br]
 func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBReducerCall:

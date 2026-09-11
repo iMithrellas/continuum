@@ -5,11 +5,59 @@ simulation runs as a SpacetimeDB module and keeps advancing while no clients are
 connected. Godot subscribes directly to the database over WebSockets and sends
 intent-level reducer calls; there is no separate REST server.
 
-This first vertical slice contains a 16x16 colony, three autonomous colonists,
-food production and consumption, sleep, recreation, mood, fatigue, productivity,
-alerts, an event log, and a recoverable systemic failure chain:
+This vertical slice contains a 24x24 colony and eight autonomous colonists, with
+two workers each in farming, logging, mining, and hunting. Production, ground
+items, hauling, and shared storage sit alongside food consumption, sleep,
+recreation, mood, fatigue, productivity, alerts, and an event log. The recoverable
+systemic failure chain remains:
 
 `no recreation -> low mood -> poor sleep -> fatigue -> low productivity -> food shortage`
+
+## Jobs And Hauling
+
+Workers produce resources on their work tile, not directly into storage:
+
+| Job | Work Zone | Output | Units Per Carried Stack |
+| --- | --- | --- | ---: |
+| Farming | Farm | Food | 30 |
+| Logging | Forest | Wood | 25 |
+| Mining | Mine | Stone | 20 |
+| Hunting | Forest | Meat | 15 |
+
+Ground piles accumulate partial or multiple stacks. Haulers batch full stacks
+while a tile is producing, and collect partial piles when production stops. Each
+trip carries at most one stack of that worker's job resource to an enabled storage
+tile. Logging and hunting can leave separate wood
+and meat piles on the same forest tile. Needs can interrupt work and delivery;
+carried goods remain in the worker's hands until delivered.
+
+The prominent **Global Hauling Mode** button applies to the whole colony:
+
+- **Everyone: produce + haul** (`self_haul`): all eight workers produce and haul
+  their job's output. The simulation calls this role `both`.
+- **Paired: producer + hauler** (`dedicated_haulers`): each job's pair splits into
+  one producer and one hauler. The producer leaves output on the ground; the
+  hauler delivers only that job's resource. Hauling is a role, not a fifth job.
+
+The button sends `set_haul_policy`; its mode and the roster's roles always come
+from subscribed server state. Pending requests, permission rejections, and
+connection failures are shown beside the control, without locally changing the
+policy. Role assignments are derived by the simulation, not chosen by the UI.
+
+Storage has **no capacity limit**. Colony food, wood, stone, and meat totals are
+pooled stored goods, not per-tile inventories, and exclude ground piles and
+carried cargo. Stack sizes limit a hauling load, not a ground pile or storage.
+Food must reach storage before colonists can eat it; wood, stone, and meat are
+tracked stocks with no consumer in this slice. Disabling storage blocks
+deliveries, but does not delete stored goods or cargo.
+
+The custom-drawn map uses labeled resource-colored boxes for ground piles and
+attached boxes for cargo. Dashed arrows point to active delivery destinations;
+they are guides, not predicted paths. A shared-stock display sits over storage
+and briefly highlights replicated stock increases. The resource legend matches
+the stored totals and roster cargo colors. Hover or select a pile's tile for its
+amounts; compact storage and cargo amounts may be rounded. The roster shows each
+worker's job, hauling role, activity, and cargo alongside their needs.
 
 ## Requirements
 
@@ -42,7 +90,10 @@ as Continuum's admin. Because authorization is initialized with the database, us
 `./scripts/publish --fresh` when first upgrading an existing unauthenticated colony.
 
 Use `./scripts/publish --fresh` only when a breaking schema change requires
-deleting existing colony data.
+deleting existing colony data. The jobs/hauling schema adds `item_stack`, policy,
+role, and cargo fields and removes storage-capacity fields; upgrading from the
+previous slice requires a fresh publish and regenerated bindings. A fresh colony
+also requires authorizing client identities again.
 
 ## Development
 
@@ -67,19 +118,28 @@ Observe the live colony in a terminal:
 godot --headless --path client/godot --script res://tools/watch.gd -- --seconds=120
 ```
 
+The watcher reports stored totals without capacity denominators, ground totals
+separately, the global hauling policy, and every worker's job, role, activity,
+and cargo each in-game hour. It also prints new events and alert changes, and
+accepts `--stdb-host` and `--stdb-db` like the client.
+
 Call reducers or query state through the containerized CLI:
 
 ```bash
 ./scripts/stdb sql continuum "SELECT * FROM colony"
 ./scripts/stdb call continuum set_time_scale 600
 ./scripts/stdb call continuum set_zone_enabled '{"recreation":{}}' false
+./scripts/stdb call continuum set_haul_policy '{"dedicated_haulers":{}}'
+./scripts/stdb call continuum set_haul_policy '{"self_haul":{}}'
+./scripts/stdb sql continuum "SELECT * FROM item_stack"
 ./scripts/stdb call continuum reset_colony
 ```
 
 ### Authorization
 
-Continuum has two roles. Operators may enable or disable tiles and zones and
-acknowledge alerts. Admins inherit those permissions and are additionally the only
+Continuum has two authorization roles, separate from colonists' hauling roles.
+Operators may enable or disable tiles and zones, change the global hauling
+policy, and acknowledge alerts. Admins inherit those permissions and are the only
 callers allowed to change simulation speed, reset the colony, or authorize and
 revoke operators. The scheduled tick accepts only the database scheduler identity.
 Membership is stored in a private table; command and membership-change event-log
