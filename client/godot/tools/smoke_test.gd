@@ -14,7 +14,7 @@ const TIMEOUT_SECONDS := 40.0
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
-	"SELECT * FROM item_stack",
+	"SELECT * FROM item_stack", "SELECT * FROM work_order",
 ])
 
 var client: ContinuumModuleClient
@@ -23,6 +23,7 @@ var phase := 0
 var phase_started := 0.0
 var recreation_was_enabled := false
 var original_policy: ContinuumHaulPolicy
+var original_order: ContinuumWorkOrder
 var failed := false
 var started := false
 var unauthorized_client: ContinuumModuleClient
@@ -187,7 +188,56 @@ func _phase_restore_policy() -> bool:
 		return false
 	print("OK restored hauling mode")
 	_next_phase()
+	_check_work_orders()
+	return false
+
+
+func _check_work_orders() -> void:
+	var orders: Array[ContinuumWorkOrder] = client.db.work_order.iter()
+	if orders.is_empty():
+		_fail("no work orders: create one manually or explicitly reset the colony")
+		return
+	var first := orders[0]
+	original_order = ContinuumWorkOrder.create(first.id, first.tile_id,
+			first.work, first.priority, first.enabled)
+	var order := original_order
+	if not await _expect_rejected(client.reducers.set_work_order(
+			order.tile_id, order.work, 0, true), "set_work_order invalid priority"):
+		return
+	if not await _expect_rejected(client.reducers.set_work_order(
+			_recreation_tiles()[0].id, order.work, 2, true), "set_work_order wrong facility"):
+		return
+
+	var priority := 1 if order.priority != 1 else 3
+	client.reducers.set_work_order(order.tile_id, order.work, priority, true)
+	if not await _wait_for_order(priority, true):
+		return
+	client.reducers.set_work_order(order.tile_id, order.work, priority, false)
+	if not await _wait_for_order(priority, false):
+		return
+	client.reducers.remove_work_order(order.id)
+	if not await _wait_for_order(priority, false, true):
+		return
+	client.reducers.set_work_order(order.tile_id, order.work, order.priority, order.enabled)
+	if not await _wait_for_order(order.priority, order.enabled):
+		return
+	print("OK subscription reflected work order priority, pause, removal, and restoration")
 	_start_unauthorized_check()
+
+
+func _wait_for_order(priority: int, enabled: bool, removed := false) -> bool:
+	while not failed and elapsed <= TIMEOUT_SECONDS:
+		var order: ContinuumWorkOrder = client.db.work_order.id.find(original_order.id)
+		if removed:
+			if order == null:
+				return true
+		elif order != null and order.tile_id == original_order.tile_id \
+				and order.work.value == original_order.work.value \
+				and order.priority == priority and order.enabled == enabled:
+			return true
+		await process_frame
+	if not failed:
+		_fail("subscription never reflected work order change")
 	return false
 
 
@@ -235,6 +285,15 @@ func _on_unauthorized_connected(_identity: PackedByteArray, _token: String) -> v
 	if not await _expect_rejected(haul_call, "set_haul_policy"):
 		return
 
+	var order := original_order
+	var order_call := unauthorized_client.reducers.set_work_order(
+			order.tile_id, order.work, order.priority, not order.enabled)
+	if not await _expect_rejected(order_call, "unauthorized set_work_order"):
+		return
+	var remove_call := unauthorized_client.reducers.remove_work_order(order.id)
+	if not await _expect_rejected(remove_call, "unauthorized remove_work_order"):
+		return
+
 	print("OK unauthorized reducers rejected")
 	unauthorized_client.disconnect_db()
 	client.disconnect_db()
@@ -244,11 +303,11 @@ func _on_unauthorized_connected(_identity: PackedByteArray, _token: String) -> v
 
 func _expect_rejected(call: SpacetimeDBReducerCall, reducer_name: String) -> bool:
 	if call.error != OK:
-		_fail("%s could not be sent by unauthorized client (%d)" % [reducer_name, call.error])
+		_fail("%s could not be sent (%d)" % [reducer_name, call.error])
 		return false
 	var response: ReducerResultMessage = await call.response
 	if response.reducer_result.value != ReducerOutcomeEnum.Options.err:
-		_fail("unauthorized %s was accepted" % reducer_name)
+		_fail("%s was accepted but should have been rejected" % reducer_name)
 		return false
 	return true
 

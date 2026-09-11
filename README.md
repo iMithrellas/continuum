@@ -24,6 +24,18 @@ Workers produce resources on their work tile, not directly into storage:
 | Mining | Mine | Stone | 20 |
 | Hunting | Forest | Meat | 15 |
 
+Production requires a standing order for each tile/job pair. Select a work tile
+to create, pause/resume, reprioritize, or remove its orders. Priorities are
+**1: high**, **2: normal**, and **3: low**. Colonists keep their fixed professions;
+priorities rank eligible work sites, not jobs or workers. Forest tiles can have
+separate logging and hunting orders. A disabled tile, paused order, or missing
+order stops production, but does not prevent cleanup of existing piles or cargo.
+
+Default orders are seeded only for a new or explicitly reset colony. An additive
+upgrade of an existing colony starts with **zero orders**: create them manually,
+or explicitly reset the colony if losing its state is acceptable. Publishing and
+simulation ticks do not automatically backfill orders.
+
 Ground piles accumulate partial or multiple stacks. Haulers batch full stacks
 while a tile is producing, and collect partial piles when production stops. Each
 trip carries at most one stack of that worker's job resource to an enabled storage
@@ -132,14 +144,15 @@ Call reducers or query state through the containerized CLI:
 ./scripts/stdb call continuum set_haul_policy '{"dedicated_haulers":{}}'
 ./scripts/stdb call continuum set_haul_policy '{"self_haul":{}}'
 ./scripts/stdb sql continuum "SELECT * FROM item_stack"
+./scripts/stdb sql continuum "SELECT * FROM work_order"
 ./scripts/stdb call continuum reset_colony
 ```
 
 ### Authorization
 
 Continuum has two authorization roles, separate from colonists' hauling roles.
-Operators may enable or disable tiles and zones, change the global hauling
-policy, and acknowledge alerts. Admins inherit those permissions and are the only
+Operators may enable or disable tiles and zones, manage standing work orders,
+change the global hauling policy, and acknowledge alerts. Admins inherit those permissions and are the only
 callers allowed to change simulation speed, reset the colony, or authorize and
 revoke operators. The scheduled tick accepts only the database scheduler identity.
 Membership is stored in a private table; command and membership-change event-log
@@ -181,8 +194,14 @@ and drives the vendored SDK's code generator headlessly. Generated files live in
 
 ## Architecture
 
-- `backend/spacetimedb/src/sim.rs`: deterministic simulation logic and tests
-- `backend/spacetimedb/src/lib.rs`: tables, reducers, scheduled tick, persistence
+- `backend/spacetimedb/src/lib.rs`: reducers and scheduled tick entry points
+- `backend/spacetimedb/src/schema.rs`: database tables and shared types
+- `backend/spacetimedb/src/auth.rs`: authorization and membership checks
+- `backend/spacetimedb/src/persistence.rs`: world loading, saving, and seeding
+- `backend/spacetimedb/src/events.rs`: event logging and alerts
+- `backend/spacetimedb/src/sim.rs`: deterministic simulation logic
+- `backend/spacetimedb/src/sim/work_orders.rs`: standing orders and site selection
+- `backend/spacetimedb/src/sim/tests.rs`: simulation regression tests
 - `client/godot/`: Godot UI, map, SDK, and generated typed bindings
 - `scripts/publish`: test, WASM build, identity bootstrap, and publish workflow
 - `scripts/generate-bindings`: reproducible headless Godot binding generation
@@ -193,7 +212,9 @@ SpacetimeDB is pinned to `2.10.0`. The Godot client vendors
 `0.3.2` at commit `f6c59d7`, and uses schema v10 with `v3.bsatn.spacetimedb`.
 
 The intended simulation speed is `6` in-game seconds per real second, or four
-real hours per in-game day. Higher presets are available for development.
+real hours per in-game day. Client speed presets are pause (`0`), `6`, `60`,
+`600`, and `3600`. These controls remain admin-only: speed commands from regular
+operator clients are intentionally rejected by the existing authorization rules.
 
 ## Persistence And Multiplayer
 

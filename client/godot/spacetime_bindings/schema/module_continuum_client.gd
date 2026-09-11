@@ -21,6 +21,7 @@ const ItemStack = Types.ItemStack
 const Role = Types.Role
 const TileKind = Types.TileKind
 const Tile = Types.Tile
+const WorkOrder = Types.WorkOrder
 
 
 var reducers: ContinuumModuleReducers

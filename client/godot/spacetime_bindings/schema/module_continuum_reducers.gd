@@ -10,6 +10,10 @@ func _init(p_client: SpacetimeDBClient) -> void:
 func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('acknowledge_alert', [alert_id], [&'U64'])
 
+## 0. order_id: int [br]
+func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('remove_work_order', [order_id], [&'U64'])
+
 
 func reset_colony() -> SpacetimeDBReducerCall:
 	return _client.call_reducer('reset_colony', [], [])
@@ -31,6 +35,13 @@ func set_tile_enabled(tile_id: int, enabled: bool) -> SpacetimeDBReducerCall:
 ## 0. time_scale: float [br]
 func set_time_scale(time_scale: float) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_time_scale', [time_scale], [&'F64'])
+
+## 0. tile_id: int [br]
+## 1. work: ContinuumWorkType [br]
+## 2. priority: int [br]
+## 3. enabled: bool [br]
+func set_work_order(tile_id: int, work: ContinuumWorkType, priority: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_work_order', [tile_id, work, priority, enabled], [&'U32', &'ContinuumWorkType', &'U8', &'Bool'])
 
 ## 0. kind: ContinuumTileKind [br]
 ## 1. enabled: bool [br]
