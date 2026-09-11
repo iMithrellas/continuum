@@ -27,6 +27,10 @@ func set_haul_policy(policy: ContinuumHaulPolicy) -> SpacetimeDBReducerCall:
 func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_operator', [identity, authorized], [&'__identity__', &'Bool'])
 
+## 0. cooldown_seconds: int [br]
+func set_speed_change_cooldown(cooldown_seconds: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_speed_change_cooldown', [cooldown_seconds], [&'U32'])
+
 ## 0. tile_id: int [br]
 ## 1. enabled: bool [br]
 func set_tile_enabled(tile_id: int, enabled: bool) -> SpacetimeDBReducerCall:
