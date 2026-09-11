@@ -15,6 +15,7 @@ static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
 	"SELECT * FROM item_stack", "SELECT * FROM work_order",
+	"SELECT * FROM speed_control",
 ])
 
 var client: ContinuumModuleClient
@@ -99,6 +100,8 @@ func _phase_read_state() -> bool:
 	if tiles.size() != 24 * 24 or colonists.size() != 8:
 		return _fail("expected a 24x24 colony with eight workers")
 	original_policy = config.haul_policy
+	if not _check_speed_control():
+		return true
 	print("OK tiles         = %d, colonists = %d, events = %d"
 			% [tiles.size(), colonists.size(), client.db.event_log.iter().size()])
 	print("OK day %d  time_scale = %.0f  (%.0fx)"
@@ -127,6 +130,27 @@ func _phase_read_state() -> bool:
 			not recreation_was_enabled)
 	_next_phase()
 	return false
+
+
+## Additive schema updates may have no row; when present, verify the generated
+## binding decoded the public singleton and optionally match an integration value.
+func _check_speed_control() -> bool:
+	var speed_control: ContinuumSpeedControl = client.db.speed_control.id.find(0)
+	var expected := int(_cli_option("--expected-speed-cooldown", "-1"))
+	if speed_control == null:
+		if expected >= 0:
+			return _fail("speed_control row is absent but an expected cooldown was provided")
+		print("OK speed_control row absent (legacy additive default is accepted)")
+		return true
+	if speed_control.id != 0 or speed_control.cooldown_seconds > 3600:
+		return _fail("speed_control row decoded invalid singleton values")
+	if expected >= 0 and speed_control.cooldown_seconds != expected:
+		return _fail("speed_control cooldown %d != expected %d" % [
+			speed_control.cooldown_seconds, expected])
+	print("OK speed_control decoded: cooldown=%d last_changed_at_some=%s" % [
+		speed_control.cooldown_seconds,
+		speed_control.last_changed_at.is_some()])
+	return true
 
 
 ## The toggle must arrive back through the subscription, not be assumed locally.

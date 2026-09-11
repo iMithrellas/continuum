@@ -22,6 +22,7 @@ static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
 	"SELECT * FROM item_stack", "SELECT * FROM work_order",
+	"SELECT * FROM speed_control",
 ])
 
 const SEVERITY_COLORS: Array[Color] = [

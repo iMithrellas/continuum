@@ -32,3 +32,15 @@ Use the CLI from the repository root:
 ./scripts/stdb call continuum set_speed_change_cooldown 300
 ./scripts/stdb call continuum set_time_scale 12
 ```
+
+The headless smoke test does not require admin access and accepts a missing row
+for legacy databases. Against an isolated database with a configured row, ask
+an admin to authorize the temporary smoke identity with `set_operator`, then
+run:
+
+```sh
+godot --headless --path client/godot --script res://tools/smoke_test.gd -- \
+  --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
+```
+
+Omit `--expected-speed-cooldown` to exercise the missing-row compatibility path.
