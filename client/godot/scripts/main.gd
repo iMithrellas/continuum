@@ -18,6 +18,7 @@ const RECONNECT_DELAY := 2.0
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
+	"SELECT * FROM item_stack",
 ])
 
 const SEVERITY_COLORS: Array[Color] = [
@@ -42,6 +43,12 @@ var _tile_action_box: VBoxContainer
 var _recreation_button: Button
 var _feed: RichTextLabel
 var _connection_label: Label
+var _haul_button: Button
+var _haul_description: Label
+var _haul_feedback: Label
+var _haul_request: SpacetimeDBReducerCall
+var _haul_request_seconds := 0.0
+var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
 var _selected_tile_id: int = -1
@@ -101,6 +108,13 @@ func _identity_token_path(host: String, database: String) -> String:
 
 
 func _process(delta: float) -> void:
+	if _haul_request != null:
+		_haul_request_seconds -= delta
+		if _haul_request_seconds <= 0.0:
+			_haul_request = null
+			_haul_feedback.text = "No response received. Outcome unknown; check the server mode before retrying."
+			_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+			_dirty = true
 	_refresh_timer -= delta
 	if (_dirty or _map_dirty) and _refresh_timer <= 0.0:
 		_refresh_timer = REFRESH_INTERVAL
@@ -139,6 +153,7 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 
 
 func _on_subscription_applied() -> void:
+	_state_ready = true
 	_dirty = true
 	_map_dirty = true
 
@@ -155,6 +170,12 @@ func _on_connection_error(code: int, reason: String) -> void:
 
 
 func _schedule_reconnect() -> void:
+	_state_ready = false
+	if _haul_request != null:
+		_haul_request = null
+		_haul_feedback.text = "Connection lost. Hauling request outcome unknown; waiting for server state."
+		_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	_dirty = true
 	if _closing or _reconnect_timer != null:
 		return
 	_set_connection_text("disconnected - retrying in %.0fs" % RECONNECT_DELAY, Color("ffb74d"))
@@ -177,7 +198,7 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 
 func _on_table_changed(table_name: String) -> void:
 	_dirty = true
-	if table_name == "tile" or table_name == "colonist":
+	if table_name in ["tile", "colonist", "item_stack", "colony", "config"]:
 		_map_dirty = true
 
 
@@ -220,6 +241,43 @@ func _acknowledge(alert_id: int) -> void:
 	_report(SpacetimeDB.Continuum.reducers.acknowledge_alert(alert_id), "acknowledge_alert")
 
 
+func _toggle_haul_policy() -> void:
+	if not _state_ready or _haul_request != null:
+		return
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	if config == null:
+		return
+	var policy := ContinuumHaulPolicy.create_dedicated_haulers()
+	if config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers:
+		policy = ContinuumHaulPolicy.create_self_haul()
+	var call := SpacetimeDB.Continuum.reducers.set_haul_policy(policy)
+	_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	if call.error != OK:
+		_haul_feedback.text = "Hauling mode could not be sent (%d)." % call.error
+		return
+	_haul_request = call
+	_haul_request_seconds = 10.0
+	_haul_feedback.text = "Request sent. Waiting for the server; displayed mode is not changed locally."
+	call.response.connect(_on_haul_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
+	_dirty = true
+	_haul_button.disabled = true
+
+
+func _on_haul_policy_response(response: ReducerResultMessage, request_id: int) -> void:
+	if _haul_request == null or request_id != _haul_request.request_id:
+		return
+	_haul_request = null
+	_dirty = true
+	_haul_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+		_haul_feedback.text = "Hauling mode rejected: %s" % response.reducer_result.get_err()
+	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+		_haul_feedback.text = "Hauling mode failed: %s" % response.reducer_result.get_internal_error()
+	else:
+		_haul_feedback.text = "Request accepted. The mode above follows server state."
+		_haul_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+
+
 ## Surface a rejected reducer instead of letting it fail silently. The server is
 ## authoritative, so a refusal is real information.
 func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
@@ -248,6 +306,23 @@ func _build_side_panel() -> void:
 	_connection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_connection_label.add_theme_font_size_override("font_size", 11)
 	side.add_child(_connection_label)
+
+	side.add_child(_heading("Global hauling mode"))
+	_haul_button = Button.new()
+	_haul_button.custom_minimum_size.y = 52
+	_haul_button.text = "Waiting for hauling policy..."
+	_haul_button.disabled = true
+	_haul_button.add_theme_font_size_override("font_size", 15)
+	_haul_button.pressed.connect(_toggle_haul_policy)
+	side.add_child(_haul_button)
+	_haul_description = Label.new()
+	_haul_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_haul_description.add_theme_font_size_override("font_size", 12)
+	side.add_child(_haul_description)
+	_haul_feedback = Label.new()
+	_haul_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_haul_feedback.add_theme_font_size_override("font_size", 11)
+	side.add_child(_haul_feedback)
 
 	side.add_child(_heading("Colony"))
 	_status_label = RichTextLabel.new()
@@ -321,17 +396,15 @@ func _refresh_status() -> void:
 	var hour: int = int(second_of_day / 3600.0)
 	var minute: int = int(fmod(second_of_day, 3600.0) / 60.0)
 
-	var food_pct: float = 0.0
-	if colony.food_capacity > 0.0:
-		food_pct = colony.food / colony.food_capacity * 100.0
-
 	_status_label.text = "\n".join([
 		"[b]Day %d[/b]  %02d:%02d   [color=#7f8b9c](%.0fx speed)[/color]"
 				% [day, hour, minute, config.time_scale / BASE_TIME_SCALE],
-		"Food: %s  [color=#7f8b9c](%.0f%%)[/color]" % [
-			_coloured("%.0f / %.0f" % [colony.food, colony.food_capacity], food_pct),
-			food_pct,
-		],
+		"[b]Stored resources[/b]  [color=#7f8b9c]No storage limit[/color]",
+		_resource_text(ContinuumResourceKind.Options.food, colony.food) + "    "
+				+ _resource_text(ContinuumResourceKind.Options.wood, colony.wood),
+		_resource_text(ContinuumResourceKind.Options.stone, colony.stone) + "    "
+				+ _resource_text(ContinuumResourceKind.Options.meat, colony.meat),
+		"[color=#7f8b9c]Ground piles and carried cargo are not stored yet.[/color]",
 		"Average mood: %s  [color=#7f8b9c](trend %.0f)[/color]" % [
 			_coloured("%.0f%%" % colony.avg_mood, colony.avg_mood), colony.smoothed_mood,
 		],
@@ -341,6 +414,13 @@ func _refresh_status() -> void:
 		],
 		"Population: %d" % colony.population,
 	])
+
+
+func _resource_text(kind: int, amount: float) -> String:
+	return "[color=#%s]%s: %.1f[/color]" % [
+		ColonyMap.RESOURCE_COLORS[kind].to_html(false),
+		ContinuumResourceKind.parse_enum_name(kind).capitalize(), amount,
+	]
 
 
 func _coloured(text: String, value_0_100: float) -> String:
@@ -372,7 +452,26 @@ func _refresh_colonists() -> void:
 			colonist.name, ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize(), suffix,
 		]
 		header.add_theme_font_size_override("font_size", 13)
+		header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		panel.add_child(header)
+
+		var role := "Produce + haul" if colonist.haul_role.value == ContinuumHaulRole.Options.both \
+				else ContinuumHaulRole.parse_enum_name(colonist.haul_role.value).capitalize()
+		var job := Label.new()
+		job.text = "%s / %s" % [
+			ContinuumWorkType.parse_enum_name(colonist.work.value).capitalize(), role,
+		]
+		job.add_theme_font_size_override("font_size", 12)
+		panel.add_child(job)
+		var cargo := Label.new()
+		cargo.text = "Cargo: empty hands"
+		cargo.add_theme_font_size_override("font_size", 12)
+		if colonist.carried_amount > 0.0:
+			cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
+				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
+			cargo.add_theme_color_override("font_color",
+					ColonyMap.RESOURCE_COLORS[colonist.carried_kind.value])
+		panel.add_child(cargo)
 
 		for bar: Dictionary in NEED_BARS:
 			panel.add_child(_stat_row(str(bar["label"]),
@@ -422,6 +521,20 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 
 
 func _refresh_controls() -> void:
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	_haul_button.disabled = not _state_ready or config == null or _haul_request != null
+	if config != null:
+		var dedicated := config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers
+		_haul_button.text = ("PAIRED: producer + hauler\nSwitch to everyone producing + hauling" if dedicated
+				else "EVERYONE: produce + haul\nSwitch to producer + hauler pairs")
+		_haul_description.text = ("Each job's pair splits into one producer and one hauler. Haulers carry only their job's resource."
+				if dedicated else "All eight workers produce their job's resource and haul full stacks to storage.")
+		if not _state_ready:
+			_haul_description.text += " (Last known state; reconnecting.)"
+	else:
+		_haul_button.text = "Waiting for hauling policy..."
+		_haul_description.text = ""
+
 	var recreation: Array[ContinuumTile] = _recreation_tiles()
 	var any_enabled: bool = false
 	for tile: ContinuumTile in recreation:
@@ -454,6 +567,12 @@ func _refresh_controls() -> void:
 		ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.id, tile.x, tile.y,
 		"enabled" if tile.enabled else "disabled",
 	]
+	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
+		if stack.x == tile.x and stack.y == tile.y:
+			info.text += "\nGround: %.1f %s" % [stack.amount,
+				ContinuumResourceKind.parse_enum_name(stack.kind.value)]
+	if tile.kind.value == ContinuumTileKind.Options.storage:
+		info.text += "\nStorage tiles share the colony's unlimited stored totals; stocks are not per tile."
 	_tile_action_box.add_child(info)
 
 	var button := Button.new()

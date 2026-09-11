@@ -7,11 +7,10 @@ enum Options {
 	logging,
 	mining,
 	hunting,
-	hauling,
 	farming,
 }
 
-const enum_options: Array[StringName] = ['', '', '', '', '', '']
+const enum_options: Array[StringName] = ['', '', '', '', '']
 const bsatn_enum_type: StringName = &'ContinuumWorkType'
 
 static func parse_enum_name(i: int) -> String:
@@ -20,8 +19,7 @@ static func parse_enum_name(i: int) -> String:
 		1: return &'logging'
 		2: return &'mining'
 		3: return &'hunting'
-		4: return &'hauling'
-		5: return &'farming'
+		4: return &'farming'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -43,9 +41,6 @@ static func create_mining() -> ContinuumWorkType:
 
 static func create_hunting() -> ContinuumWorkType:
 	return create(Options.hunting)
-
-static func create_hauling() -> ContinuumWorkType:
-	return create(Options.hauling)
 
 static func create_farming() -> ContinuumWorkType:
 	return create(Options.farming)

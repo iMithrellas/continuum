@@ -14,6 +14,7 @@ const TIMEOUT_SECONDS := 40.0
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
+	"SELECT * FROM item_stack",
 ])
 
 var client: ContinuumModuleClient
@@ -21,6 +22,7 @@ var elapsed := 0.0
 var phase := 0
 var phase_started := 0.0
 var recreation_was_enabled := false
+var original_policy: ContinuumHaulPolicy
 var failed := false
 var started := false
 var unauthorized_client: ContinuumModuleClient
@@ -76,6 +78,10 @@ func _process(delta: float) -> bool:
 			return _phase_check_reducer_applied()
 		2:
 			return _phase_restore()
+		3:
+			return _phase_check_policy()
+		4:
+			return _phase_restore_policy()
 	return false
 
 
@@ -88,13 +94,17 @@ func _phase_read_state() -> bool:
 	if tiles.is_empty() or colonists.is_empty() or config == null or colony == null:
 		return false
 
-	print("OK identity      = ", client.get_local_identity().hex_encode().substr(0, 16))
+	print("OK identity      = ", client.get_local_identity().hex_encode())
+	if tiles.size() != 24 * 24 or colonists.size() != 8:
+		return _fail("expected a 24x24 colony with eight workers")
+	original_policy = config.haul_policy
 	print("OK tiles         = %d, colonists = %d, events = %d"
 			% [tiles.size(), colonists.size(), client.db.event_log.iter().size()])
 	print("OK day %d  time_scale = %.0f  (%.0fx)"
 			% [int(config.game_seconds / 86400.0) + 1, config.time_scale,
 				config.time_scale / 6.0])
-	print("OK food          = %.1f / %.1f" % [colony.food, colony.food_capacity])
+	print("OK stored        = food %.1f wood %.1f stone %.1f meat %.1f"
+			% [colony.food, colony.wood, colony.stone, colony.meat])
 	print("OK mood %.0f (trend %.0f)   productivity %.0f (trend %.0f)"
 			% [colony.avg_mood, colony.smoothed_mood, colony.avg_productivity,
 				colony.smoothed_productivity])
@@ -151,9 +161,44 @@ func _phase_restore() -> bool:
 	for event: ContinuumEventLog in events.slice(maxi(0, events.size() - 6)):
 		print("   d%d %02d:%02d  %s" % [event.day, event.hour, event.minute, event.message])
 
-	phase = 3
+	var policy := ContinuumHaulPolicy.create_dedicated_haulers() if original_policy.value == ContinuumHaulPolicy.Options.selfHaul else ContinuumHaulPolicy.create_self_haul()
+	client.reducers.set_haul_policy(policy)
+	_next_phase()
+	return false
+
+
+func _phase_check_policy() -> bool:
+	var config: ContinuumConfig = client.db.config.id.find(0)
+	if config.haul_policy.value == original_policy.value:
+		return false
+	if not _roles_match_policy(config.haul_policy):
+		return false
+	print("OK subscription reflected hauling mode and worker role changes")
+	client.reducers.set_haul_policy(original_policy)
+	_next_phase()
+	return false
+
+
+func _phase_restore_policy() -> bool:
+	var config: ContinuumConfig = client.db.config.id.find(0)
+	if config.haul_policy.value != original_policy.value:
+		return false
+	if not _roles_match_policy(original_policy):
+		return false
+	print("OK restored hauling mode")
+	_next_phase()
 	_start_unauthorized_check()
 	return false
+
+
+func _roles_match_policy(policy: ContinuumHaulPolicy) -> bool:
+	for colonist: ContinuumColonist in client.db.colonist.iter():
+		var expected := ContinuumHaulRole.Options.both
+		if policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers:
+			expected = ContinuumHaulRole.Options.producer if colonist.id % 2 == 1 else ContinuumHaulRole.Options.hauler
+		if colonist.haul_role.value != expected:
+			return false
+	return true
 
 
 func _start_unauthorized_check() -> void:
@@ -184,6 +229,10 @@ func _on_unauthorized_connected(_identity: PackedByteArray, _token: String) -> v
 
 	var speed_call := unauthorized_client.reducers.set_time_scale(6.0)
 	if not await _expect_rejected(speed_call, "set_time_scale"):
+		return
+
+	var haul_call := unauthorized_client.reducers.set_haul_policy(ContinuumHaulPolicy.create_dedicated_haulers())
+	if not await _expect_rejected(haul_call, "set_haul_policy"):
 		return
 
 	print("OK unauthorized reducers rejected")

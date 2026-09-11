@@ -44,6 +44,10 @@ func _initialize() -> void:
 	for alias: String in (modules as Dictionary).keys():
 		var module: Resource = (modules as Dictionary)[alias]
 		var module_name := String(module.get(&"name"))
+		# Fetch from an isolated development database without changing the client endpoint.
+		for argument: String in OS.get_cmdline_user_args():
+			if argument.begins_with("--stdb-db="):
+				module_name = argument.trim_prefix("--stdb-db=")
 		# Schema v10 is what this SDK's parser speaks; SpacetimeDB 2.10 still serves it.
 		var url := "%s/v1/database/%s/schema?version=10" % [uri, module_name]
 		print("==> fetching schema: %s" % url)

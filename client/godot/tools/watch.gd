@@ -11,6 +11,7 @@ extends SceneTree
 static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
+	"SELECT * FROM item_stack",
 ])
 
 var client: ContinuumModuleClient
@@ -81,7 +82,8 @@ func _process(delta: float) -> bool:
 		var options := SpacetimeDBConnectionOptions.new()
 		options.compression = SpacetimeDBConnection.CompressionPreference.NONE
 		options.debug_mode = false
-		client.connect_db("http://127.0.0.1:3000", "continuum", options)
+		client.connect_db(_cli_option("--stdb-host", "http://127.0.0.1:3000"),
+				_cli_option("--stdb-db", "continuum"), options)
 		return false
 
 	elapsed += delta
@@ -102,13 +104,27 @@ func _process(delta: float) -> bool:
 		return false
 	_last_reported_hour = hour
 
-	var activities := PackedStringArray()
+	var workers := PackedStringArray()
 	var colonists: Array[ContinuumColonist] = client.db.colonist.iter()
 	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
 		return a.id < b.id)
 	for colonist: ContinuumColonist in colonists:
-		activities.append("%s:%s" % [colonist.name.substr(0, 1),
-				ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize()])
+		var cargo := "empty"
+		if colonist.carried_amount > 0.0:
+			cargo = "%.1f %s" % [colonist.carried_amount,
+				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
+		workers.append("    %-7s %-7s / %-8s %-10s cargo=%s" % [colonist.name,
+			ContinuumWorkType.parse_enum_name(colonist.work.value),
+			ContinuumHaulRole.parse_enum_name(colonist.haul_role.value),
+			ContinuumActivity.parse_enum_name(colonist.activity.value), cargo])
+
+	var ground: Dictionary[int, float] = {}
+	for stack: ContinuumItemStack in client.db.item_stack.iter():
+		ground[stack.kind.value] = ground.get(stack.kind.value, 0.0) + stack.amount
+	var piles := PackedStringArray()
+	for kind: int in [ContinuumResourceKind.Options.food, ContinuumResourceKind.Options.wood,
+			ContinuumResourceKind.Options.stone, ContinuumResourceKind.Options.meat]:
+		piles.append("%s %.1f" % [ContinuumResourceKind.parse_enum_name(kind), ground.get(kind, 0.0)])
 
 	var recreation_on := false
 	for tile: ContinuumTile in client.db.tile.iter():
@@ -118,9 +134,10 @@ func _process(delta: float) -> bool:
 			recreation_on = true
 			break
 
-	print("d%d %02d:00  food %5.1f/%.0f  mood %3.0f  prod %3.0f  rec-zone %-3s  %s" % [
-		day, hour, colony.food, colony.food_capacity,
+	print("d%d %02d:00  stored: food %.1f wood %.1f stone %.1f meat %.1f (unlimited)  mood %3.0f  prod %3.0f  rec-zone %-3s  haul=%s" % [
+		day, hour, colony.food, colony.wood, colony.stone, colony.meat,
 		colony.smoothed_mood, colony.smoothed_productivity,
-		"on" if recreation_on else "OFF", " ".join(activities),
+		"on" if recreation_on else "OFF", ContinuumHaulPolicy.parse_enum_name(config.haul_policy.value),
 	])
+	print("  ground (not stored): %s\n%s" % [", ".join(piles), "\n".join(workers)])
 	return false
