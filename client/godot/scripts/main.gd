@@ -5,6 +5,9 @@
 ## predicted or mutated locally, so what you see is always what the server believes.
 extends Control
 
+const SessionHistoryModel = preload("res://scripts/session_history.gd")
+const HistoryChartControl = preload("res://scripts/history_chart.gd")
+
 ## How often the side panel is rebuilt. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
 const REFRESH_INTERVAL := 0.25
@@ -69,9 +72,12 @@ var _host := ""
 var _database := ""
 var _reconnect_timer: SceneTreeTimer
 var _closing := false
+var _history: SessionHistory
+var _history_chart: HistoryChart
 
 
 func _ready() -> void:
+	_history = SessionHistoryModel.new()
 	_build_side_panel()
 	map.tile_selected.connect(_on_tile_selected)
 
@@ -118,6 +124,7 @@ func _identity_token_path(host: String, database: String) -> String:
 
 
 func _process(delta: float) -> void:
+	_sample_history()
 	if _intent_request != null:
 		_intent_seconds -= delta
 		if _intent_seconds <= 0.0:
@@ -171,6 +178,8 @@ func _on_subscription_applied() -> void:
 
 
 func _on_disconnected() -> void:
+	_history.reset()
+	_history_chart.set_points([])
 	_set_connection_text("disconnected - the colony keeps running without us",
 			Color("ff5c6c"))
 	_schedule_reconnect()
@@ -406,6 +415,16 @@ func _build_side_panel() -> void:
 	_status_label.scroll_active = false
 	side.add_child(_status_label)
 
+	side.add_child(_heading("Session history"))
+	var history_note := Label.new()
+	history_note.text = "This session / since connection. Not saved on the server."
+	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	history_note.add_theme_font_size_override("font_size", 11)
+	history_note.add_theme_color_override("font_color", Color("7f8b9c"))
+	side.add_child(history_note)
+	_history_chart = HistoryChartControl.new()
+	side.add_child(_history_chart)
+
 	side.add_child(_heading("Simulation speed (admin-only)"))
 	_speed_label = Label.new()
 	side.add_child(_speed_label)
@@ -543,6 +562,20 @@ func _refresh_status() -> void:
 		],
 		"Population: %d" % colony.population,
 	])
+
+
+func _sample_history() -> void:
+	if not _state_ready:
+		return
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+	if config == null or colony == null:
+		return
+	if _history.sample(config.game_seconds, {
+		"mood": colony.smoothed_mood,
+		"productivity": colony.smoothed_productivity,
+	}):
+		_history_chart.set_points(_history.points())
 
 
 func _resource_text(kind: int, amount: float) -> String:
