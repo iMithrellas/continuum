@@ -45,9 +45,9 @@ carried goods remain in the worker's hands until delivered.
 
 The prominent **Global Hauling Mode** button applies to the whole colony:
 
-- **Everyone: produce + haul** (`self_haul`): all eight workers produce and haul
+- **Everyone: produce + haul** (`selfHaul`): all eight workers produce and haul
   their job's output. The simulation calls this role `both`.
-- **Paired: producer + hauler** (`dedicated_haulers`): each job's pair splits into
+- **Paired: producer + hauler** (`dedicatedHaulers`): each job's pair splits into
   one producer and one hauler. The producer leaves output on the ground; the
   hauler delivers only that job's resource. Hauling is a role, not a fifth job.
 
@@ -83,6 +83,14 @@ Install the Rust target once:
 ```bash
 rustup target add wasm32-unknown-unknown
 ```
+
+## Public API
+
+External clients use the same SpacetimeDB subscription and intent-level reducer
+model as the Godot client. See [docs/API.md](docs/API.md) for the current public
+tables, reducer signatures, wire examples, authorization rules, and schema
+generation workflow. This is documentation of the current implementation, not a
+versioned compatibility promise.
 
 ## Run Locally
 
@@ -141,8 +149,8 @@ Call reducers or query state through the containerized CLI:
 ./scripts/stdb sql continuum "SELECT * FROM colony"
 ./scripts/stdb call continuum set_time_scale 600
 ./scripts/stdb call continuum set_zone_enabled '{"recreation":{}}' false
-./scripts/stdb call continuum set_haul_policy '{"dedicated_haulers":{}}'
-./scripts/stdb call continuum set_haul_policy '{"self_haul":{}}'
+./scripts/stdb call continuum set_haul_policy '{"dedicatedHaulers":{}}'
+./scripts/stdb call continuum set_haul_policy '{"selfHaul":{}}'
 ./scripts/stdb sql continuum "SELECT * FROM item_stack"
 ./scripts/stdb sql continuum "SELECT * FROM work_order"
 ./scripts/stdb call continuum reset_colony

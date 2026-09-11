@@ -129,7 +129,7 @@
 - [ ] Bots should be possible
 - [ ] Discord integrations should be possible
 - [ ] Custom automation should be possible
-- [ ] Public protocol/API documentation
+- [x] Public protocol/API documentation
 
 ## Backend
 - [ ] Separate backend project from Godot
