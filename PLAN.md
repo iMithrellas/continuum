@@ -3,7 +3,7 @@
 - [ ] Very slow simulation, roughly **2–6 real hours per in-game day**
 - [ ] Server/world chooses initial simulation speed
 - [ ] Later allow simulation-speed changes through player voting/quorum
-- [ ] Optional cooldown on speed changes
+- [x] Optional cooldown on speed changes
 - [ ] Optional hardcore mode with immutable speed
 - [ ] Colony continues operating while nobody is online
 - [ ] Designed around asynchronous play throughout the week
@@ -73,7 +73,7 @@
 
 ## Observability
 - [ ] Basic in-game status overview
-- [ ] Historical graphs (client-only bounded session history; no server persistence)
+- [x] Historical graphs (client-only bounded session history; no server persistence)
 - [ ] Event log / audit timeline
 - [ ] Explain why systems stopped or degraded
 - [ ] Production throughput metrics
@@ -129,7 +129,7 @@
 - [ ] Bots should be possible
 - [ ] Discord integrations should be possible
 - [ ] Custom automation should be possible
-- [ ] Public protocol/API documentation
+- [x] Public protocol/API documentation
 
 ## Backend
 - [ ] Separate backend project from Godot
