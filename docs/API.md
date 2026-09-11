@@ -173,55 +173,65 @@ start or extend that cooldown.
 ## CLI Examples
 
 The repository wrapper runs the matching SpacetimeDB CLI in the Compose service.
-The following reads are safe and do not change colony state:
+Set `DB` to the database containing the currently published module. The default
+`continuum` is the baseline database; `continuum-worker-cooldown` is the ready
+cooldown-worker database used by the examples below. Substitute any database
+you publish the matching module to. The following reads are safe and do not
+change colony state:
 
 ```bash
-./scripts/stdb sql continuum "SELECT * FROM config"
-./scripts/stdb sql continuum "SELECT * FROM colony"
-./scripts/stdb sql continuum "SELECT * FROM tile"
-./scripts/stdb sql continuum "SELECT * FROM colonist"
-./scripts/stdb sql continuum "SELECT * FROM item_stack"
-./scripts/stdb sql continuum "SELECT * FROM work_order"
-./scripts/stdb sql continuum "SELECT * FROM alert"
-./scripts/stdb sql continuum "SELECT * FROM event_log"
+DB="${CONTINUUM_DB:-continuum}"
+./scripts/stdb sql "$DB" "SELECT * FROM config"
+./scripts/stdb sql "$DB" "SELECT * FROM colony"
+./scripts/stdb sql "$DB" "SELECT * FROM tile"
+./scripts/stdb sql "$DB" "SELECT * FROM colonist"
+./scripts/stdb sql "$DB" "SELECT * FROM item_stack"
+./scripts/stdb sql "$DB" "SELECT * FROM work_order"
+./scripts/stdb sql "$DB" "SELECT * FROM alert"
+./scripts/stdb sql "$DB" "SELECT * FROM event_log"
 ```
 
-These calls change state and require the stated role; use only against an
-isolated test database when testing writes:
+The reducer calls below change state and require the stated role; use only
+against an isolated test database when testing writes. The tile query is
+read-only and supplies the ID used by the following work-order example:
 
 ```bash
-./scripts/stdb call continuum set_haul_policy '{"dedicatedHaulers":{}}'
-./scripts/stdb call continuum set_haul_policy '{"selfHaul":{}}'
-./scripts/stdb sql continuum "SELECT id, kind FROM tile WHERE kind = 'farm'"
-./scripts/stdb call continuum set_work_order 412 '{"farming":{}}' 1 true
-./scripts/stdb call continuum set_time_scale 0
+DB=continuum-worker-cooldown
+./scripts/stdb call "$DB" set_haul_policy '{"dedicatedHaulers":{}}'
+./scripts/stdb call "$DB" set_haul_policy '{"selfHaul":{}}'
+./scripts/stdb sql "$DB" "SELECT id, x, y, kind FROM tile"
+./scripts/stdb call "$DB" set_work_order 412 '{"farming":{}}' 1 true
+./scripts/stdb call "$DB" set_time_scale 0
 ```
 
 The seed layout makes tile `412` the farm at `(3,17)`; unlike tile `7` in the
-unit fixture, it is a valid farming tile. For a database with a different
-layout, replace `412` with one numeric ID returned by the preceding query; do
-not pass the entire formatted CLI output. The enum objects above are the JSON
-spelling expected by the CLI's wire encoding. In generated Godot code, use constructors such as
+unit fixture, it is a valid farming tile. SQL enum literals are not accepted by
+this CLI for this query, so inspect the unfiltered `kind` value and choose a
+row in the client or from the returned output; do not add `WHERE kind = 'farm'`.
+For a database with a different layout, replace `412` with a numeric ID from
+that query. The enum objects above are the JSON spelling expected by the CLI's
+wire encoding. In generated Godot code, use constructors such as
 `ContinuumHaulPolicy.create_dedicated_haulers()` and
 `ContinuumWorkType.create_farming()` instead of hand-building JSON.
 
-On the isolated cooldown worker database `continuum-worker-cooldown` only, the
-additional read and admin command are:
+The cooldown table and reducer are available on any database published from the
+cooldown worker module. For the currently available ready database, use:
 
 ```bash
-./scripts/stdb sql continuum-worker-cooldown "SELECT * FROM speed_control"
-./scripts/stdb call continuum-worker-cooldown set_speed_change_cooldown 300
+DB=continuum-worker-cooldown
+./scripts/stdb sql "$DB" "SELECT * FROM speed_control"
+./scripts/stdb call "$DB" set_speed_change_cooldown 300
 ```
 
-The command is intentionally not runnable against the baseline schema until
-the cooldown worker is integrated. Its exact contract is documented in
-[speed-controls.md](speed-controls.md).
+The command is not available in the baseline `continuum` schema. Its exact
+contract is documented in [speed-controls.md](speed-controls.md).
 
 For schema inspection, use the CLI's JSON description and the module's binding
 tooling; do not infer a schema from application tables:
 
 ```bash
-./scripts/stdb describe --json continuum
+DB="${CONTINUUM_DB:-continuum}"
+./scripts/stdb describe --json "$DB"
 ./scripts/generate-bindings
 ```
 
