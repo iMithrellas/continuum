@@ -20,6 +20,7 @@ const EventLog = Types.EventLog
 const ItemStack = Types.ItemStack
 const Role = Types.Role
 const TileKind = Types.TileKind
+const SpeedControl = Types.SpeedControl
 const Tile = Types.Tile
 const WorkOrder = Types.WorkOrder
 

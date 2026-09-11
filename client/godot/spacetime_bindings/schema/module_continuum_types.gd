@@ -16,5 +16,6 @@ const EventLog = preload('res://spacetime_bindings/schema/types/continuum_event_
 const ItemStack = preload('res://spacetime_bindings/schema/types/continuum_item_stack.gd')
 const Role = preload('res://spacetime_bindings/schema/types/continuum_role.gd')
 const TileKind = preload('res://spacetime_bindings/schema/types/continuum_tile_kind.gd')
+const SpeedControl = preload('res://spacetime_bindings/schema/types/continuum_speed_control.gd')
 const Tile = preload('res://spacetime_bindings/schema/types/continuum_tile.gd')
 const WorkOrder = preload('res://spacetime_bindings/schema/types/continuum_work_order.gd')
