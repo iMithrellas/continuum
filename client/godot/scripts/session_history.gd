@@ -20,7 +20,7 @@ func reset() -> void:
 
 ## Returns true only when a new replicated clock sample was accepted.
 ## A paused clock therefore cannot add duplicate points.
-func sample(game_seconds: float, values: Dictionary, generation: int = 0) -> bool:
+func sample(game_seconds: float, values: Dictionary, generation: int) -> bool:
 	# A new colony can restart its clock at the same timestamp as the old one.
 	# Reset before applying the interval check so that sample is never carried over.
 	if _last_generation >= 0 and generation != _last_generation:

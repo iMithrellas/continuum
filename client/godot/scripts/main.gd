@@ -574,7 +574,7 @@ func _sample_history() -> void:
 	if _history.sample(config.game_seconds, {
 		"mood": colony.smoothed_mood,
 		"productivity": colony.smoothed_productivity,
-	}):
+	}, config.generation):
 		_history_chart.set_points(_history.points())
 
 
