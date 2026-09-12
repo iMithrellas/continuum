@@ -112,7 +112,7 @@ static func compatible_work(kind: int) -> Array[int]:
 
 
 func _process(delta: float) -> void:
-	if not _has_state:
+	if not _has_state or SpacetimeDB.Continuum.db == null:
 		return
 	var changed: bool = false
 	for kind: int in _stock_pulses.keys():
@@ -558,6 +558,19 @@ func _input(event: InputEvent) -> void:
 		_dragging = false
 		_drag_inside = false
 		queue_redraw()
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _dragging:
+		# `_input` also starts the drag so headless/viewport dispatch and normal GUI
+		# dispatch share the same grid-only boundary. UI clicks still map to null.
+		var press := event as InputEventMouseButton
+		var press_point := get_global_transform().affine_inverse() * press.position
+		var press_cell: Variant = _cell_at(press_point)
+		if press_cell != null:
+			_dragging = true
+			_drag_inside = true
+			_drag_start = press_cell
+			_drag_current = press_cell
+			queue_redraw()
 		return
 	if event is InputEventMouseMotion and _dragging:
 		var motion := event as InputEventMouseMotion
