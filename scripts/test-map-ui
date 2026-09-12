@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Reproducible client UI gate. Owns a disposable private SpacetimeDB container.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME="continuum-map-ui-it-${USER:-user}-$$"
+DB="continuum-map-ui-it-$$"
+DATA="${NAME}-data"
+CONFIG="${NAME}-config"
+CONTAINER=""
+
+cleanup() {
+    if [[ -n "$CONTAINER" ]]; then
+        docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    fi
+    docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+echo "==> building private UI fixture module"
+cargo build --manifest-path "$ROOT/backend/spacetimedb/Cargo.toml" \
+    --release --target wasm32-unknown-unknown >/dev/null
+
+docker volume create "$DATA" >/dev/null
+docker volume create "$CONFIG" >/dev/null
+docker run --rm --user root --entrypoint sh \
+    -v "$DATA:/home/spacetime/.local/share/spacetime" \
+    -v "$CONFIG:/home/spacetime/.config/spacetime" \
+    clockworklabs/spacetime:v2.10.0 -c \
+    'chown -R 1000:1000 /home/spacetime/.local/share/spacetime /home/spacetime/.config/spacetime'
+
+CONTAINER="$NAME"
+docker run -d --name "$CONTAINER" -p 127.0.0.1::3000 \
+    -v "$DATA:/home/spacetime/.local/share/spacetime" \
+    -v "$CONFIG:/home/spacetime/.config/spacetime" \
+    -v "$ROOT/backend/spacetimedb:/project:ro" \
+    clockworklabs/spacetime:v2.10.0 start --listen-addr 0.0.0.0:3000 >/dev/null
+
+for _ in {1..30}; do
+    if docker exec "$CONTAINER" spacetime server ping local >/dev/null 2>&1; then
+        break
+    fi
+    sleep 1
+done
+PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
+
+echo "==> publishing disposable database $DB on port $PORT"
+docker exec "$CONTAINER" spacetime publish --yes --anonymous \
+    --server http://127.0.0.1:3000 \
+    -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
+
+echo "==> running scene-backed UI gate"
+timeout 90s godot --headless --path "$ROOT/client/godot" \
+    --scene res://tools/map_ui_test.tscn \
+    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB"

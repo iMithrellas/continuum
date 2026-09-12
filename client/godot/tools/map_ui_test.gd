@@ -10,9 +10,13 @@ var selected_releases := 0
 var reducer_calls: Array = []
 var build_rects: Array[Rect2i] = []
 var selected_rects: Array[Rect2i] = []
+var failed := false
 
 
 func _ready() -> void:
+	if _has_user_arg("--map-ui-intentional-failure"):
+		_fail("intentional failure validation")
+		return
 	_assert(MapUiModel.normalize_rect(Vector2i(7, 4), Vector2i(2, 1)) == Rect2i(2, 1, 6, 4),
 		"reverse drag is normalized inclusively")
 	_assert(MapUiModel.normalize_rect(Vector2i(3, 3), Vector2i(3, 3)) == Rect2i(3, 3, 1, 1),
@@ -21,9 +25,17 @@ func _ready() -> void:
 	_assert(MapUiModel.clamp_cell(Vector2i(-4, 30), Vector2i(24, 24)) == Vector2i(0, 23),
 		"helper clamping remains deterministic")
 	await _test_map_input()
+	if failed:
+		return
 	await _test_controller_surface()
+	if failed:
+		return
 	print("MAP_UI_PASS")
 	get_tree().quit(0)
+
+
+func _has_user_arg(value: String) -> bool:
+	return value in OS.get_cmdline_user_args()
 
 
 func _test_map_input() -> void:
@@ -116,6 +128,8 @@ func _refresh_real_tiles(main: Control) -> void:
 		frames += 1
 	_assert(client.db != null and not client.db.tile.iter().is_empty(),
 		"private subscribed fixture provides tiles for refresh tests")
+	if failed:
+		return
 	var occupied: ContinuumTile = null
 	var empty: ContinuumTile = null
 	for tile: ContinuumTile in client.db.tile.iter():
@@ -191,5 +205,12 @@ func _key(keycode: Key) -> InputEventKey:
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition:
-		printerr("MAP_UI_FAIL: %s" % message)
-		get_tree().quit(1)
+		_fail(message)
+
+
+func _fail(message: String) -> void:
+	if failed:
+		return
+	failed = true
+	printerr("MAP_UI_FAIL: %s" % message)
+	get_tree().quit(1)
