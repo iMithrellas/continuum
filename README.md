@@ -118,9 +118,11 @@ server. Forest supports independent logging and hunting orders. The existing
 selected-tile inspection remains available for per-tile details.
 
 While dragging, Escape, right-click, releasing outside the drawn grid, or losing
-window focus cancels without dispatching an intent. A drag release dispatches
-one reducer request, and displayed state follows the subscribed server rows;
-pending requests do not optimistically change the map.
+window focus cancels without dispatching an intent. A valid Build-mode drag
+release submits one atomic `build_tile_block` request. A Select-mode drag only
+selects; the selected-block buttons separately dispatch the corresponding
+enable/disable or work-order mutation. Displayed state follows the subscribed
+server rows, and pending requests do not optimistically change the map.
 
 The map renders a blended soil layer and independent ecological cover. Soil
 fertility, moisture, and forest density may overlap and are currently
