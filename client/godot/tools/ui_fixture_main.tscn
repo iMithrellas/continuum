@@ -1,6 +1,6 @@
 [gd_scene load_steps=4 format=3]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://tools/ui_fixture_main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/colony_map.gd" id="2_map"]
 [ext_resource type="Script" path="res://scripts/sidebar.gd" id="3_sidebar"]
 

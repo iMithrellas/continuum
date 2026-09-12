@@ -140,6 +140,9 @@
 - [x] Map painting cancellation on Escape, right-click, release outside the drawn grid, or window focus loss
 - [x] Select-mode block controls for enabling/disabling non-empty tiles and setting or pausing compatible farming, logging, mining, and hunting orders; incompatible cells are skipped by the reducer
 - [x] Blended soil and ecological-cover terrain visualization, with independent overlapping soil/forest fields; terrain is decorative and has no production modifiers yet
+- [x] Concise searchable, collapsible, draggable-width sidebar with responsive font, button, spacing, and padding scale
+- [x] Role-aware sidebar controls fail closed from the authenticated sender-scoped role view; operator loss cancels Build immediately
+- [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
 
 ## API
 - [ ] API-first design from the beginning
@@ -208,6 +211,7 @@
 - [x] Publishing identity bootstraps the sole admin; admins can add or revoke operator identities
 - [x] Operators can manage facilities, zones, work orders, hauling/meal policy, and alert acknowledgement; admins additionally manage speed, cooldown, reset, and membership
 - [x] Command and membership changes include the caller identity in the event feed
+- [x] Godot role discovery is live, sender-scoped, fail-closed on unavailable views, and reflected in the sidebar without claiming blanket permissions
 
 ## Clear Next Iterations
 - [ ] Persistent named blocks that can be reused, renamed, and edited as first-class objects
