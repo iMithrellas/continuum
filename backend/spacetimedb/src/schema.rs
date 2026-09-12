@@ -37,6 +37,15 @@ pub struct Config {
     pub meal_policy: MealPolicy,
 }
 
+/// Persistent procedural-world seed. It is separate from operational simulation
+/// configuration so terrain generation cannot be confused with colony policy.
+#[table(accessor = world_seed, public)]
+pub struct WorldSeed {
+    #[primary_key]
+    pub id: u32,
+    pub seed: u64,
+}
+
 /// Singleton admin policy for speed changes. Missing rows on additive updates
 /// behave as the disabled default until the first policy or speed write.
 #[table(accessor = speed_control, public)]
@@ -71,6 +80,17 @@ pub struct Tile {
     pub y: i32,
     pub kind: TileKind,
     pub enabled: bool,
+}
+
+/// Continuous environmental values for a tile. These are independent of the
+/// facility in [`Tile::kind`] and may overlap when interpreted by clients.
+#[table(accessor = terrain, public)]
+pub struct Terrain {
+    #[primary_key]
+    pub tile_id: u32,
+    pub soil_fertility: f32,
+    pub forest_density: f32,
+    pub moisture: f32,
 }
 
 #[table(accessor = colonist, public)]

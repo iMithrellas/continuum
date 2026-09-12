@@ -14,6 +14,7 @@ use spacetimedb::SpacetimeType;
 
 mod work_orders;
 pub use work_orders::{default_work_orders, WorkOrder};
+pub mod terrain;
 
 pub const GRID_W: i32 = 24;
 pub const GRID_H: i32 = 24;

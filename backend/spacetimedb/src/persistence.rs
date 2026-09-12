@@ -4,8 +4,18 @@ use crate::schema::*;
 use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
 
+const DEFAULT_WORLD_SEED: u64 = 0x6c6f_6e67_7365_6564;
+
 /// Wipe colony state and recreate it from the default layout.
 pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
+    let generation = ctx
+        .db
+        .config()
+        .id()
+        .find(0)
+        .map(|config| config.generation + 1)
+        .unwrap_or(1);
+    let seed = DEFAULT_WORLD_SEED.wrapping_add(generation as u64);
     for order in ctx.db.work_order().iter() {
         ctx.db.work_order().id().delete(order.id);
     }
@@ -14,6 +24,9 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
     }
     for tile in ctx.db.tile().iter() {
         ctx.db.tile().id().delete(tile.id);
+    }
+    for terrain in ctx.db.terrain().iter() {
+        ctx.db.terrain().tile_id().delete(terrain.tile_id);
     }
     for colonist in ctx.db.colonist().iter() {
         ctx.db.colonist().id().delete(colonist.id);
@@ -48,13 +61,16 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         ctx.db.colonist().insert(colonist_row(colonist));
     }
 
-    let generation = ctx
-        .db
-        .config()
-        .id()
-        .find(0)
-        .map(|config| config.generation + 1)
-        .unwrap_or(1);
+    upsert_world_seed(ctx, seed);
+    for tile in &world.tiles {
+        let fields = sim::terrain::sample(seed, tile.x, tile.y);
+        ctx.db.terrain().insert(Terrain {
+            tile_id: tile.id,
+            soil_fertility: fields.soil_fertility,
+            forest_density: fields.forest_density,
+            moisture: fields.moisture,
+        });
+    }
     upsert_config(
         ctx,
         Config {
@@ -96,7 +112,17 @@ fn upsert_colony(ctx: &ReducerContext, row: Colony) {
     }
 }
 
+fn upsert_world_seed(ctx: &ReducerContext, seed: u64) {
+    let row = WorldSeed { id: 0, seed };
+    if ctx.db.world_seed().id().find(0).is_some() {
+        ctx.db.world_seed().id().update(row);
+    } else {
+        ctx.db.world_seed().insert(row);
+    }
+}
+
 pub(crate) fn load_world(ctx: &ReducerContext) -> World {
+    ensure_terrain(ctx);
     let mut tiles: Vec<sim::Tile> = ctx
         .db
         .tile()
@@ -206,6 +232,41 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
             .map(|colony| colony.smoothed_productivity)
             .unwrap_or(90.0),
     }
+}
+
+/// Additive migrations do not rewrite existing terrain or any other colony rows.
+/// A missing seed is derived from the persisted generation once, then retained.
+fn ensure_terrain(ctx: &ReducerContext) -> u64 {
+    let seed = ctx
+        .db
+        .world_seed()
+        .id()
+        .find(0)
+        .map(|row| row.seed)
+        .unwrap_or_else(|| {
+            let generation = ctx
+                .db
+                .config()
+                .id()
+                .find(0)
+                .map(|row| row.generation)
+                .unwrap_or(0);
+            let seed = DEFAULT_WORLD_SEED.wrapping_add(generation as u64);
+            upsert_world_seed(ctx, seed);
+            seed
+        });
+    for tile in ctx.db.tile().iter() {
+        if ctx.db.terrain().tile_id().find(tile.id).is_none() {
+            let fields = sim::terrain::sample(seed, tile.x, tile.y);
+            ctx.db.terrain().insert(Terrain {
+                tile_id: tile.id,
+                soil_fertility: fields.soil_fertility,
+                forest_density: fields.forest_density,
+                moisture: fields.moisture,
+            });
+        }
+    }
+    seed
 }
 
 fn colonist_row(colonist: &sim::Colonist) -> Colonist {
