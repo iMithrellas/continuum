@@ -28,7 +28,7 @@
 - [ ] Autonomous colonists rather than direct unit control
 - [ ] Jobs / work orders
 - [ ] Work priorities
-- [x] Instant construction for dining, sleep, recreation, and all seven operational tile kinds through rectangular intents; construction jobs are not implemented
+- [x] Instant rectangular construction for all seven operational tile kinds; construction jobs are not implemented
 - [ ] Resource gathering
 - [ ] Production chains
 - [ ] Storage
@@ -47,7 +47,7 @@
 - [x] Production slice: farming, logging, mining, and hunting produce food, wood, stone, and meat on work tiles
 - [x] Work-order slice: standing per-tile orders, priorities `1..=3`, pause/remove, deterministic selection, and forest's independent logging and hunting orders
 - [x] Hauling slice: self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage
-- [x] Construction slice: operators can instantly build dining, sleep, or recreation facilities for 20 stored wood on one empty tile; construction jobs are not implemented
+- [x] Construction slice: operators can instantly build any of the seven operational tile kinds for 20 stored wood per cell across a fully empty rectangle; construction jobs are not implemented
 - [x] Environmental slice: every tile can have seeded, bounded, overlapping soil fertility, forest density, and moisture fields; no terrain-driven production or need effects are implemented
 - [x] Failure-chain slice: disabling recreation can produce unmet recreation, lower mood and sleep quality, more fatigue, lower productivity, and food shortage; this is not the full failure model
 
