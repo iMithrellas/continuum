@@ -161,8 +161,10 @@ assert_eq "$(scalar 'SELECT stone FROM colony')" "$stone_before" "stone preserva
 assert_eq "$(scalar 'SELECT meat FROM colony')" "$meat_before" "meat preservation"
 
 events_before="$(matching_events 'Built ')"
+wood_before_failed_build="$(scalar 'SELECT wood FROM colony')"
 assert_call_fails build_tile_block 2 2 3 3 '{"mine":{}}'
 assert_eq "$(matching_events 'Built ')" "$events_before" "occupied build has no audit"
+assert_eq "$(scalar 'SELECT wood FROM colony')" "$wood_before_failed_build" "occupied build does not spend wood"
 assert_call_fails build_tile_block 23 23 24 23 '{"storage":{}}'
 assert_call_fails build_tile_block 0 0 0 0 '{"sleep":{}}'
 assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= 2 AND x <= 3 AND y >= 2 AND y <= 3" mine)" "0" "failed build rollback"
@@ -187,6 +189,9 @@ call set_block_work_order 16 16 20 20 '{"hunting":{}}' 3 false >/dev/null
 assert_eq "$(order_count 'SELECT tile_id, work, priority, enabled FROM work_order' logging 1)" "25" "logging block orders"
 assert_eq "$(order_count 'SELECT tile_id, work, priority, enabled FROM work_order' hunting 3)" "25" "hunting block orders"
 assert_eq "$(mining_orders)" "$mining_before" "unrelated mining orders"
+work_events_before="$(matching_events 'Work order block ')"
+call set_block_work_order 16 20 20 16 '{"logging":{}}' 1 false >/dev/null
+assert_eq "$(matching_events 'Work order block ')" "$work_events_before" "work-order no-op audit count"
 assert_call_fails set_block_work_order 16 16 20 20 '{"logging":{}}' 0 true
 assert_call_fails set_block_work_order 0 0 1 1 '{"mining":{}}' 2 true
 
