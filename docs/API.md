@@ -53,7 +53,7 @@ tables below. `membership` is deliberately private and is not a public table.
 
 | Table | Key fields and meaning |
 | --- | --- |
-| `config` | `id: u32` (always `0`); `time_scale: f64` (in-game seconds/real second); `game_seconds: f64` (in-game clock seconds); `generation: u32` (increments on reset); `haul_policy: HaulPolicy` (colony-wide hauling policy). |
+| `config` | `id: u32` (always `0`); `time_scale: f64` (in-game seconds/real second); `game_seconds: f64` (in-game clock seconds); `generation: u32` (increments on reset); `haul_policy: HaulPolicy` (colony-wide hauling policy); `meal_policy: MealPolicy` (colony-wide meal policy, default `normal`). |
 | `colony` | `id: u32` (always `0`); `food`, `wood`, `stone`, `meat: f32` (stored resource units); `avg_mood`, `avg_productivity`, `smoothed_mood`, `smoothed_productivity: f32` (current and day-smoothed aggregate scores); `population: u32` (colonist count). Stored stocks exclude ground piles and carried cargo. |
 | `tile` | `id: u32` (primary key); `x`, `y: i32` (grid coordinates); `kind: TileKind` (facility type); `enabled: bool` (whether the facility operates). |
 | `colonist` | `id: u64` (primary key); `name: String` (display name); `x`, `y`, `target_x`, `target_y: i32` (current/target grid coordinates); `move_progress: f32` (normalized movement progress); `activity: Activity` (observable activity); `work: WorkType` (fixed profession); `haul_role: HaulRole` (server-derived role); `carried_kind: ResourceKind` (cargo kind, including the zero/default value when empty); `carried_amount: f32` (cargo units); `goal: Goal` (persistent current goal); `hunger`, `fatigue`, `recreation`, `mood`, `productivity: f32` (simulation scores); `sleep_hours`, `last_sleep_quality: f32` (recent sleep measures). |
@@ -83,6 +83,7 @@ same names, for example `selfHaul` and `dedicatedHaulers`, not snake case.
 | Type | Allowed values |
 | --- | --- |
 | `HaulPolicy` | `selfHaul`, `dedicatedHaulers` |
+| `MealPolicy` | `normal`, `rationed` |
 | `WorkType` | `none`, `logging`, `mining`, `hunting`, `farming` |
 | `TileKind` | `empty`, `sleep`, `forest`, `storage`, `farm`, `mine`, `dining`, `recreation` |
 | `ResourceKind` | `food`, `wood`, `stone`, `meat` |
@@ -95,6 +96,11 @@ The two hauling policies are colony-wide. `selfHaul` gives workers the `both`
 role. `dedicatedHaulers` derives one `producer` and one `hauler` within each
 fixed profession pair. Hauling roles are server-derived, not a command input;
 professions are fixed.
+
+Meal policy is also colony-wide. `normal` preserves the existing eating
+accounting. `rationed` halves food cost per simulated eating time and reduces
+hunger recovery to 65% of normal. Limited food is consumed only when available,
+and hunger remains clamped to `0..=100`; no direct mood modifier is applied.
 
 ## Commands
 
@@ -109,6 +115,7 @@ Rust signatures and the generated binding types.
 | `set_work_order` | `(tile_id: u32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Unknown tile, `none`, wrong facility, or priority outside `1..=3` errors; identical row state is a no-op. |
 | `remove_work_order` | `(order_id: u64)` | Operator/admin. Unknown ID errors. |
 | `set_haul_policy` | `(policy: HaulPolicy)` | Operator/admin. `selfHaul` or `dedicatedHaulers` only; missing config errors; existing policy is a no-op. |
+| `set_meal_policy` | `(policy: MealPolicy)` | Operator/admin. `normal` or `rationed`; missing config errors; existing policy is an audited no-op. |
 | `acknowledge_alert` | `(alert_id: u64)` | Operator/admin. Unknown ID errors; already acknowledged is a no-op. |
 | `set_time_scale` | `(time_scale: f64)` | Admin only. Baseline accepts finite `0..=100000` (the cooldown worker explicitly rejects NaN/infinity); missing config errors; unchanged value is a no-op with no timestamp update. `0` pauses the clock. |
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |
@@ -126,6 +133,12 @@ explicitly reset colony only.
 The event log is an audit feed, not immutable history: only the newest 200 rows
 are retained, and `reset_colony` deletes the existing rows before writing its
 own reset event. Preserve events externally if durable history is required.
+
+`meal_policy` was added as the final `config` column with a SpacetimeDB schema
+default of `normal`. Automatic migration populates existing config rows with
+that default. New columns with defaults must remain at the end of the table
+definition. A normal republish is sufficient; do not use `--delete-data` for
+this feature.
 
 Reducers return success, a no-op, or a rejection. A successful reducer call is
 not permission to update a local cache: wait for the subscription's server

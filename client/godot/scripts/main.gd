@@ -64,6 +64,11 @@ var _haul_description: Label
 var _haul_feedback: Label
 var _haul_request: SpacetimeDBReducerCall
 var _haul_request_seconds := 0.0
+var _meal_buttons: Dictionary = {}
+var _meal_description: Label
+var _meal_feedback: Label
+var _meal_request: SpacetimeDBReducerCall
+var _meal_request_seconds := 0.0
 var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
@@ -141,6 +146,13 @@ func _process(delta: float) -> void:
 			_haul_feedback.text = "No response received. Outcome unknown; check the server mode before retrying."
 			_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 			_dirty = true
+	if _meal_request != null:
+		_meal_request_seconds -= delta
+		if _meal_request_seconds <= 0.0:
+			_meal_request = null
+			_meal_feedback.text = "No response received. Outcome unknown; check the server meal policy before retrying."
+			_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+			_dirty = true
 	_refresh_timer -= delta
 	if (_dirty or _map_dirty) and _refresh_timer <= 0.0:
 		_refresh_timer = REFRESH_INTERVAL
@@ -202,6 +214,10 @@ func _schedule_reconnect() -> void:
 		_haul_request = null
 		_haul_feedback.text = "Connection lost. Hauling request outcome unknown; waiting for server state."
 		_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	if _meal_request != null:
+		_meal_request = null
+		_meal_feedback.text = "Connection lost. Meal policy outcome unknown; waiting for server state."
+		_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	_dirty = true
 	if _closing or _reconnect_timer != null:
 		return
@@ -381,6 +397,43 @@ func _on_haul_policy_response(response: ReducerResultMessage, request_id: int) -
 		_haul_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
 
 
+func _set_meal_policy(policy: int) -> void:
+	if not _state_ready or _meal_request != null:
+		return
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	if config == null:
+		return
+	if config.meal_policy.value == policy:
+		_refresh_controls()
+		return
+	var call := SpacetimeDB.Continuum.reducers.set_meal_policy(ContinuumMealPolicy.create(policy))
+	_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	if call.error != OK:
+		_meal_feedback.text = "Meal policy could not be sent (%d)." % call.error
+		return
+	_meal_request = call
+	_meal_request_seconds = 10.0
+	_meal_feedback.text = "Request sent. Waiting for the server; displayed policy is not changed locally."
+	call.response.connect(_on_meal_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
+	_dirty = true
+	_refresh_controls()
+
+
+func _on_meal_policy_response(response: ReducerResultMessage, request_id: int) -> void:
+	if _meal_request == null or request_id != _meal_request.request_id:
+		return
+	_meal_request = null
+	_dirty = true
+	_meal_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+		_meal_feedback.text = "Meal policy rejected: %s" % response.reducer_result.get_err()
+	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+		_meal_feedback.text = "Meal policy failed: %s" % response.reducer_result.get_internal_error()
+	else:
+		_meal_feedback.text = "Request accepted. The policy above follows server state."
+		_meal_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+
+
 ## Surface a rejected reducer instead of letting it fail silently. The server is
 ## authoritative, so a refusal is real information.
 func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
@@ -422,6 +475,26 @@ func _build_side_panel() -> void:
 	_haul_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_haul_feedback.add_theme_font_size_override("font_size", 11)
 	side.add_child(_haul_feedback)
+
+	side.add_child(_heading("Global meal policy"))
+	var meal_buttons := HBoxContainer.new()
+	for policy: int in [ContinuumMealPolicy.Options.normal, ContinuumMealPolicy.Options.rationed]:
+		var button := Button.new()
+		button.text = "Normal" if policy == ContinuumMealPolicy.Options.normal else "Rationed"
+		button.toggle_mode = true
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.pressed.connect(_set_meal_policy.bind(policy))
+		meal_buttons.add_child(button)
+		_meal_buttons[policy] = button
+	side.add_child(meal_buttons)
+	_meal_description = Label.new()
+	_meal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_meal_description.add_theme_font_size_override("font_size", 12)
+	side.add_child(_meal_description)
+	_meal_feedback = Label.new()
+	_meal_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_meal_feedback.add_theme_font_size_override("font_size", 11)
+	side.add_child(_meal_feedback)
 
 	side.add_child(_heading("Colony"))
 	_status_label = RichTextLabel.new()
@@ -725,6 +798,20 @@ func _refresh_controls() -> void:
 	else:
 		_haul_button.text = "Waiting for hauling policy..."
 		_haul_description.text = ""
+
+	var meal_busy := not _state_ready or _meal_request != null
+	for policy: int in _meal_buttons:
+		var button: Button = _meal_buttons[policy]
+		button.disabled = meal_busy or config == null
+		button.set_pressed_no_signal(config != null and config.meal_policy.value == policy)
+	if config != null:
+		var rationed := config.meal_policy.value == ContinuumMealPolicy.Options.rationed
+		_meal_description.text = ("Rationed: 50% food cost per eating time, 65% hunger recovery; higher hunger can lower mood and productivity." if rationed
+				else "Normal: existing food cost and hunger recovery. No direct mood penalty either way.")
+		if not _state_ready:
+			_meal_description.text += " (Last known state; reconnecting.)"
+	else:
+		_meal_description.text = "Waiting for meal policy..."
 
 	var recreation: Array[ContinuumTile] = _recreation_tiles()
 	var any_enabled: bool = false

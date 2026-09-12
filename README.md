@@ -13,6 +13,13 @@ systemic failure chain remains:
 
 `no recreation -> low mood -> poor sleep -> fatigue -> low productivity -> food shortage`
 
+The colony also has a global meal policy. Normal meals preserve the existing
+food accounting. Rationed meals use 50% of the normal food cost per simulated
+eating time and recover hunger at 65% of the normal rate; the existing hunger,
+mood, and productivity simulation supplies the tradeoff without a direct mood
+penalty. The choice is operator-controlled, persisted in `config`, and defaults
+to normal during schema migration and colony reset.
+
 ## Jobs And Hauling
 
 Workers produce resources on their work tile, not directly into storage:

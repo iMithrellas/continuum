@@ -27,6 +27,10 @@ func reset_colony() -> SpacetimeDBReducerCall:
 func set_haul_policy(policy: ContinuumHaulPolicy) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_haul_policy', [policy], [&'ContinuumHaulPolicy'])
 
+## 0. policy: ContinuumMealPolicy [br]
+func set_meal_policy(policy: ContinuumMealPolicy) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_meal_policy', [policy], [&'ContinuumMealPolicy'])
+
 ## 0. identity: PackedByteArray [br]
 ## 1. authorized: bool [br]
 func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBReducerCall:

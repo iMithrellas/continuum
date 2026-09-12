@@ -11,6 +11,7 @@ const table_names: Array[String] = ['config']
 @export var game_seconds: float
 @export var generation: int
 @export var haul_policy: ContinuumHaulPolicy
+@export var meal_policy: ContinuumMealPolicy
 
 #BSATN metadata
 const primary_key: StringName = &'id'
@@ -19,7 +20,8 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"time_scale": "F64",
 	"game_seconds": "F64",
 	"generation": "U32",
-	"haul_policy": "ContinuumHaulPolicy"
+	"haul_policy": "ContinuumHaulPolicy",
+	"meal_policy": "ContinuumMealPolicy"
 }
 
 ## 1. id: int[br]
@@ -27,11 +29,13 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 ## 3. game_seconds: float[br]
 ## 4. generation: int[br]
 ## 5. haul_policy: ContinuumHaulPolicy[br]
-static func create(p_id: int, p_time_scale: float, p_game_seconds: float, p_generation: int, p_haul_policy: ContinuumHaulPolicy) -> ContinuumConfig:
+## 6. meal_policy: ContinuumMealPolicy[br]
+static func create(p_id: int, p_time_scale: float, p_game_seconds: float, p_generation: int, p_haul_policy: ContinuumHaulPolicy, p_meal_policy: ContinuumMealPolicy) -> ContinuumConfig:
 	var result: ContinuumConfig = ContinuumConfig.new()
 	result.id = p_id
 	result.time_scale = p_time_scale
 	result.game_seconds = p_game_seconds
 	result.generation = p_generation
 	result.haul_policy = p_haul_policy
+	result.meal_policy = p_meal_policy
 	return result

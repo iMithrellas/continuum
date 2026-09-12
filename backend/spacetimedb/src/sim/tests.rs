@@ -1055,6 +1055,88 @@ fn working_produces_food_and_eating_consumes_it() {
 }
 
 #[test]
+fn normal_meals_preserve_the_existing_eating_accounting() {
+    let tuning = Tuning::default();
+    let mut world = new_world();
+    world.resources.food = 10.0;
+    world.colonists[0].hunger = 80.0;
+    world.colonists[0].activity = Activity::Eating;
+    world.colonists[0].goal = Goal::Eat;
+
+    step_eat(&mut world, 0, &tuning, 0.25);
+
+    assert_eq!(world.resources.food, 2.0);
+    assert_eq!(world.colonists[0].hunger, 30.0);
+}
+
+#[test]
+fn rationed_meals_trade_half_food_cost_for_sixty_five_percent_recovery() {
+    let tuning = Tuning::default();
+    let mut world = new_world();
+    world.meal_policy = MealPolicy::Rationed;
+    world.resources.food = 10.0;
+    world.colonists[0].hunger = 80.0;
+
+    step_eat(&mut world, 0, &tuning, 0.25);
+
+    assert_eq!(world.resources.food, 7.4);
+    assert_eq!(world.colonists[0].hunger, 47.5);
+}
+
+#[test]
+fn eating_handles_low_and_zero_stock_without_negative_values_or_over_recovery() {
+    let tuning = Tuning::default();
+    let mut world = new_world();
+    world.meal_policy = MealPolicy::Rationed;
+    world.resources.food = 1.0;
+    world.colonists[0].hunger = 80.0;
+
+    step_eat(&mut world, 0, &tuning, 0.25);
+
+    assert_eq!(world.resources.food, 0.0);
+    assert_eq!(world.colonists[0].hunger, 67.5);
+    assert!(world.resources.food >= 0.0);
+    assert!((0.0..=100.0).contains(&world.colonists[0].hunger));
+
+    world.resources.food = 0.0;
+    let hunger = world.colonists[0].hunger;
+    step_eat(&mut world, 0, &tuning, 0.25);
+    assert_eq!(world.resources.food, 0.0);
+    assert_eq!(world.colonists[0].hunger, hunger);
+
+    world.resources.food = 10.0;
+    world.colonists[0].hunger = 2.0;
+    step_eat(&mut world, 0, &tuning, 0.25);
+    assert_eq!(world.colonists[0].hunger, 0.0);
+    assert!(world.resources.food >= 0.0);
+}
+
+#[test]
+fn meal_policy_changes_take_effect_and_simulation_remains_deterministic() {
+    let tuning = Tuning::default();
+    let mut world = new_world();
+    world.resources.food = 100.0;
+    world.colonists[0].hunger = 80.0;
+    world.colonists[0].activity = Activity::Eating;
+    world.colonists[0].goal = Goal::Eat;
+    let mut normal = world.clone();
+    step_eat(&mut normal, 0, &tuning, 1.0);
+
+    world.meal_policy = MealPolicy::Rationed;
+    let mut rationed = world.clone();
+    step_eat(&mut rationed, 0, &tuning, 1.0);
+    assert_ne!(normal, rationed);
+    assert!(rationed.resources.food > normal.resources.food);
+
+    let mut first = world.clone();
+    let mut second = world;
+    for _ in 0..500 {
+        assert_eq!(step(&mut first, &tuning, 60.0), step(&mut second, &tuning, 60.0));
+    }
+    assert_eq!(first, second);
+}
+
+#[test]
 fn deliveries_have_no_storage_limit() {
     let t = Tuning::default();
     let mut w = new_world();

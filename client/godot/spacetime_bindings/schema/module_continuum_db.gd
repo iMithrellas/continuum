@@ -2,25 +2,25 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["colony", "speed_control", "event_log", "item_stack", "config", "colonist", "work_order", "alert", "tile"]
+const table_names : Array[String] = ["colonist", "item_stack", "config", "alert", "colony", "event_log", "work_order", "tile", "speed_control"]
 
-var colony: ContinuumColonyTable
-var speed_control: ContinuumSpeedControlTable
-var event_log: ContinuumEventLogTable
+var colonist: ContinuumColonistTable
 var item_stack: ContinuumItemStackTable
 var config: ContinuumConfigTable
-var colonist: ContinuumColonistTable
-var work_order: ContinuumWorkOrderTable
 var alert: ContinuumAlertTable
+var colony: ContinuumColonyTable
+var event_log: ContinuumEventLogTable
+var work_order: ContinuumWorkOrderTable
 var tile: ContinuumTileTable
+var speed_control: ContinuumSpeedControlTable
 
 func _init(p_local_db: LocalDatabase) -> void:
-	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
-	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
-	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
+	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
 	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
 	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
-	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
-	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
 	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
+	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
+	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
+	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
 	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
+	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)

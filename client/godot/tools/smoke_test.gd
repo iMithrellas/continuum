@@ -24,6 +24,7 @@ var phase := 0
 var phase_started := 0.0
 var recreation_was_enabled := false
 var original_policy: ContinuumHaulPolicy
+var original_meal_policy: ContinuumMealPolicy
 var original_order: ContinuumWorkOrder
 var failed := false
 var started := false
@@ -84,6 +85,10 @@ func _process(delta: float) -> bool:
 			return _phase_check_policy()
 		4:
 			return _phase_restore_policy()
+		5:
+			return _phase_check_meal_policy()
+		6:
+			return _phase_restore_meal_policy()
 	return false
 
 
@@ -100,6 +105,7 @@ func _phase_read_state() -> bool:
 	if tiles.size() != 24 * 24 or colonists.size() != 8:
 		return _fail("expected a 24x24 colony with eight workers")
 	original_policy = config.haul_policy
+	original_meal_policy = config.meal_policy
 	if not _check_speed_control():
 		return true
 	print("OK tiles         = %d, colonists = %d, events = %d"
@@ -211,6 +217,26 @@ func _phase_restore_policy() -> bool:
 	if not _roles_match_policy(original_policy):
 		return false
 	print("OK restored hauling mode")
+	client.reducers.set_meal_policy(ContinuumMealPolicy.create_rationed())
+	_next_phase()
+	return false
+
+
+func _phase_check_meal_policy() -> bool:
+	var config: ContinuumConfig = client.db.config.id.find(0)
+	if config.meal_policy.value != ContinuumMealPolicy.Options.rationed:
+		return false
+	print("OK subscription reflected rationed meal policy")
+	client.reducers.set_meal_policy(original_meal_policy)
+	_next_phase()
+	return false
+
+
+func _phase_restore_meal_policy() -> bool:
+	var config: ContinuumConfig = client.db.config.id.find(0)
+	if config.meal_policy.value != original_meal_policy.value:
+		return false
+	print("OK restored meal policy")
 	_next_phase()
 	_check_work_orders()
 	return false
@@ -307,6 +333,10 @@ func _on_unauthorized_connected(_identity: PackedByteArray, _token: String) -> v
 
 	var haul_call := unauthorized_client.reducers.set_haul_policy(ContinuumHaulPolicy.create_dedicated_haulers())
 	if not await _expect_rejected(haul_call, "set_haul_policy"):
+		return
+
+	var meal_call := unauthorized_client.reducers.set_meal_policy(ContinuumMealPolicy.create_rationed())
+	if not await _expect_rejected(meal_call, "set_meal_policy"):
 		return
 
 	var order := original_order
