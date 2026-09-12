@@ -23,6 +23,10 @@ func build_facility(tile_id: int, kind: ContinuumTileKind) -> SpacetimeDBReducer
 func build_tile_block(start_x: int, start_y: int, end_x: int, end_y: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('build_tile_block', [start_x, start_y, end_x, end_y, kind], [&'I32', &'I32', &'I32', &'I32', &'ContinuumTileKind'])
 
+## 0. identity: PackedByteArray [br]
+func grant_admin(identity: PackedByteArray) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('grant_admin', [identity], [&'__identity__'])
+
 ## 0. order_id: int [br]
 func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('remove_work_order', [order_id], [&'U64'])

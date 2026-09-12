@@ -20,6 +20,7 @@ const HaulPolicy = Types.HaulPolicy
 const MealPolicy = Types.MealPolicy
 const EventLog = Types.EventLog
 const ItemStack = Types.ItemStack
+const Membership = Types.Membership
 const Role = Types.Role
 const SpeedControl = Types.SpeedControl
 const Terrain = Types.Terrain
