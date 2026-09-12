@@ -84,6 +84,13 @@ func set_selected_rect(rect: Rect2i) -> void:
 	queue_redraw()
 
 
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_dragging = false
+		_drag_inside = false
+		queue_redraw()
+
+
 func selected_rect() -> Rect2i:
 	if _dragging:
 		return MapUiModel.normalize_rect(_drag_start, _drag_current)
@@ -547,11 +554,10 @@ func _input(event: InputEvent) -> void:
 		queue_redraw()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
-		var right_click := event as InputEventMouseButton
-		var right_point := get_global_transform().affine_inverse() * right_click.position
-		if get_rect().has_point(right_point):
-			_dragging = false
-			queue_redraw()
+		# Right-click is a global cancel while painting, including the side panel.
+		_dragging = false
+		_drag_inside = false
+		queue_redraw()
 		return
 	if event is InputEventMouseMotion and _dragging:
 		var motion := event as InputEventMouseMotion

@@ -45,11 +45,7 @@ var _colonist_box: VBoxContainer
 var _alert_box: VBoxContainer
 var _tile_action_box: VBoxContainer
 var _tile_info: Label
-var _tile_button: Button
-var _build_box: VBoxContainer
-var _build_buttons: Dictionary = {}
 var _order_summary: Label
-var _order_controls: Dictionary = {}
 var _speed_buttons: Dictionary = {}
 var _speed_label: Label
 var _intent_feedback: Label
@@ -79,6 +75,8 @@ var _build_menu: OptionButton
 var _block_box: VBoxContainer
 var _block_info: Label
 var _block_controls: Dictionary = {}
+## Test harnesses may record the final intent without pretending a reducer succeeded.
+var map_intent_override: Callable
 var _dirty: bool = true
 var _map_dirty: bool = true
 var _refresh_timer: float = 0.0
@@ -295,9 +293,17 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 	if colony == null or colony.wood < cost:
 		_intent_feedback.text = "Build unavailable: needs %.0f wood (stored %.1f)." % [cost, 0.0 if colony == null else colony.wood]
 		return
-	_track_intent(SpacetimeDB.Continuum.reducers.build_tile_block(rect.position.x, rect.position.y,
-			rect.end.x - 1, rect.end.y - 1, ContinuumTileKind.create(_build_menu.get_selected_id())),
-		"Build %dx%d block" % [rect.size.x, rect.size.y])
+	_dispatch_build_block(rect, ContinuumTileKind.create(_build_menu.get_selected_id()))
+
+
+func _dispatch_build_block(rect: Rect2i, kind: ContinuumTileKind) -> void:
+	if map_intent_override.is_valid():
+		map_intent_override.call("build_tile_block", [rect.position.x, rect.position.y,
+			rect.end.x - 1, rect.end.y - 1, kind])
+		return
+	_track_intent(SpacetimeDB.Continuum.reducers.build_tile_block(
+			rect.position.x, rect.position.y, rect.end.x - 1, rect.end.y - 1, kind),
+			"Build %dx%d block" % [rect.size.x, rect.size.y])
 
 
 static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
@@ -330,59 +336,6 @@ func _toggle_recreation_zone() -> void:
 			break
 	_report(SpacetimeDB.Continuum.reducers.set_zone_enabled(
 			ContinuumTileKind.create_recreation(), not any_enabled), "set_zone_enabled")
-
-
-func _toggle_selected_tile() -> void:
-	if not _state_ready or _intent_request != null:
-		return
-	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
-	if tile == null:
-		return
-	_track_intent(SpacetimeDB.Continuum.reducers.set_tile_enabled(tile.id, not tile.enabled),
-			"Tile #%d" % tile.id)
-
-
-func _build_facility(kind: int) -> void:
-	_refresh_controls()
-	if not _state_ready or _intent_request != null:
-		return
-	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
-	if tile == null or tile.kind.value != ContinuumTileKind.Options.empty:
-		return
-	_track_intent(SpacetimeDB.Continuum.reducers.build_facility(tile.id,
-			ContinuumTileKind.create(kind)),
-			"Build %s on tile #%d" % [ContinuumTileKind.parse_enum_name(kind).capitalize(), tile.id])
-
-
-func _change_order(work: int, action: String, priority: int = 2) -> void:
-	# Undo the button's built-in toggle even if its order disappeared before the click.
-	_refresh_controls()
-	if not _state_ready or _intent_request != null:
-		return
-	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
-	if tile == null or work not in ColonyMap.compatible_work(tile.kind.value):
-		return
-	var order: ContinuumWorkOrder = null
-	for candidate: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
-		if candidate.tile_id == tile.id and candidate.work.value == work:
-			order = candidate
-			break
-	var call: SpacetimeDBReducerCall
-	if action == "remove":
-		if order == null:
-			return
-		call = SpacetimeDB.Continuum.reducers.remove_work_order(order.id)
-	else:
-		var enabled := true
-		if order != null:
-			enabled = not order.enabled if action == "toggle" else order.enabled
-			if action == "toggle":
-				priority = order.priority
-		elif action != "toggle":
-			return
-		var work_type := ContinuumWorkType.create(work)
-		call = SpacetimeDB.Continuum.reducers.set_work_order(tile.id, work_type, priority, enabled)
-	_track_intent(call, "%s on tile #%d" % [ContinuumWorkType.parse_enum_name(work).capitalize(), tile.id])
 
 
 func _change_speed(speed: float) -> void:
@@ -662,51 +615,6 @@ func _build_side_panel() -> void:
 	_tile_info = Label.new()
 	_tile_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tile_action_box.add_child(_tile_info)
-	_tile_button = Button.new()
-	_tile_button.visible = false
-	_tile_button.pressed.connect(_toggle_selected_tile)
-	_tile_action_box.add_child(_tile_button)
-	_build_box = VBoxContainer.new()
-	_build_box.visible = false
-	_tile_action_box.add_child(_build_box)
-	var build_cost := Label.new()
-	build_cost.text = "Instant build: 20 stored wood"
-	build_cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	build_cost.add_theme_font_size_override("font_size", 11)
-	_build_box.add_child(build_cost)
-	for kind: int in [ContinuumTileKind.Options.dining, ContinuumTileKind.Options.sleep,
-			ContinuumTileKind.Options.recreation]:
-		var button := Button.new()
-		button.text = "Build %s (20 wood)" % ContinuumTileKind.parse_enum_name(kind).capitalize()
-		button.pressed.connect(_build_facility.bind(kind))
-		_build_box.add_child(button)
-		_build_buttons[kind] = button
-	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
-			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
-		var box := VBoxContainer.new()
-		box.visible = false
-		var label := Label.new()
-		box.add_child(label)
-		var actions := HBoxContainer.new()
-		var toggle := Button.new()
-		toggle.pressed.connect(_change_order.bind(work, "toggle"))
-		actions.add_child(toggle)
-		var remove := Button.new()
-		remove.text = "Remove"
-		remove.pressed.connect(_change_order.bind(work, "remove"))
-		actions.add_child(remove)
-		var priorities: Array[Button] = []
-		for priority: int in [1, 2, 3]:
-			var button := Button.new()
-			button.text = ColonyMap.PRIORITY_NAMES[priority]
-			button.toggle_mode = true
-			button.pressed.connect(_change_order.bind(work, "priority", priority))
-			actions.add_child(button)
-			priorities.append(button)
-		box.add_child(actions)
-		_tile_action_box.add_child(box)
-		_order_controls[work] = {"box": box, "label": label, "toggle": toggle,
-			"remove": remove, "priorities": priorities}
 	_order_summary = Label.new()
 	_order_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_order_summary)
@@ -959,10 +867,6 @@ func _refresh_controls() -> void:
 	# Block operations are the primary map workflow. Keep the authoritative one-cell
 	# detail text visible for inspection, but do not expose single-tile mutators.
 	_tile_action_box.visible = true
-	_tile_button.visible = false
-	_build_box.visible = false
-	for work: int in _order_controls:
-		_order_controls[work].box.visible = false
 	_block_box.visible = true
 	var block_tiles := 0
 	var occupied := 0
@@ -1075,34 +979,16 @@ func _refresh_controls() -> void:
 	var compatible: Array[int] = []
 	if tile != null:
 		compatible = ColonyMap.compatible_work(tile.kind.value)
-	var orders: Dictionary = {}
 	var active_counts: Dictionary = {}
 	for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
-		if order.tile_id == _selected_tile_id:
-			orders[order.work.value] = order
 		if order.enabled:
 			active_counts[order.work.value] = int(active_counts.get(order.work.value, 0)) + 1
 	var counts := PackedStringArray()
-	for work: int in _order_controls:
-		var controls: Dictionary = _order_controls[work]
+	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
+			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
 		var work_name := ContinuumWorkType.parse_enum_name(work).capitalize()
 		counts.append("%s %d" % [work_name, active_counts.get(work, 0)])
-		controls.box.visible = work in compatible
-		var order: ContinuumWorkOrder = orders.get(work)
-		controls.label.text = "%s: %s" % [work_name, "no order" if order == null else
-			("%s / %s" % ["enabled" if order.enabled else "paused", ColonyMap.PRIORITY_NAMES.get(order.priority, "Unknown")])]
-		controls.toggle.text = "Create" if order == null else ("Pause" if order.enabled else "Enable")
-		controls.toggle.disabled = busy
-		controls.remove.disabled = busy or order == null
-		for index in 3:
-			var button: Button = controls.priorities[index]
-			button.disabled = busy or order == null
-			button.set_pressed_no_signal(order != null and order.priority == index + 1)
 	_order_summary.text = "Enabled orders%s: %s" % [" (last known)" if not _state_ready else "", ", ".join(counts)]
-	_tile_button.visible = tile != null
-	_build_box.visible = tile != null and tile.kind.value == ContinuumTileKind.Options.empty
-	for kind: int in _build_buttons:
-		_build_buttons[kind].disabled = busy or not _build_box.visible
 	if tile == null:
 		_tile_info.text = "Click a tile on the map to select it."
 		return
@@ -1121,8 +1007,6 @@ func _refresh_controls() -> void:
 		_tile_info.text += "\nTile disabled: enabled orders cannot produce here."
 	if not _state_ready:
 		_tile_info.text += "\nLast known state; waiting for subscription."
-	_tile_button.disabled = busy or tile.kind.value == ContinuumTileKind.Options.empty
-	_tile_button.text = "Disable this tile" if tile.enabled else "Enable this tile"
 
 
 func _refresh_alerts() -> void:
