@@ -48,14 +48,19 @@ pinned SDK, not a promise that raw protocol details remain stable.
 ## Read State
 
 The public tables are the authoritative replicated state. Subscribe with SQL
-queries such as `SELECT * FROM colony`; the Godot client subscribes to all eight
-tables below. `membership` is deliberately private and is not a public table.
+queries such as `SELECT * FROM colony`; the current Godot screen subscribes to
+the operational tables it renders. `world_seed` and `terrain` are public for
+clients that render the environmental layer, but are not yet subscribed by the
+current Godot screen. `membership` is deliberately private and is not a public
+table.
 
 | Table | Key fields and meaning |
 | --- | --- |
 | `config` | `id: u32` (always `0`); `time_scale: f64` (in-game seconds/real second); `game_seconds: f64` (in-game clock seconds); `generation: u32` (increments on reset); `haul_policy: HaulPolicy` (colony-wide hauling policy); `meal_policy: MealPolicy` (colony-wide meal policy, default `normal`). |
+| `world_seed` | `id: u32` (always `0`); `seed: u64` (persisted procedural-world seed). Reset replaces it; additive terrain filling preserves it. |
 | `colony` | `id: u32` (always `0`); `food`, `wood`, `stone`, `meat: f32` (stored resource units); `avg_mood`, `avg_productivity`, `smoothed_mood`, `smoothed_productivity: f32` (current and day-smoothed aggregate scores); `population: u32` (colonist count). Stored stocks exclude ground piles and carried cargo. |
 | `tile` | `id: u32` (primary key); `x`, `y: i32` (grid coordinates); `kind: TileKind` (facility type); `enabled: bool` (whether the facility operates). |
+| `terrain` | `tile_id: u32` (primary key); `soil_fertility`, `forest_density`, `moisture: f32` (seeded bounded environmental values). Fields are independent of `tile.kind` and can overlap. |
 | `colonist` | `id: u64` (primary key); `name: String` (display name); `x`, `y`, `target_x`, `target_y: i32` (current/target grid coordinates); `move_progress: f32` (normalized movement progress); `activity: Activity` (observable activity); `work: WorkType` (fixed profession); `haul_role: HaulRole` (server-derived role); `carried_kind: ResourceKind` (cargo kind, including the zero/default value when empty); `carried_amount: f32` (cargo units); `goal: Goal` (persistent current goal); `hunger`, `fatigue`, `recreation`, `mood`, `productivity: f32` (simulation scores); `sleep_hours`, `last_sleep_quality: f32` (recent sleep measures). |
 | `item_stack` | `id: u64` (primary key); `tile_id: u32` (ground tile); `x`, `y: i32` (ground coordinates); `kind: ResourceKind` (resource); `amount: f32` (ground units). Ground piles can be partial or multiple stacks. |
 | `work_order` | `id: u64` (primary key, deterministic); `tile_id: u32` (work tile); `work: WorkType` (producing profession); `priority: u8` (1 high, 2 normal, 3 low); `enabled: bool` (whether the standing intent is active). Ticks do not rewrite orders. |
@@ -92,6 +97,11 @@ same names, for example `selfHaul` and `dedicatedHaulers`, not snake case.
 | `Goal` | `nothing`, `eat`, `sleep`, `recreate`, `work`, `haul` |
 | `Severity` | `info`, `warning`, `critical` |
 
+`TileKind` is the operational layer: it is the facility/work-zone state used by
+the simulation. `Terrain` is a separate environmental layer. The current
+four-octave fBm sampler produces bounded values for all three terrain fields;
+it does not currently affect production, movement, needs, or tile conversion.
+
 The two hauling policies are colony-wide. `selfHaul` gives workers the `both`
 role. `dedicatedHaulers` derives one `producer` and one `hauler` within each
 fixed profession pair. Hauling roles are server-derived, not a command input;
@@ -111,8 +121,11 @@ Rust signatures and the generated binding types.
 | --- | --- | --- |
 | `set_tile_enabled` | `(tile_id: u32, enabled: bool)` | Operator/admin. Unknown IDs and `empty` tiles error; the current value is a no-op. |
 | `build_facility` | `(tile_id: u32, kind: TileKind)` | Operator/admin. Only `dining`, `sleep`, or `recreation` may be built on an in-bounds `empty` tile. Deducts exactly `20` stored wood atomically and enables the facility; insufficient wood or invalid targets error. |
+| `build_tile_block` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, kind: TileKind)` | Operator/admin. Inclusive bounds normalize reversed endpoints. Any non-`empty` kind is accepted when every cell is in-bounds, present, and empty. Costs `20 * area` stored wood and enables every cell atomically. Empty kind, missing or occupied cells, invalid bounds, or insufficient/non-finite wood error; rejection changes no rows or audit event. |
 | `set_zone_enabled` | `(kind: TileKind, enabled: bool)` | Operator/admin. `empty` errors; changing no matching tiles is a no-op. |
+| `set_tile_block_enabled` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, enabled: bool)` | Operator/admin. Inclusive normalized bounds. Applies to all non-`empty` tiles and ignores empty cells. An all-empty rectangle errors; if selected tiles already have the value it is a no-op with no event. |
 | `set_work_order` | `(tile_id: u32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Unknown tile, `none`, wrong facility, or priority outside `1..=3` errors; identical row state is a no-op. |
+| `set_block_work_order` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Inclusive normalized bounds and priority `1..=3`. Filters compatible facilities only: farming/farm, mining/mine, logging/forest, hunting/forest. Empty/incompatible cells are skipped; no compatible cell errors. Matching orders are inserted or updated by deterministic ID; unchanged matches are no-ops and an unchanged whole request emits no event. |
 | `remove_work_order` | `(order_id: u64)` | Operator/admin. Unknown ID errors. |
 | `set_haul_policy` | `(policy: HaulPolicy)` | Operator/admin. `selfHaul` or `dedicatedHaulers` only; missing config errors; existing policy is a no-op. |
 | `set_meal_policy` | `(policy: MealPolicy)` | Operator/admin. `normal` or `rationed`; missing config errors; actual changes are audited, while an unchanged policy is a no-op with no event. |
@@ -130,9 +143,24 @@ Lower numeric priority wins: `1` high, `2` normal, `3` low. Orders are not
 automatically backfilled on publish or tick; defaults are seeded for a new or
 explicitly reset colony only.
 
+Rectangular reducers are single reducer transactions. `build_tile_block`
+prevalidates the complete rectangle before deducting wood or updating tiles.
+`set_tile_block_enabled` only considers non-empty tiles, while
+`set_block_work_order` filters by the work definition and preserves unrelated
+orders. Forest is intentionally compatible with both logging and hunting, so
+the two order IDs remain distinct for the same tile.
+
 The event log is an audit feed, not immutable history: only the newest 200 rows
 are retained, and `reset_colony` deletes the existing rows before writing its
 own reset event. Preserve events externally if durable history is required.
+
+`world_seed` and `terrain` are additive public tables. On load, a missing seed is
+derived once from the persisted `config.generation` and retained; missing
+terrain rows are filled from that seed for existing tiles only. Existing terrain
+rows and operational rows are not regenerated by load or republish. `init` and
+`reset_colony` explicitly reseed the default 24x24 layout; reset deletes public
+world rows, terrain, orders, alerts, and event history, increments generation,
+and restores default orders/policies. It also resets speed cooldown state.
 
 `meal_policy` was added as the final `config` column with a SpacetimeDB schema
 default of `normal`. Automatic migration populates existing config rows with
