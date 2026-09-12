@@ -41,6 +41,16 @@
 - [ ] Cascading failures
 - [ ] Failures should generally be understandable after investigating them
 
+### Implemented slices
+- [x] Needs slice: hunger, fatigue, recreation, mood, productivity, sleep hours, and recent sleep quality are simulated per colonist; social, comfort, safety, relationships, and food quality are not implemented
+- [x] Autonomous colonist goals cover eating, sleeping, recreation, work, and hauling; direct unit control is not implemented
+- [x] Production slice: farming, logging, mining, and hunting produce food, wood, stone, and meat on work tiles
+- [x] Work-order slice: standing per-tile orders, priorities `1..=3`, pause/remove, deterministic selection, and forest's independent logging and hunting orders
+- [x] Hauling slice: self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage
+- [x] Construction slice: operators can instantly build dining, sleep, or recreation facilities for 20 stored wood on one empty tile; construction jobs are not implemented
+- [x] Environmental slice: every tile can have seeded, bounded, overlapping soil fertility, forest density, and moisture fields; no terrain-driven production or need effects are implemented
+- [x] Failure-chain slice: disabling recreation can produce unmet recreation, lower mood and sleep quality, more fatigue, lower productivity, and food shortage; this is not the full failure model
+
 ## Unattended operation
 - [ ] Standing orders
 - [x] Policies (meal rationing slice; broader policy systems remain)
@@ -52,6 +62,10 @@
 - [ ] Colony should increasingly manage routine situations automatically
 - [ ] Automation should itself be progression
 - [ ] Players should feel rewarded for making systems require less attention
+
+### Implemented slices
+- [x] Server scheduler advances the authoritative colony while clients are disconnected
+- [x] Standing work orders persist and are not backfilled or rewritten by publish/load/tick
 
 ## Event modes
 - [ ] **Chill mode:** dangerous events only while someone is online
@@ -70,6 +84,11 @@
 - [ ] New settlements introduce new operational problems
 - [ ] Old settlements remain relevant instead of becoming obsolete
 - [ ] Different players can manage different locations simultaneously
+
+### Implemented slices
+- [x] Persistent 24x24 seeded colony grid with seven non-empty operational tile kinds plus `empty`
+- [x] Rectangular operator intents normalize reversed inclusive bounds, prevalidate builds, and charge 20 stored wood per cell
+- [x] Rectangular control and work-order reducers update only non-empty or work-compatible tiles respectively; incompatible cells are skipped
 
 ## Observability
 - [ ] Basic in-game status overview
@@ -94,6 +113,12 @@
 - [ ] Remote sites can lose communications while continuing to operate
 - [ ] Better sensors/comms unlock better visibility
 
+### Implemented slices
+- [x] Replicated colony overview exposes pooled stocks, population, aggregate mood/productivity, and smoothed mood/productivity
+- [x] Replicated colonist overview exposes needs, goal, activity, profession, derived hauling role, and cargo
+- [x] Event/audit feed records state-changing operator commands with caller identity; only the newest 200 event rows are retained and reset clears history
+- [x] Alerts can be observed and acknowledged by operators; alerting is not a general notification system yet
+
 ## Clients
 - [ ] Full **Godot desktop client**
 - [ ] Godot mainly handles rendering, UI and input
@@ -108,6 +133,12 @@
 - [ ] Browser alerts / logs / metrics
 - [ ] Browser macro execution
 - [ ] Different clients intentionally have different capability levels
+
+### Pending client slices
+- [ ] Godot mode/type picker for rectangular map operations
+- [ ] Godot drag-to-select rectangle
+- [ ] Godot block enable/disable and compatible work-order controls
+- [ ] Godot blended soil/vegetation terrain visualization
 
 ## API
 - [ ] API-first design from the beginning
@@ -131,6 +162,11 @@
 - [ ] Custom automation should be possible
 - [x] Public protocol/API documentation
 
+### Implemented slices
+- [x] Public SpacetimeDB tables and reducer signatures are documented for the current schema snapshot
+- [x] Operator/admin authorization is enforced server-side; unauthorized clients may still subscribe to public state
+- [x] Reducer flow is intent-based with replicated-state reconciliation; the current docs make no compatibility promise
+
 ## Backend
 - [ ] Separate backend project from Godot
 - [ ] **Rust SpacetimeDB module**
@@ -148,6 +184,12 @@
 - [ ] Server discovery/invites later
 - [ ] External integration services later
 
+### Implemented slices
+- [x] Separate Rust SpacetimeDB module with pure simulation core and persistence/event/auth glue
+- [x] Authoritative state is persisted in public tables; scheduled ticks load, step, and save server-side state
+- [x] Deterministic four-octave fBm terrain sampling is seeded and persisted; missing terrain rows are filled additively without rewriting existing fields
+- [x] Rectangular build, tile-control, and compatible work-order reducers are atomic SpacetimeDB transactions
+
 ## Multiplayer / governance
 - [ ] Player identity
 - [ ] Colony membership
@@ -160,6 +202,19 @@
 - [ ] Simulation-speed voting
 - [ ] Prevent tiny overnight minorities from changing major server settings
 - [ ] Potentially use governance for other colony-wide decisions later
+
+### Implemented slices
+- [x] Publishing identity bootstraps the sole admin; admins can add or revoke operator identities
+- [x] Operators can manage facilities, zones, work orders, hauling/meal policy, and alert acknowledgement; admins additionally manage speed, cooldown, reset, and membership
+- [x] Command and membership changes include the caller identity in the event feed
+
+## Clear Next Iterations
+- [ ] Persistent named blocks that can be reused, renamed, and edited as first-class objects
+- [ ] Construction jobs with materials, progress, labor, interruption, and completion events
+- [ ] Terrain effects wired into farming, forestry, moisture, movement, or other operational outcomes
+- [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
+- [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies
+- [ ] Multi-settlement world model, trade, remote sites, expeditions, and communications loss
 
 ## Project philosophy
 - [ ] Roughly **70% learning project**

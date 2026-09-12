@@ -78,6 +78,34 @@ the stored totals and roster cargo colors. Hover or select a pile's tile for its
 amounts; compact storage and cargo amounts may be rounded. The roster shows each
 worker's job, hauling role, activity, and cargo alongside their needs.
 
+## Terrain And Block Operations
+
+The backend persists one `world_seed` and one `terrain` row per tile. Terrain is
+an environmental layer, separate from the operational `tile.kind`: a tile's
+soil fertility, forest density, and moisture are continuous seeded values that
+may overlap, while `tile.kind` determines the facility or work zone currently
+operating there. The current simulation does not use terrain values to change
+production, movement, needs, or other outcomes.
+
+Operators can issue atomic rectangular intents over inclusive grid bounds:
+
+- `build_tile_block` converts a fully empty rectangle to any of the seven
+  non-empty operational tile kinds and costs 20 stored wood per cell.
+- `set_tile_block_enabled` enables or disables all non-empty tiles in the
+  rectangle; empty cells are ignored.
+- `set_block_work_order` changes or creates orders only on tiles compatible with
+  the selected producing work type. Forest cells independently support logging
+  and hunting orders.
+
+The reducers normalize reversed bounds, reject out-of-grid rectangles, and
+reconcile from subscribed server state. A failed build is prevalidated before
+wood or tiles change. See [docs/API.md](docs/API.md) for exact errors, no-op
+behavior, authorization, and migration/reset semantics.
+
+The current Godot screen exposes single-tile controls. Rectangular mode/type
+selection, drag selection, block controls, and blended terrain visualization
+are pending client integration; they are not implemented in this branch.
+
 ## Requirements
 
 - Docker with Compose
