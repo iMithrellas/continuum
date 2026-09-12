@@ -102,9 +102,30 @@ reconcile from subscribed server state. A failed build is prevalidated before
 wood or tiles change. See [docs/API.md](docs/API.md) for exact errors, no-op
 behavior, authorization, and migration/reset semantics.
 
-The current Godot screen exposes single-tile controls. Rectangular mode/type
-selection, drag selection, block controls, and blended terrain visualization
-are pending client integration; they are not implemented in this branch.
+The Godot map tools expose two modes: `Select` and `Build`. In `Build`, choose
+one of `Farm`, `Forest`, `Mine`, `Storage`, `Dining`, `Sleep`, or `Recreation`
+from the type menu, then press and drag across empty ground and release to send
+one rectangular build intent. Bounds are inclusive, so a one-cell drag is valid.
+Build costs 20 stored wood per cell; the client checks occupied cells and the
+available wood before dispatch, while the server performs the authoritative
+atomic validation and charge.
+
+In `Select`, press and drag to select a rectangle. The selected-block panel
+provides `Enable block` and `Disable block`, plus compatible work-order rows for
+`Farming`, `Logging`, `Mining`, and `Hunting`. Each row exposes priority buttons
+(`H`, `N`, `L`) and `Pause`; empty and incompatible cells are skipped by the
+server. Forest supports independent logging and hunting orders. The existing
+selected-tile inspection remains available for per-tile details.
+
+While dragging, Escape, right-click, releasing outside the drawn grid, or losing
+window focus cancels without dispatching an intent. A drag release dispatches
+one reducer request, and displayed state follows the subscribed server rows;
+pending requests do not optimistically change the map.
+
+The map renders a blended soil layer and independent ecological cover. Soil
+fertility, moisture, and forest density may overlap and are currently
+decorative: terrain does not modify production, movement, needs, or other
+simulation outcomes yet.
 
 ## Requirements
 
@@ -166,6 +187,23 @@ godot --headless --path client/godot --script res://tools/smoke_test.gd
 
 The smoke test accepts the same `--stdb-host` and `--stdb-db` user arguments as
 the client.
+
+Run the reproducible map UI gate, including input/controller coverage:
+
+```bash
+./scripts/test-map-ui
+```
+
+Run the isolated rectangular-reducer integration gate:
+
+```bash
+./scripts/test-block-reducers
+```
+
+Both scripts build and publish a disposable private database in a uniquely named
+SpacetimeDB container with private volumes and a dynamically assigned port. They
+do not use the shared Compose database and clean up automatically; no shared DB
+is required.
 
 Observe the live colony in a terminal:
 

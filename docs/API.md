@@ -50,9 +50,9 @@ pinned SDK, not a promise that raw protocol details remain stable.
 The public tables are the authoritative replicated state. Subscribe with SQL
 queries such as `SELECT * FROM colony`; the current Godot screen subscribes to
 the operational tables it renders. `world_seed` and `terrain` are public for
-clients that render the environmental layer, but are not yet subscribed by the
-current Godot screen. `membership` is deliberately private and is not a public
-table.
+clients that render the environmental layer, and the current Godot screen
+subscribes to both for its map visualization. `membership` is deliberately
+private and is not a public table.
 
 | Table | Key fields and meaning |
 | --- | --- |

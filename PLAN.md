@@ -28,7 +28,7 @@
 - [ ] Autonomous colonists rather than direct unit control
 - [ ] Jobs / work orders
 - [ ] Work priorities
-- [ ] Construction (instant dining/sleep/recreation facilities; no construction jobs yet)
+- [x] Instant construction for dining, sleep, recreation, and all seven operational tile kinds through rectangular intents; construction jobs are not implemented
 - [ ] Resource gathering
 - [ ] Production chains
 - [ ] Storage
@@ -134,11 +134,12 @@
 - [ ] Browser macro execution
 - [ ] Different clients intentionally have different capability levels
 
-### Pending client slices
-- [ ] Godot mode/type picker for rectangular map operations
-- [ ] Godot drag-to-select rectangle
-- [ ] Godot block enable/disable and compatible work-order controls
-- [ ] Godot blended soil/vegetation terrain visualization
+### Implemented client slices
+- [x] Godot `Select` and `Build` modes, with a build type menu for farm, forest, mine, storage, dining, sleep, and recreation
+- [x] Godot drag-to-select inclusive rectangles, including one-cell selections; Build releases dispatch one `build_tile_block` intent after local occupied-cell and wood checks
+- [x] Map painting cancellation on Escape, right-click, release outside the drawn grid, or window focus loss
+- [x] Select-mode block controls for enabling/disabling non-empty tiles and setting or pausing compatible farming, logging, mining, and hunting orders; incompatible cells are skipped by the reducer
+- [x] Blended soil and ecological-cover terrain visualization, with independent overlapping soil/forest fields; terrain is decorative and has no production modifiers yet
 
 ## API
 - [ ] API-first design from the beginning
