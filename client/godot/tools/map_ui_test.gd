@@ -2,7 +2,7 @@
 ##   godot --headless --path client/godot --scene res://tools/map_ui_test.tscn -- --stdb-host=http://127.0.0.1:3300 --stdb-db=continuum-map-ui
 extends Node
 
-const MainScene = preload("res://scenes/main.tscn")
+const TestMainScene = preload("res://tools/ui_fixture_main.tscn")
 
 var map: ColonyMap
 var build_releases := 0
@@ -94,10 +94,11 @@ func _test_map_input() -> void:
 
 
 func _test_controller_surface() -> void:
-	var main := MainScene.instantiate()
+	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
+	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
 	main._build_menu.select(1)
 	main._build_menu.item_selected.emit(1)
@@ -111,6 +112,9 @@ func _test_controller_surface() -> void:
 	_assert(main._tile_action_box.visible and main._tile_info != null, "one-cell inspection detail remains visible")
 	_assert(main._block_controls[ContinuumWorkType.Options.farming].row.visible,
 		"block work controls are not hidden by legacy refresh")
+	await _test_sidebar_surface(main)
+	if failed:
+		return
 	main._map_dirty = false
 	main._on_table_changed("terrain")
 	_assert(main._map_dirty, "terrain updates invalidate map rendering")
@@ -118,6 +122,138 @@ func _test_controller_surface() -> void:
 	_assert(not main.can_send_map_intent(false, false) and not main.can_send_map_intent(true, true),
 		"disconnected and pending clients are gated")
 	await _refresh_real_tiles(main)
+
+
+func _test_sidebar_surface(main: Control) -> void:
+	_assert(main.sidebar.sections.size() == 7, "sidebar exposes seven extensible sections")
+	_assert(main.sidebar.sections.has("overview") and main.sidebar.sections.has("administration"),
+		"sidebar section keys are stable for extensions")
+	main.sidebar._toggle_section("people")
+	_assert(not main.sidebar.sections["people"].content.visible, "section collapse hides its content")
+	main.sidebar.search.text = "forest"
+	main.sidebar.search.text_changed.emit("forest")
+	_assert(main.sidebar.sections["operations"].wrapper.visible, "search matches control aliases")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
+	_assert(main.sidebar.sections["people"].wrapper.is_visible_in_tree() and
+			not main.sidebar.sections["people"].content.visible,
+		"clear restores collapsed section wrapper and state")
+	main.sidebar._toggle_section("people")
+	_assert(main.sidebar.sections["people"].content.visible, "section reopens from its header")
+	main.sidebar.search.text = "no-such-control"
+	main.sidebar.search.text_changed.emit("no-such-control")
+	_assert(main.sidebar._no_matches.visible, "zero-result search is explicit")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
+	for key: String in ["overview", "operations", "policies", "people", "alerts", "activity"]:
+		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
+			"clear restores allowed section wrapper: %s" % key)
+	main.sidebar.toggle()
+	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.CLOSED_WIDTH,
+		"sidebar collapses to a reachable narrow rail")
+	_assert(not main.sidebar._splitter.visible, "collapsed rail hides the resize grip")
+	await get_tree().process_frame
+	_assert(main.sidebar.size.x <= main.sidebar.CLOSED_WIDTH + 12.0,
+		"collapsed container uses the narrow rail width")
+	main.sidebar.toggle()
+	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.OPEN_WIDTH, "sidebar reopens")
+	await get_tree().process_frame
+	_assert(main.sidebar.size.x >= main.sidebar.OPEN_WIDTH - 12.0,
+		"reopened container restores its open width")
+	main.sidebar.set_sidebar_width(320.0)
+	var narrow_font: int = main.sidebar._font_size
+	var narrow_button: float = main.sidebar._button_height
+	var narrow_padding: int = main.sidebar._padding
+	main.sidebar.set_sidebar_width(430.0)
+	var middle_font: int = main.sidebar._font_size
+	main.sidebar.set_sidebar_width(550.0)
+	_assert(main.sidebar._font_size > middle_font and middle_font > narrow_font,
+		"sidebar font scale follows width")
+	_assert(main.sidebar._button_height > narrow_button, "sidebar button scale follows width")
+	_assert(main.sidebar._padding > narrow_padding, "sidebar padding scale follows width")
+	_assert(not main._build_help.text.contains("\n") and not main._orders_help.text.contains("\n"),
+		"help surfaces use compact labels rather than text blocks")
+	_assert(not main._build_help.tooltip_text.is_empty() and not main._orders_help.tooltip_text.is_empty(),
+		"compact help labels retain hover details")
+	main._set_feedback(main._intent_feedback, "Failed", "Full reducer error detail")
+	_assert(main._intent_feedback.text == "Failed" and main._intent_feedback.tooltip_text == "Full reducer error detail",
+		"error status stays concise while retaining details")
+	main.sidebar.toggle()
+	var preferred_width: float = main.sidebar._preferred_width
+	main.sidebar.toggle()
+	_assert(is_equal_approx(main.sidebar._preferred_width, preferred_width),
+		"collapse preserves preferred width")
+	main.sidebar.set_sidebar_width(9999.0)
+	_assert(main.sidebar.custom_minimum_size.x <= get_viewport().get_visible_rect().size.x - main.sidebar.MAP_MIN_WIDTH,
+		"sidebar width clamps while retaining map space")
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	main.sidebar._on_splitter_input(press)
+	_assert(main.sidebar._dragging_splitter, "splitter grip starts a resize")
+	press.pressed = false
+	main.sidebar._input(press)
+	_assert(not main.sidebar._dragging_splitter and not main.map._dragging,
+		"splitter release does not arm map painting")
+	_set_role(main, "operator", true, false)
+	main.sidebar.search.text = "build"
+	main.sidebar.search.text_changed.emit("build")
+	_set_role(main, "viewer", false, false)
+	_assert(not main._mode_buttons[&"build"].visible and
+		not main._build_menu.visible and not main._block_box.visible,
+		"viewer search cannot resurrect unauthorized Build controls")
+	main.sidebar.search.text = "forest"
+	main.sidebar.search.text_changed.emit("forest")
+	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible and
+			not main._block_box.visible,
+		"viewer search cannot reveal unauthorized build aliases")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
+	_assert(not main.sidebar.sections["policies"].wrapper.visible and
+			not main.sidebar.sections["administration"].wrapper.visible,
+		"viewer cannot discover unauthorized policy or admin sections")
+	for key: String in ["overview", "operations", "people", "alerts", "activity"]:
+		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
+			"viewer clear restores allowed section wrapper: %s" % key)
+	_assert(not main.sidebar.sections["policies"].wrapper.is_visible_in_tree() and
+			not main.sidebar.sections["administration"].wrapper.is_visible_in_tree(),
+		"viewer clear keeps forbidden section wrappers hidden")
+	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible,
+		"viewer cannot see mutation controls")
+	main.map_intent_override = _record_reducer_call
+	var before := reducer_calls.size()
+	main._dispatch_build_block(Rect2i(1, 1, 1, 1), ContinuumTileKind.create_farm())
+	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
+	_set_role(main, "operator", true, false)
+	_assert(main.sidebar.sections["policies"].wrapper.visible and
+			not main.sidebar.sections["administration"].wrapper.visible,
+		"operator inherits policy access but not admin access")
+	main._set_mode(&"build")
+	_set_role(main, "viewer", false, false)
+	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
+	_set_role(main, "operator", true, false)
+	var ack_probe := Button.new()
+	ack_probe.text = "Ack"
+	main._alert_box.add_child(ack_probe)
+	_assert(ack_probe.is_inside_tree(), "operator alert rows are present before downgrade")
+	_set_role(main, "viewer", false, false)
+	await get_tree().process_frame
+	_assert(not is_instance_valid(ack_probe), "permission downgrade immediately rebuilds alert rows")
+	_set_role(main, "operator", true, false)
+	_set_role(main, "maintenance", true, false)
+	_assert(not main._can_operate and main._role_name == "Unknown",
+		"unknown role input fails closed")
+	_set_role(main, "admin", true, false)
+	_assert(not main._can_operate and not main._is_admin,
+		"inconsistent admin flags fail closed")
+	_set_role(main, "admin", true, true)
+	_assert(main.sidebar.sections["administration"].wrapper.visible and
+		main._speed_buttons[0].visible, "admin can see administration controls")
+	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
+
+
+func _set_role(main: Control, role: String, can_operate: bool, is_admin: bool) -> void:
+	main.fixture_access.set_role(role, can_operate, is_admin)
 
 
 func _refresh_real_tiles(main: Control) -> void:

@@ -304,8 +304,11 @@ func _handle_parsed_message(message_resource: Resource):
 
 	elif message_resource is SubscribeAppliedMessage:
 		var message: SubscribeAppliedMessage = message_resource
-		_local_db.apply_database_subscription_applied(message)
 		var sub : SpacetimeDBSubscription= _pending_subscriptions.get(message.query_id.id)
+		if sub == null:
+			# A discarded request may still be acknowledged by the transport.
+			return
+		_local_db.apply_database_subscription_applied(message)
 		sub.applied.emit()
 		_pending_subscriptions.erase(sub.query_id)
 		current_subscriptions.set(sub.query_id, sub)
@@ -314,6 +317,9 @@ func _handle_parsed_message(message_resource: Resource):
 	elif message_resource is UnsubscribeAppliedMessage:
 		var message : UnsubscribeAppliedMessage = message_resource
 		var sub : SpacetimeDBSubscription= current_subscriptions.get(message.query_id.id)
+		if sub == null:
+			# A local owner may have discarded a handle after a lost transport.
+			return
 		_local_db.apply_database_unsubscription_applied(message)
 		sub.end.emit()
 		current_subscriptions.erase(sub.query_id)
@@ -515,6 +521,16 @@ func subscribe(queries: PackedStringArray) -> SpacetimeDBSubscription:
 	subscription.error = ERR_CONNECTION_ERROR
 	subscription._ended = true
 	return subscription
+
+## Drop a local handle when the transport is already gone. This is intentionally
+## separate from unsubscribe(), which needs a live WebSocket and a server ack.
+func discard_subscription(subscription: SpacetimeDBSubscription) -> void:
+	if subscription == null:
+		return
+	_pending_subscriptions.erase(subscription.query_id)
+	current_subscriptions.erase(subscription.query_id)
+	if is_instance_valid(subscription):
+		subscription.queue_free()
 
 func unsubscribe(query_id: int, send_deletes: UnsubscribeMessage.UnsubscribeFlags = UnsubscribeMessage.UnsubscribeFlags.Default) -> Error:
 	if not is_connected_db():
