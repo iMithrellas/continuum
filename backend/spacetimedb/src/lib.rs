@@ -17,13 +17,23 @@ use sim::{
     validate_facility_build, HaulPolicy, MealPolicy, TileKind, Tuning, WorkType,
     FACILITY_BUILD_WOOD_COST,
 };
-use spacetimedb::{reducer, Identity, ReducerContext, Table, TimeDuration};
+use spacetimedb::{reducer, view, Identity, ReducerContext, Table, TimeDuration, ViewContext};
 
 /// Real-time scheduler interval; in-game speed is controlled by `Config::time_scale`.
 const TICK_INTERVAL_MICROS: i64 = 1_000_000;
 
 /// 4 real hours = 1 in-game day: 6 in-game seconds per real second.
 pub const DEFAULT_TIME_SCALE: f64 = 6.0;
+
+/// Authenticated, sender-filtered role discovery. Missing membership is Viewer.
+#[view(accessor = my_role, public)]
+pub fn my_role(ctx: &ViewContext) -> Option<OwnRole> {
+    ctx.db
+        .membership()
+        .identity()
+        .find(ctx.sender())
+        .map(|member| OwnRole { role: member.role })
+}
 
 #[reducer(init)]
 pub fn init(ctx: &ReducerContext) -> Result<(), String> {
@@ -494,6 +504,52 @@ pub fn set_operator(
             ),
         );
     }
+    Ok(())
+}
+
+/// Grant admin to a distinct identity. This is intentionally not self-promotion.
+#[reducer]
+pub fn grant_admin(ctx: &ReducerContext, identity: Identity) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
+    if identity == Identity::ZERO || identity == ctx.database_identity() {
+        return Err("the anonymous and database identities cannot be admins".into());
+    }
+    if identity == ctx.sender() {
+        return Err("an admin cannot grant admin to itself".into());
+    }
+
+    let Some(existing) = ctx.db.membership().identity().find(identity) else {
+        ctx.db.membership().insert(Membership {
+            identity,
+            role: Role::Admin,
+        });
+        log_event(
+            ctx,
+            Severity::Info,
+            format!(
+                "Admin {} was granted by admin {}.",
+                identity_hex(identity),
+                identity_hex(ctx.sender())
+            ),
+        );
+        return Ok(());
+    };
+    if existing.role == Role::Admin {
+        return Ok(());
+    }
+    ctx.db.membership().identity().update(Membership {
+        identity,
+        role: Role::Admin,
+    });
+    log_event(
+        ctx,
+        Severity::Info,
+        format!(
+            "Operator {} was promoted to admin by admin {}.",
+            identity_hex(identity),
+            identity_hex(ctx.sender())
+        ),
+    );
     Ok(())
 }
 

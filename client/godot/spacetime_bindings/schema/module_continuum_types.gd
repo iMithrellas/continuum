@@ -17,6 +17,7 @@ const MealPolicy = preload('res://spacetime_bindings/schema/types/continuum_meal
 const EventLog = preload('res://spacetime_bindings/schema/types/continuum_event_log.gd')
 const ItemStack = preload('res://spacetime_bindings/schema/types/continuum_item_stack.gd')
 const Role = preload('res://spacetime_bindings/schema/types/continuum_role.gd')
+const OwnRole = preload('res://spacetime_bindings/schema/types/continuum_own_role.gd')
 const SpeedControl = preload('res://spacetime_bindings/schema/types/continuum_speed_control.gd')
 const Terrain = preload('res://spacetime_bindings/schema/types/continuum_terrain.gd')
 const Tile = preload('res://spacetime_bindings/schema/types/continuum_tile.gd')

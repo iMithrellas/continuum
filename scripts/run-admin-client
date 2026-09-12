@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Bootstrap a separate admin-profile client identity and optionally grant it admin.
+# The grant is never automatic: pass --grant and confirm with --yes.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+HOST="${CONTINUUM_HOST:-http://127.0.0.1:3000}"
+DB="${CONTINUUM_DB:-continuum}"
+GODOT="${GODOT:-godot}"
+GRANT=0
+YES=0
+for argument in "$@"; do
+    case "$argument" in
+        --grant) GRANT=1 ;;
+        --yes) YES=1 ;;
+        --stdb-host=*) HOST="${argument#*=}" ;;
+        --stdb-db=*) DB="${argument#*=}" ;;
+        *) printf 'usage: %s [--grant --yes] [--stdb-host=URL] [--stdb-db=NAME]\n' "$0" >&2; exit 2 ;;
+    esac
+done
+
+if [[ "$GRANT" == 1 && "$HOST" != "http://127.0.0.1:3000" ]]; then
+    printf 'refusing publisher grant: scripts/stdb targets http://127.0.0.1:3000, got %s\n' "$HOST" >&2
+    exit 2
+fi
+
+output="$($GODOT --headless --path "$ROOT/client/godot" --script res://scripts/admin_bootstrap.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin)"
+identity="$(printf '%s\n' "$output" | awk -F= '$1 == "CLIENT_IDENTITY" { print $2; exit }')"
+[[ -n "$identity" ]] || { printf 'admin launcher: bootstrap did not return an identity\n' >&2; exit 1; }
+printf 'admin client identity: %s\n' "$identity"
+printf 'admin profile: %s\n' "$DB"
+
+if [[ "$GRANT" == 1 ]]; then
+    if [[ "$YES" != 1 ]]; then
+        read -r -p "Grant admin to this distinct identity on '$DB'? [y/N] " answer
+        [[ "$answer" == "y" || "$answer" == "Y" ]] || { printf 'grant cancelled\n'; exit 0; }
+    fi
+    printf 'granting admin through the existing publisher CLI...\n'
+    "$ROOT/scripts/stdb" call "$DB" grant_admin "\"$identity\"" >/dev/null
+    printf 'admin grant requested; reconnect the admin profile to refresh authorization\n'
+fi

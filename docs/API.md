@@ -180,16 +180,29 @@ identity. Clients must not invoke either as part of normal operation.
 ## Authorization And Identity
 
 There are two authorization roles: `Operator` and `Admin`. Admins inherit
-operator permissions. The publishing identity becomes the sole initial admin;
-only an admin can call `set_operator(identity, authorized)`, which adds or
-removes an operator. The target identity is a SpacetimeDB `Identity` value, not
-the colonist ID or a display name.
+operator permissions. An absent member is `Viewer`. The publishing identity becomes
+the sole initial admin; only an admin can call `set_operator(identity, authorized)`,
+which adds or removes an operator, or `grant_admin(identity)`, which promotes/adds a
+distinct admin. The target identity is a SpacetimeDB `Identity` value, not the
+colonist ID or a display name.
 
 Membership is stored in the private `membership` table. Unauthorized clients
 can still subscribe and observe public state, but command reducers reject them.
 Do not expose membership rows, admin tokens, or bearer tokens in logs or client
 telemetry. Treat an identity and its token as credentials; use the persistent
 publishing identity only for administration.
+
+The public `my_role` view is the only client role-discovery surface. It is evaluated
+with the authenticated `ViewContext` sender and returns `Option<OwnRole>` containing
+only `role`; `None` means Viewer. Clients must treat the role as `Unknown` while
+disconnected or before the view subscription is applied, and should refresh it after
+reconnect. The server still enforces every reducer independently.
+
+`grant_admin(identity)` is admin-only, rejects zero/database identities and
+self-promotion, promotes an existing operator or adds a new admin, and is idempotent
+for an existing admin. Actual membership changes create audit events with caller and
+target identities. It is intended for an explicit administrator/publisher bootstrap
+command, not automatic client startup.
 
 ## Atomic Intent Flow
 

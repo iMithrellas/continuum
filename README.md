@@ -264,6 +264,27 @@ sole admin identity. A new or unauthorized client can still subscribe and observ
 the colony, but command reducers reject it. The headless smoke test uses the same
 persisted Godot token and must be authorized before its reducer phase can pass.
 
+#### Client Profiles And Role Discovery
+
+The client discovers its own role from the authenticated sender-filtered `my_role`
+view. The view returns only the caller's role; missing membership is `Viewer`.
+`ContinuumAccess` starts as `Unknown` and returns to `Unknown` on disconnect,
+subscription termination, or connection errors, so unavailable authorization fails
+closed. Integrate its `changed` signal with
+`_set_permissions(role_name: String, can_operate: bool, is_admin: bool)` in the main
+screen. The backend remains authoritative and must not be replaced by this UI state.
+
+Normal and admin client tokens use separate `user://` profile paths. To bootstrap an
+admin-profile identity, optionally grant that distinct identity with the existing
+publisher CLI:
+
+```bash
+./scripts/run-admin-client --grant
+```
+
+Use `--yes` only for an explicitly intended local grant. It prints the identity, never
+a token, rejects non-local publisher endpoints, and does nothing without `--grant`.
+
 After changing Rust tables, reducers, or types, publish and regenerate bindings:
 
 ```bash

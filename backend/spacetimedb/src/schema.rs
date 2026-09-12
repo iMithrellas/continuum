@@ -12,6 +12,12 @@ pub enum Role {
     Operator,
 }
 
+/// Sender-scoped role response. The view never returns another identity.
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OwnRole {
+    pub role: Role,
+}
+
 /// Private authorization state. The publishing identity is the sole initial admin.
 #[table(accessor = membership)]
 pub struct Membership {

@@ -21,6 +21,7 @@ const MealPolicy = Types.MealPolicy
 const EventLog = Types.EventLog
 const ItemStack = Types.ItemStack
 const Role = Types.Role
+const OwnRole = Types.OwnRole
 const SpeedControl = Types.SpeedControl
 const Terrain = Types.Terrain
 const Tile = Types.Tile
