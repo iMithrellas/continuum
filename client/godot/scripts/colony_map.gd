@@ -176,7 +176,7 @@ func _draw() -> void:
 
 	draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), Color("1a1d23"))
 
-	if not _has_state:
+	if not _has_state or SpacetimeDB.Continuum.db == null:
 		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "waiting for colony state...",
 				HORIZONTAL_ALIGNMENT_CENTER, size.x, 14, Color(1, 1, 1, 0.5))
 		return
@@ -529,10 +529,11 @@ func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
 	var cell := _cell_size()
 	if cell <= 0.0:
 		return null
+	var grid_rect := Rect2(_origin(), Vector2(cell * _grid.x, cell * _grid.y))
+	if not grid_rect.has_point(position):
+		return null
 	var local := (position - _origin()) / cell
 	var grid_pos := Vector2i(floori(local.x), floori(local.y))
-	if clamp_to_grid:
-		return MapUiModel.clamp_cell(grid_pos, _grid)
 	if grid_pos.x < 0 or grid_pos.y < 0 or grid_pos.x >= _grid.x or grid_pos.y >= _grid.y:
 		return null
 	return grid_pos
@@ -555,19 +556,19 @@ func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and _dragging:
 		var motion := event as InputEventMouseMotion
 		var point := get_global_transform().affine_inverse() * motion.position
-		_drag_inside = get_rect().has_point(point)
+		_drag_inside = _cell_at(point) != null
 		if _drag_inside:
-			_drag_current = _cell_at(point, true)
+			_drag_current = _cell_at(point)
 			queue_redraw()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and _dragging:
 		var release := event as InputEventMouseButton
 		var point := get_global_transform().affine_inverse() * release.position
-		if not get_rect().has_point(point) or not _drag_inside:
+		if _cell_at(point) == null or not _drag_inside:
 			_dragging = false
 			queue_redraw()
 			return
-		var finish: Vector2i = _cell_at(point, true)
+		var finish: Vector2i = _cell_at(point)
 		var rect := MapUiModel.normalize_rect(_drag_start, finish)
 		_dragging = false
 		if interaction_mode == &"build":
@@ -596,10 +597,11 @@ func _gui_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 		var tile: ContinuumTile = null
-		for candidate: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-			if candidate.x == grid_pos.x and candidate.y == grid_pos.y:
-				tile = candidate
-				break
+		if SpacetimeDB.Continuum.db != null:
+			for candidate: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+				if candidate.x == grid_pos.x and candidate.y == grid_pos.y:
+					tile = candidate
+					break
 		if tile != null:
 			selected_tile_id = tile.id
 			tile_selected.emit(tile.id)

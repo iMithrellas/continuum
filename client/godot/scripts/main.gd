@@ -249,7 +249,7 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 
 func _on_table_changed(table_name: String) -> void:
 	_dirty = true
-	if table_name in ["tile", "colonist", "item_stack", "work_order", "colony", "config"]:
+	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config"]:
 		_map_dirty = true
 
 
@@ -280,7 +280,7 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 	_selected_rect = rect
 	map.set_selected_rect(rect)
 	_refresh_controls()
-	if not _state_ready or _intent_request != null:
+	if not can_send_map_intent(_state_ready, _intent_request != null):
 		_intent_feedback.text = "Build blocked: waiting for subscription or another request."
 		return
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
@@ -297,7 +297,11 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 		return
 	_track_intent(SpacetimeDB.Continuum.reducers.build_tile_block(rect.position.x, rect.position.y,
 			rect.end.x - 1, rect.end.y - 1, ContinuumTileKind.create(_build_menu.get_selected_id())),
-			"Build %dx%d block" % [rect.size.x, rect.size.y])
+		"Build %dx%d block" % [rect.size.x, rect.size.y])
+
+
+static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
+	return state_ready and not pending
 
 
 func _set_mode(mode: StringName) -> void:
@@ -652,16 +656,18 @@ func _build_side_panel() -> void:
 		_block_box.add_child(row)
 	side.add_child(_block_box)
 
-	side.add_child(_heading("Selected tile / standing orders"))
+	side.add_child(_heading("Selected tile detail (inspect)"))
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
 	_tile_info = Label.new()
 	_tile_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tile_action_box.add_child(_tile_info)
 	_tile_button = Button.new()
+	_tile_button.visible = false
 	_tile_button.pressed.connect(_toggle_selected_tile)
 	_tile_action_box.add_child(_tile_button)
 	_build_box = VBoxContainer.new()
+	_build_box.visible = false
 	_tile_action_box.add_child(_build_box)
 	var build_cost := Label.new()
 	build_cost.text = "Instant build: 20 stored wood"
@@ -678,6 +684,7 @@ func _build_side_panel() -> void:
 	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
 			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
 		var box := VBoxContainer.new()
+		box.visible = false
 		var label := Label.new()
 		box.add_child(label)
 		var actions := HBoxContainer.new()
@@ -949,7 +956,13 @@ func _refresh_controls() -> void:
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var busy := not _state_ready or _intent_request != null
 	_build_menu.disabled = busy
-	_tile_action_box.visible = false
+	# Block operations are the primary map workflow. Keep the authoritative one-cell
+	# detail text visible for inspection, but do not expose single-tile mutators.
+	_tile_action_box.visible = true
+	_tile_button.visible = false
+	_build_box.visible = false
+	for work: int in _order_controls:
+		_order_controls[work].box.visible = false
 	_block_box.visible = true
 	var block_tiles := 0
 	var occupied := 0
