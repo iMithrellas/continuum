@@ -104,6 +104,7 @@ Rust signatures and the generated binding types.
 | Reducer | Signature | Authorization and validation |
 | --- | --- | --- |
 | `set_tile_enabled` | `(tile_id: u32, enabled: bool)` | Operator/admin. Unknown IDs and `empty` tiles error; the current value is a no-op. |
+| `build_facility` | `(tile_id: u32, kind: TileKind)` | Operator/admin. Only `dining`, `sleep`, or `recreation` may be built on an in-bounds `empty` tile. Deducts exactly `20` stored wood atomically and enables the facility; insufficient wood or invalid targets error. |
 | `set_zone_enabled` | `(kind: TileKind, enabled: bool)` | Operator/admin. `empty` errors; changing no matching tiles is a no-op. |
 | `set_work_order` | `(tile_id: u32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Unknown tile, `none`, wrong facility, or priority outside `1..=3` errors; identical row state is a no-op. |
 | `remove_work_order` | `(order_id: u64)` | Operator/admin. Unknown ID errors. |

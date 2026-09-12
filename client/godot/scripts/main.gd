@@ -46,6 +46,8 @@ var _alert_box: VBoxContainer
 var _tile_action_box: VBoxContainer
 var _tile_info: Label
 var _tile_button: Button
+var _build_box: VBoxContainer
+var _build_buttons: Dictionary = {}
 var _order_summary: Label
 var _order_controls: Dictionary = {}
 var _speed_buttons: Dictionary = {}
@@ -261,6 +263,18 @@ func _toggle_selected_tile() -> void:
 			"Tile #%d" % tile.id)
 
 
+func _build_facility(kind: int) -> void:
+	_refresh_controls()
+	if not _state_ready or _intent_request != null:
+		return
+	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
+	if tile == null or tile.kind.value != ContinuumTileKind.Options.empty:
+		return
+	_track_intent(SpacetimeDB.Continuum.reducers.build_facility(tile.id,
+			ContinuumTileKind.create(kind)),
+			"Build %s on tile #%d" % [ContinuumTileKind.parse_enum_name(kind).capitalize(), tile.id])
+
+
 func _change_order(work: int, action: String, priority: int = 2) -> void:
 	# Undo the button's built-in toggle even if its order disappeared before the click.
 	_refresh_controls()
@@ -449,6 +463,20 @@ func _build_side_panel() -> void:
 	_tile_button = Button.new()
 	_tile_button.pressed.connect(_toggle_selected_tile)
 	_tile_action_box.add_child(_tile_button)
+	_build_box = VBoxContainer.new()
+	_tile_action_box.add_child(_build_box)
+	var build_cost := Label.new()
+	build_cost.text = "Instant build: 20 stored wood"
+	build_cost.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	build_cost.add_theme_font_size_override("font_size", 11)
+	_build_box.add_child(build_cost)
+	for kind: int in [ContinuumTileKind.Options.dining, ContinuumTileKind.Options.sleep,
+			ContinuumTileKind.Options.recreation]:
+		var button := Button.new()
+		button.text = "Build %s (20 wood)" % ContinuumTileKind.parse_enum_name(kind).capitalize()
+		button.pressed.connect(_build_facility.bind(kind))
+		_build_box.add_child(button)
+		_build_buttons[kind] = button
 	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
 			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
 		var box := VBoxContainer.new()
@@ -751,6 +779,9 @@ func _refresh_controls() -> void:
 			button.set_pressed_no_signal(order != null and order.priority == index + 1)
 	_order_summary.text = "Enabled orders%s: %s" % [" (last known)" if not _state_ready else "", ", ".join(counts)]
 	_tile_button.visible = tile != null
+	_build_box.visible = tile != null and tile.kind.value == ContinuumTileKind.Options.empty
+	for kind: int in _build_buttons:
+		_build_buttons[kind].disabled = busy or not _build_box.visible
 	if tile == null:
 		_tile_info.text = "Click a tile on the map to select it."
 		return

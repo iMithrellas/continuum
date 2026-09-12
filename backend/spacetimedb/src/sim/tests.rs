@@ -1,6 +1,68 @@
 use super::*;
 
 #[test]
+fn facility_build_validation_is_strict_and_does_not_spend_resources() {
+    let tile = Tile {
+        id: 1,
+        x: 0,
+        y: 0,
+        kind: TileKind::Empty,
+        enabled: true,
+    };
+    assert!(validate_facility_build(&tile, TileKind::Dining, 20.0).is_ok());
+    assert!(validate_facility_build(&tile, TileKind::Farm, 20.0).is_err());
+    assert!(validate_facility_build(&tile, TileKind::Sleep, 19.9).is_err());
+    assert!(validate_facility_build(&tile, TileKind::Sleep, f32::NAN).is_err());
+    assert!(validate_facility_build(&Tile { x: -1, ..tile }, TileKind::Sleep, 20.0).is_err());
+    assert!(validate_facility_build(
+        &Tile {
+            kind: TileKind::Farm,
+            ..tile
+        },
+        TileKind::Sleep,
+        20.0
+    )
+    .is_err());
+}
+
+#[test]
+fn built_recreation_facility_is_used_by_needs_simulation() {
+    let mut world = new_world();
+    for tile in &mut world.tiles {
+        if tile.kind == TileKind::Recreation {
+            tile.enabled = false;
+        }
+    }
+    let tile = world
+        .tiles
+        .iter_mut()
+        .find(|tile| tile.kind == TileKind::Empty)
+        .unwrap();
+    tile.kind = TileKind::Recreation;
+    tile.enabled = true;
+    let built_at = (tile.x, tile.y);
+    world.colonists.truncate(1);
+    world.colonists[0].x = 0;
+    world.colonists[0].y = 0;
+    world.colonists[0].recreation = 80.0;
+    world.colonists[0].hunger = 0.0;
+    world.colonists[0].fatigue = 0.0;
+    world.colonists[0].work = WorkType::None;
+    let tuning = Tuning {
+        hunger_per_hour: 0.0,
+        fatigue_per_hour: 0.0,
+        recreation_per_hour: 0.0,
+        ..Tuning::default()
+    };
+    step(&mut world, &tuning, 1.0);
+    assert_eq!(world.colonists[0].goal, Goal::Recreate);
+    assert_eq!(
+        (world.colonists[0].target_x, world.colonists[0].target_y),
+        built_at
+    );
+}
+
+#[test]
 fn work_orders_validate_jobs_facilities_priorities_and_stable_ids() {
     let tile = Tile {
         id: u32::MAX,

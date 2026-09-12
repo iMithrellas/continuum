@@ -10,6 +10,11 @@ func _init(p_client: SpacetimeDBClient) -> void:
 func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('acknowledge_alert', [alert_id], [&'U64'])
 
+## 0. tile_id: int [br]
+## 1. kind: ContinuumTileKind [br]
+func build_facility(tile_id: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('build_facility', [tile_id, kind], [&'U32', &'ContinuumTileKind'])
+
 ## 0. order_id: int [br]
 func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('remove_work_order', [order_id], [&'U64'])

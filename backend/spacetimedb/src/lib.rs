@@ -12,7 +12,9 @@ use auth::{authorize, identity_hex, RequiredRole};
 use events::{emit_sim_events, log_event, reconcile_alerts, trim_event_log};
 use persistence::{load_world, save_world, seed_colony, upsert_config};
 pub use schema::*;
-use sim::{HaulPolicy, TileKind, Tuning, WorkType};
+use sim::{
+    validate_facility_build, HaulPolicy, TileKind, Tuning, WorkType, FACILITY_BUILD_WOOD_COST,
+};
 use spacetimedb::{reducer, Identity, ReducerContext, Table, TimeDuration};
 
 /// Real-time scheduler interval; in-game speed is controlled by `Config::time_scale`.
@@ -93,6 +95,50 @@ pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Re
             "{:?} tile ({x},{y}) was {} by operator {}",
             kind,
             if enabled { "enabled" } else { "disabled" },
+            identity_hex(ctx.sender())
+        ),
+    );
+    Ok(())
+}
+
+/// Instantly turn an empty grid tile into a needs facility.
+#[reducer]
+pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
+    let mut tile = ctx
+        .db
+        .tile()
+        .id()
+        .find(tile_id)
+        .ok_or_else(|| format!("no such tile: {tile_id}"))?;
+    let mut colony = ctx
+        .db
+        .colony()
+        .id()
+        .find(0)
+        .ok_or_else(|| "colony is not initialised".to_string())?;
+    validate_facility_build(
+        &sim::Tile {
+            id: tile.id,
+            x: tile.x,
+            y: tile.y,
+            kind: tile.kind,
+            enabled: tile.enabled,
+        },
+        kind,
+        colony.wood,
+    )?;
+    colony.wood -= FACILITY_BUILD_WOOD_COST;
+    tile.kind = kind;
+    tile.enabled = true;
+    ctx.db.colony().id().update(colony);
+    ctx.db.tile().id().update(tile);
+    log_event(
+        ctx,
+        Severity::Info,
+        format!(
+            "Built {kind:?} facility on tile {tile_id} for {:.0} stored wood by operator {}.",
+            FACILITY_BUILD_WOOD_COST,
             identity_hex(ctx.sender())
         ),
     );
