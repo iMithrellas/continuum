@@ -28,7 +28,7 @@
 - [ ] Autonomous colonists rather than direct unit control
 - [ ] Jobs / work orders
 - [ ] Work priorities
-- [ ] Construction
+- [ ] Construction (instant dining/sleep/recreation facilities; no construction jobs yet)
 - [ ] Resource gathering
 - [ ] Production chains
 - [ ] Storage
