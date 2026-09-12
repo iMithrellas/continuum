@@ -39,6 +39,7 @@ const NEED_BARS := [
 ]
 
 @onready var map: ColonyMap = $Layout/MapPanel/Map
+@onready var sidebar: ContinuumSidebar = $Layout/SidePanel
 
 var _status_label: RichTextLabel
 var _colonist_box: VBoxContainer
@@ -55,6 +56,8 @@ var _intent_name := ""
 var _recreation_button: Button
 var _feed: RichTextLabel
 var _connection_label: Label
+var _connection_message := ""
+var _connection_colour := Color("7f8b9c")
 var _haul_button: Button
 var _haul_description: Label
 var _haul_feedback: Label
@@ -86,10 +89,15 @@ var _reconnect_timer: SceneTreeTimer
 var _closing := false
 var _history: SessionHistory
 var _history_chart: HistoryChart
+var _role_name := "Unknown"
+var _can_operate := false
+var _is_admin := false
+var _sections: Dictionary = {}
 
 
 func _ready() -> void:
 	_history = SessionHistoryModel.new()
+	sidebar.setup()
 	_build_side_panel()
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
@@ -126,6 +134,26 @@ func _ready() -> void:
 	client.connect_db(_host, _database, options)
 
 
+## Integration seam for the next trusted, server-backed role provider. That module
+## should call this after its server membership/role response is authoritative:
+## `_set_permissions(server_role, server_role != "viewer", server_role == "admin")`.
+## Do not derive these values from the identity token or local JWT. Until the call,
+## and after disconnect, the UI remains fail-closed as Unknown/viewer. This slice
+## is not live-admin ready until that provider is wired and its server tests exist.
+func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> void:
+	var lost_operator := _can_operate and not can_operate
+	_role_name = role_name if not role_name.is_empty() else "Unknown"
+	_is_admin = is_admin and can_operate
+	_can_operate = can_operate and _role_name != "Unknown"
+	if lost_operator and map.interaction_mode == &"build":
+		map.set_interaction_mode(&"select")
+		_intent_feedback.text = "Build cancelled: operator permission was lost."
+		_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	_refresh_permissions()
+	_refresh_controls()
+	_render_connection_role()
+
+
 func _cli_option(option: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with(option + "="):
@@ -135,6 +163,21 @@ func _cli_option(option: String, fallback: String) -> String:
 
 func _identity_token_path(host: String, database: String) -> String:
 	return "user://continuum_identity_%s.token" % (host + "/" + database).md5_text()
+
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not event is InputEventKey or not event.pressed or event.echo:
+		return
+	var key_event := event as InputEventKey
+	if key_event.ctrl_pressed and key_event.keycode == KEY_F:
+		sidebar.search.grab_focus()
+		get_viewport().set_input_as_handled()
+	elif key_event.ctrl_pressed and key_event.keycode == KEY_BACKSLASH:
+		sidebar.toggle()
+		get_viewport().set_input_as_handled()
+	elif key_event.keycode == KEY_ESCAPE and sidebar.search.has_focus():
+		sidebar.search.clear()
+		get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -199,6 +242,7 @@ func _on_subscription_applied() -> void:
 
 
 func _on_disconnected() -> void:
+	_set_permissions("Unknown", false, false)
 	_history.reset()
 	_history_chart.set_points([])
 	_set_connection_text("disconnected - the colony keeps running without us",
@@ -278,6 +322,9 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 	_selected_rect = rect
 	map.set_selected_rect(rect)
 	_refresh_controls()
+	if not _can_operate:
+		_intent_feedback.text = "Build blocked: operator permission is not available."
+		return
 	if not can_send_map_intent(_state_ready, _intent_request != null):
 		_intent_feedback.text = "Build blocked: waiting for subscription or another request."
 		return
@@ -297,6 +344,9 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 
 
 func _dispatch_build_block(rect: Rect2i, kind: ContinuumTileKind) -> void:
+	if not _can_operate:
+		_intent_feedback.text = "Build blocked: operator permission is not available."
+		return
 	if map_intent_override.is_valid():
 		map_intent_override.call("build_tile_block", [rect.position.x, rect.position.y,
 			rect.end.x - 1, rect.end.y - 1, kind])
@@ -311,6 +361,9 @@ static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
 
 
 func _set_mode(mode: StringName) -> void:
+	if mode == &"build" and not _can_operate:
+		_intent_feedback.text = "Build mode requires operator permission."
+		return
 	map.set_interaction_mode(mode)
 	for key: StringName in _mode_buttons:
 		_mode_buttons[key].set_pressed_no_signal(key == mode)
@@ -329,6 +382,8 @@ func _recreation_tiles() -> Array[ContinuumTile]:
 
 
 func _toggle_recreation_zone() -> void:
+	if not _can_operate:
+		return
 	var any_enabled: bool = false
 	for tile: ContinuumTile in _recreation_tiles():
 		if tile.enabled:
@@ -339,6 +394,8 @@ func _toggle_recreation_zone() -> void:
 
 
 func _change_speed(speed: float) -> void:
+	if not _is_admin:
+		return
 	_refresh_controls()
 	# Authorization remains entirely in the reducer; there is no client-side admin guess.
 	if _state_ready and _intent_request == null:
@@ -373,11 +430,13 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 
 
 func _acknowledge(alert_id: int) -> void:
+	if not _can_operate:
+		return
 	_report(SpacetimeDB.Continuum.reducers.acknowledge_alert(alert_id), "acknowledge_alert")
 
 
 func _toggle_haul_policy() -> void:
-	if not _state_ready or _haul_request != null:
+	if not _can_operate or not _state_ready or _haul_request != null:
 		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	if config == null:
@@ -414,7 +473,7 @@ func _on_haul_policy_response(response: ReducerResultMessage, request_id: int) -
 
 
 func _set_meal_policy(policy: int) -> void:
-	if not _state_ready or _meal_request != null:
+	if not _can_operate or not _state_ready or _meal_request != null:
 		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	if config == null:
@@ -468,14 +527,24 @@ func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 
 
 func _build_side_panel() -> void:
-	var side: VBoxContainer = $Layout/SidePanel/Margin/Scroll/Side
-	side.add_theme_constant_override("separation", 10)
+	var side: VBoxContainer = sidebar.add_section("overview", "Overview", ["status", "colony", "resources"])
+	_sections["overview"] = side
+	_sections["operations"] = sidebar.add_section("operations", "Operations", ["map", "build", "select", "block", "production"])
+	_sections["policies"] = sidebar.add_section("policies", "Policies", ["meal", "hauling", "recreation"])
+	_sections["people"] = sidebar.add_section("people", "People", ["colonists", "workers", "roster"])
+	_sections["alerts"] = sidebar.add_section("alerts", "Alerts", ["warning", "acknowledge"])
+	_sections["activity"] = sidebar.add_section("activity", "Activity", ["history", "events", "feed"])
+	_sections["administration"] = sidebar.add_section("administration", "Administration", ["speed", "admin"])
+	var section: VBoxContainer = _sections["overview"]
+	side = section
 
 	_connection_label = Label.new()
 	_connection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_connection_label.add_theme_font_size_override("font_size", 11)
 	side.add_child(_connection_label)
 
+	section = _sections["policies"]
+	side = section
 	side.add_child(_heading("Global hauling mode"))
 	_haul_button = Button.new()
 	_haul_button.custom_minimum_size.y = 52
@@ -513,6 +582,8 @@ func _build_side_panel() -> void:
 	_meal_feedback.add_theme_font_size_override("font_size", 11)
 	side.add_child(_meal_feedback)
 
+	section = _sections["overview"]
+	side = section
 	side.add_child(_heading("Colony"))
 	_status_label = RichTextLabel.new()
 	_status_label.bbcode_enabled = true
@@ -520,6 +591,8 @@ func _build_side_panel() -> void:
 	_status_label.scroll_active = false
 	side.add_child(_status_label)
 
+	section = _sections["activity"]
+	side = section
 	side.add_child(_heading("Session history"))
 	var history_note := Label.new()
 	history_note.text = "This session / since connection. Not saved on the server."
@@ -530,6 +603,8 @@ func _build_side_panel() -> void:
 	_history_chart = HistoryChartControl.new()
 	side.add_child(_history_chart)
 
+	section = _sections["administration"]
+	side = section
 	side.add_child(_heading("Simulation speed (admin-only)"))
 	_speed_label = Label.new()
 	side.add_child(_speed_label)
@@ -544,6 +619,8 @@ func _build_side_panel() -> void:
 		_speed_buttons[speed] = button
 	side.add_child(speeds)
 
+	section = _sections["operations"]
+	side = section
 	side.add_child(_heading("Map tools"))
 	var modes := HBoxContainer.new()
 	for mode: StringName in [&"select", &"build"]:
@@ -629,27 +706,82 @@ func _build_side_panel() -> void:
 	side.add_child(_intent_feedback)
 	_set_mode(&"select")
 
+	section = _sections["policies"]
+	side = section
 	side.add_child(_heading("Control"))
 	_recreation_button = Button.new()
 	_recreation_button.pressed.connect(_toggle_recreation_zone)
 	side.add_child(_recreation_button)
 
+	section = _sections["people"]
+	side = section
 	side.add_child(_heading("Colonists"))
 	_colonist_box = VBoxContainer.new()
 	_colonist_box.add_theme_constant_override("separation", 8)
 	side.add_child(_colonist_box)
 
+	section = _sections["alerts"]
+	side = section
 	side.add_child(_heading("Alerts"))
 	_alert_box = VBoxContainer.new()
 	_alert_box.add_theme_constant_override("separation", 4)
 	side.add_child(_alert_box)
 
+	section = _sections["activity"]
+	side = section
 	side.add_child(_heading("Recent events"))
 	_feed = RichTextLabel.new()
 	_feed.bbcode_enabled = true
 	_feed.custom_minimum_size = Vector2(0, 220)
 	_feed.scroll_following = true
 	side.add_child(_feed)
+
+	for entry: Array in [
+		["overview", _status_label, "Colony status", ["resources", "population"]],
+		["operations", _mode_buttons[&"select"], "Select", ["inspect", "selection"]],
+		["operations", _mode_buttons[&"build"], "Build", ["construct"]],
+		["operations", _build_menu, "Build type", ["farm", "forest", "mine", "storage"]],
+		["operations", _block_box, "Block tools", ["enable", "disable", "work order"]],
+		["policies", _haul_button, "Hauling policy", ["haul", "producer"]],
+		["policies", _meal_buttons[ContinuumMealPolicy.Options.normal], "Meal policy", ["ration"]],
+		["people", _colonist_box, "Colonists", ["workers", "roster"]],
+		["alerts", _alert_box, "Alerts", ["ack"]],
+		["activity", _history_chart, "History", ["trend"]],
+		["activity", _feed, "Recent events", ["log"]],
+		["administration", _speed_label, "Simulation speed", ["pause", "time scale"]],
+	]:
+		sidebar.register_entry(entry[0], entry[1], entry[2], PackedStringArray(entry[3]))
+	_style_sidebar_buttons(sidebar)
+	_refresh_permissions()
+
+
+func _style_sidebar_buttons(node: Node) -> void:
+	for child: Node in node.get_children():
+		if child is Button:
+			var button := child as Button
+			button.custom_minimum_size.y = maxf(button.custom_minimum_size.y, 40.0)
+			sidebar._apply_button_style(button)
+		_style_sidebar_buttons(child)
+
+
+func _refresh_permissions() -> void:
+	if not is_instance_valid(sidebar):
+		return
+	# Unknown and disconnected are deliberately equivalent to viewer permissions.
+	sidebar.set_section_authorized("policies", _can_operate)
+	sidebar.set_section_authorized("administration", _is_admin)
+	if is_instance_valid(_mode_buttons.get(&"build")):
+		_mode_buttons[&"build"].visible = _can_operate
+	if is_instance_valid(_build_menu):
+		_build_menu.visible = _can_operate
+	if is_instance_valid(_block_box):
+		_block_box.visible = _can_operate
+	if is_instance_valid(_recreation_button):
+		_recreation_button.visible = _can_operate
+	if is_instance_valid(_haul_button):
+		_haul_button.visible = _can_operate
+	for button: Button in _meal_buttons.values():
+		button.visible = _can_operate
 
 
 func _heading(text: String) -> Label:
@@ -663,8 +795,17 @@ func _heading(text: String) -> Label:
 func _set_connection_text(text: String, colour: Color) -> void:
 	if _connection_label == null:
 		return
-	_connection_label.text = text
-	_connection_label.add_theme_color_override("font_color", colour)
+	_connection_message = text
+	_connection_colour = colour
+	_render_connection_role()
+
+
+func _render_connection_role() -> void:
+	if _connection_label == null:
+		return
+	_connection_label.text = "%s\nRole: %s%s" % [_connection_message, _role_name,
+		" (admin)" if _is_admin else (" (operator)" if _can_operate else " (view only)")]
+	_connection_label.add_theme_color_override("font_color", _connection_colour)
 
 
 func _refresh() -> void:
@@ -722,7 +863,7 @@ func _sample_history() -> void:
 
 
 func _set_block_enabled(enabled: bool) -> void:
-	if _selected_rect.size == Vector2i.ZERO:
+	if not _can_operate or _selected_rect.size == Vector2i.ZERO:
 		return
 	if not _state_ready or _intent_request != null:
 		return
@@ -732,7 +873,7 @@ func _set_block_enabled(enabled: bool) -> void:
 
 
 func _set_block_work(work: int, priority: int, enabled: bool) -> void:
-	if _selected_rect.size == Vector2i.ZERO or not _state_ready or _intent_request != null:
+	if not _can_operate or _selected_rect.size == Vector2i.ZERO or not _state_ready or _intent_request != null:
 		return
 	_track_intent(SpacetimeDB.Continuum.reducers.set_block_work_order(
 		_selected_rect.position.x, _selected_rect.position.y, _selected_rect.end.x - 1,
@@ -863,11 +1004,11 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 func _refresh_controls() -> void:
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var busy := not _state_ready or _intent_request != null
-	_build_menu.disabled = busy
+	_build_menu.disabled = busy or not _can_operate
 	# Block operations are the primary map workflow. Keep the authoritative one-cell
 	# detail text visible for inspection, but do not expose single-tile mutators.
 	_tile_action_box.visible = true
-	_block_box.visible = true
+	_block_box.visible = _can_operate
 	var block_tiles := 0
 	var occupied := 0
 	var enabled_count := 0
@@ -911,7 +1052,7 @@ func _refresh_controls() -> void:
 			rect_text += "\nSoil avg: %s (fertility %.2f, moisture %.2f) | Cover avg: %s (density %.2f)" % [
 				_map_soil_name(fertility, moisture), fertility, moisture, _map_cover_name(cover), cover]
 	_block_info.text = rect_text
-	var block_busy := busy or _selected_rect.size == Vector2i.ZERO
+	var block_busy := busy or not _can_operate or _selected_rect.size == Vector2i.ZERO
 	for key: String in ["enabled_true", "enabled_false"]:
 		_block_controls[key].disabled = block_busy
 	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
@@ -925,7 +1066,7 @@ func _refresh_controls() -> void:
 			priority_button.disabled = block_busy or count == 0
 		controls.row.tooltip_text = "Only compatible facility tiles are changed; unrelated jobs remain untouched."
 
-	_haul_button.disabled = not _state_ready or config == null or _haul_request != null
+	_haul_button.disabled = not _can_operate or not _state_ready or config == null or _haul_request != null
 	if config != null:
 		var dedicated := config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers
 		_haul_button.text = ("PAIRED: producer + hauler\nSwitch to everyone producing + hauling" if dedicated
@@ -941,7 +1082,7 @@ func _refresh_controls() -> void:
 	var meal_busy := not _state_ready or _meal_request != null
 	for policy: int in _meal_buttons:
 		var button: Button = _meal_buttons[policy]
-		button.disabled = meal_busy or config == null
+		button.disabled = not _can_operate or meal_busy or config == null
 		button.set_pressed_no_signal(config != null and config.meal_policy.value == policy)
 	if config != null:
 		var rationed := config.meal_policy.value == ContinuumMealPolicy.Options.rationed
@@ -963,7 +1104,7 @@ func _refresh_controls() -> void:
 		_recreation_button.text = "Recreation zone: unknown"
 		_recreation_button.disabled = true
 	else:
-		_recreation_button.disabled = not _state_ready
+		_recreation_button.disabled = not _can_operate or not _state_ready
 		_recreation_button.text = ("Disable recreation zone" if any_enabled
 				else "Enable recreation zone")
 
@@ -973,7 +1114,7 @@ func _refresh_controls() -> void:
 		_speed_label.text += " (last known)"
 	for speed: int in _speed_buttons:
 		var speed_button: Button = _speed_buttons[speed]
-		speed_button.disabled = busy or config == null
+		speed_button.disabled = not _is_admin or busy or config == null
 		speed_button.set_pressed_no_signal(config != null and is_equal_approx(config.time_scale, float(speed)))
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
 	var compatible: Array[int] = []
@@ -1041,7 +1182,10 @@ func _refresh_alerts() -> void:
 		if not alert.acknowledged:
 			var ack := Button.new()
 			ack.text = "Ack"
+			ack.tooltip_text = "Acknowledge this alert (operator)"
+			ack.visible = _can_operate
 			ack.add_theme_font_size_override("font_size", 10)
+			sidebar._apply_button_style(ack)
 			ack.pressed.connect(_acknowledge.bind(alert.id))
 			row.add_child(ack)
 

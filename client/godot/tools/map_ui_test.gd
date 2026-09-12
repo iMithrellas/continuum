@@ -98,6 +98,7 @@ func _test_controller_surface() -> void:
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
+	main._set_permissions("operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
 	main._build_menu.select(1)
 	main._build_menu.item_selected.emit(1)
@@ -111,6 +112,9 @@ func _test_controller_surface() -> void:
 	_assert(main._tile_action_box.visible and main._tile_info != null, "one-cell inspection detail remains visible")
 	_assert(main._block_controls[ContinuumWorkType.Options.farming].row.visible,
 		"block work controls are not hidden by legacy refresh")
+	_test_sidebar_surface(main)
+	if failed:
+		return
 	main._map_dirty = false
 	main._on_table_changed("terrain")
 	_assert(main._map_dirty, "terrain updates invalidate map rendering")
@@ -118,6 +122,53 @@ func _test_controller_surface() -> void:
 	_assert(not main.can_send_map_intent(false, false) and not main.can_send_map_intent(true, true),
 		"disconnected and pending clients are gated")
 	await _refresh_real_tiles(main)
+
+
+func _test_sidebar_surface(main: Control) -> void:
+	_assert(main.sidebar.sections.size() == 7, "sidebar exposes seven extensible sections")
+	_assert(main.sidebar.sections.has("overview") and main.sidebar.sections.has("administration"),
+		"sidebar section keys are stable for extensions")
+	main.sidebar._toggle_section("people")
+	_assert(not main.sidebar.sections["people"].content.visible, "section collapse hides its content")
+	main.sidebar._toggle_section("people")
+	_assert(main.sidebar.sections["people"].content.visible, "section reopens from its header")
+	main.sidebar.search.text = "forest"
+	main.sidebar.search.text_changed.emit("forest")
+	_assert(main.sidebar.sections["operations"].wrapper.visible, "search matches control aliases")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
+	_assert(main.sidebar.sections["people"].content.visible, "clear restores pre-search section state")
+	main.sidebar.search.text = "no-such-control"
+	main.sidebar.search.text_changed.emit("no-such-control")
+	_assert(main.sidebar._no_matches.visible, "zero-result search is explicit")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
+	main.sidebar.toggle()
+	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.CLOSED_WIDTH,
+		"sidebar collapses to a reachable narrow rail")
+	main.sidebar.toggle()
+	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.OPEN_WIDTH, "sidebar reopens")
+	main._set_permissions("viewer", false, false)
+	_assert(not main.sidebar.sections["policies"].wrapper.visible and
+			not main.sidebar.sections["administration"].wrapper.visible,
+		"viewer cannot discover unauthorized policy or admin sections")
+	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible,
+		"viewer cannot see mutation controls")
+	main.map_intent_override = _record_reducer_call
+	var before := reducer_calls.size()
+	main._dispatch_build_block(Rect2i(1, 1, 1, 1), ContinuumTileKind.create_farm())
+	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
+	main._set_permissions("operator", true, false)
+	_assert(main.sidebar.sections["policies"].wrapper.visible and
+			not main.sidebar.sections["administration"].wrapper.visible,
+		"operator inherits policy access but not admin access")
+	main._set_mode(&"build")
+	main._set_permissions("viewer", false, false)
+	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
+	main._set_permissions("admin", true, true)
+	_assert(main.sidebar.sections["administration"].wrapper.visible and
+		main._speed_buttons[0].visible, "admin can see administration controls")
+	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
 
 
 func _refresh_real_tiles(main: Control) -> void:
