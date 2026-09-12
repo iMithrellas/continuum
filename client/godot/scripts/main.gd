@@ -410,6 +410,7 @@ func _set_meal_policy(policy: int) -> void:
 	_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if call.error != OK:
 		_meal_feedback.text = "Meal policy could not be sent (%d)." % call.error
+		_refresh_controls()
 		return
 	_meal_request = call
 	_meal_request_seconds = 10.0

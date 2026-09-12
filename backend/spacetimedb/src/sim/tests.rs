@@ -1079,8 +1079,8 @@ fn rationed_meals_trade_half_food_cost_for_sixty_five_percent_recovery() {
 
     step_eat(&mut world, 0, &tuning, 0.25);
 
-    assert_eq!(world.resources.food, 7.4);
-    assert_eq!(world.colonists[0].hunger, 47.5);
+    assert!((world.resources.food - 6.0).abs() < 1.0e-6);
+    assert!((world.colonists[0].hunger - 47.5).abs() < 1.0e-6);
 }
 
 #[test]
@@ -1094,7 +1094,7 @@ fn eating_handles_low_and_zero_stock_without_negative_values_or_over_recovery() 
     step_eat(&mut world, 0, &tuning, 0.25);
 
     assert_eq!(world.resources.food, 0.0);
-    assert_eq!(world.colonists[0].hunger, 67.5);
+    assert!((world.colonists[0].hunger - 71.875).abs() < 1.0e-6);
     assert!(world.resources.food >= 0.0);
     assert!((0.0..=100.0).contains(&world.colonists[0].hunger));
 
@@ -1131,7 +1131,10 @@ fn meal_policy_changes_take_effect_and_simulation_remains_deterministic() {
     let mut first = world.clone();
     let mut second = world;
     for _ in 0..500 {
-        assert_eq!(step(&mut first, &tuning, 60.0), step(&mut second, &tuning, 60.0));
+        assert_eq!(
+            step(&mut first, &tuning, 60.0),
+            step(&mut second, &tuning, 60.0)
+        );
     }
     assert_eq!(first, second);
 }

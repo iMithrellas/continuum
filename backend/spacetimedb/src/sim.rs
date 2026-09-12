@@ -153,6 +153,13 @@ impl MealPolicy {
             MealPolicy::Rationed => 0.65,
         }
     }
+
+    /// Food units spent per hunger point recovered, relative to normal meals.
+    /// This keeps rationed meals at 50% of normal food cost despite recovering
+    /// only 65% as much hunger during the same eating interval.
+    pub fn food_cost_per_hunger_multiplier(self) -> f32 {
+        self.food_cost_multiplier() / self.hunger_recovery_multiplier()
+    }
 }
 
 /// A colonist's part in the production loop, derived from [`HaulPolicy`] every
@@ -1301,14 +1308,15 @@ fn step_travel(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
 
 fn step_eat(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
     let recovery_multiplier = world.meal_policy.hunger_recovery_multiplier();
+    let cost_per_hunger =
+        tuning.food_per_hunger * world.meal_policy.food_cost_per_hunger_multiplier();
     let want = (tuning.eat_rate_per_hour * dt_hours * recovery_multiplier)
         .min(world.colonists[colonist_index].hunger);
     if want <= 0.0 {
         return;
     }
-    let needed = want * tuning.food_per_hunger * world.meal_policy.food_cost_multiplier();
+    let needed = want * cost_per_hunger;
     let taken = world.resources.take(ResourceKind::Food, needed);
-    let cost_per_hunger = tuning.food_per_hunger * world.meal_policy.food_cost_multiplier();
     let removed = if cost_per_hunger > 0.0 {
         taken / cost_per_hunger
     } else {

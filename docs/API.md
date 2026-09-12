@@ -115,7 +115,7 @@ Rust signatures and the generated binding types.
 | `set_work_order` | `(tile_id: u32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Unknown tile, `none`, wrong facility, or priority outside `1..=3` errors; identical row state is a no-op. |
 | `remove_work_order` | `(order_id: u64)` | Operator/admin. Unknown ID errors. |
 | `set_haul_policy` | `(policy: HaulPolicy)` | Operator/admin. `selfHaul` or `dedicatedHaulers` only; missing config errors; existing policy is a no-op. |
-| `set_meal_policy` | `(policy: MealPolicy)` | Operator/admin. `normal` or `rationed`; missing config errors; existing policy is an audited no-op. |
+| `set_meal_policy` | `(policy: MealPolicy)` | Operator/admin. `normal` or `rationed`; missing config errors; actual changes are audited, while an unchanged policy is a no-op with no event. |
 | `acknowledge_alert` | `(alert_id: u64)` | Operator/admin. Unknown ID errors; already acknowledged is a no-op. |
 | `set_time_scale` | `(time_scale: f64)` | Admin only. Baseline accepts finite `0..=100000` (the cooldown worker explicitly rejects NaN/infinity); missing config errors; unchanged value is a no-op with no timestamp update. `0` pauses the clock. |
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |

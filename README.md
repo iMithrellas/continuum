@@ -167,7 +167,7 @@ Call reducers or query state through the containerized CLI:
 
 Continuum has two authorization roles, separate from colonists' hauling roles.
 Operators may enable or disable tiles and zones, manage standing work orders,
-change the global hauling policy, and acknowledge alerts. Admins inherit those permissions and are the only
+change the global hauling and meal policies, and acknowledge alerts. Admins inherit those permissions and are the only
 callers allowed to change simulation speed, reset the colony, or authorize and
 revoke operators. The scheduled tick accepts only the database scheduler identity.
 Membership is stored in a private table; command and membership-change event-log
