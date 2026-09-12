@@ -15,6 +15,14 @@ func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 func build_facility(tile_id: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('build_facility', [tile_id, kind], [&'U32', &'ContinuumTileKind'])
 
+## 0. start_x: int [br]
+## 1. start_y: int [br]
+## 2. end_x: int [br]
+## 3. end_y: int [br]
+## 4. kind: ContinuumTileKind [br]
+func build_tile_block(start_x: int, start_y: int, end_x: int, end_y: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('build_tile_block', [start_x, start_y, end_x, end_y, kind], [&'I32', &'I32', &'I32', &'I32', &'ContinuumTileKind'])
+
 ## 0. order_id: int [br]
 func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('remove_work_order', [order_id], [&'U64'])
@@ -22,6 +30,16 @@ func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 
 func reset_colony() -> SpacetimeDBReducerCall:
 	return _client.call_reducer('reset_colony', [], [])
+
+## 0. start_x: int [br]
+## 1. start_y: int [br]
+## 2. end_x: int [br]
+## 3. end_y: int [br]
+## 4. work: ContinuumWorkType [br]
+## 5. priority: int [br]
+## 6. enabled: bool [br]
+func set_block_work_order(start_x: int, start_y: int, end_x: int, end_y: int, work: ContinuumWorkType, priority: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_block_work_order', [start_x, start_y, end_x, end_y, work, priority, enabled], [&'I32', &'I32', &'I32', &'I32', &'ContinuumWorkType', &'U8', &'Bool'])
 
 ## 0. policy: ContinuumHaulPolicy [br]
 func set_haul_policy(policy: ContinuumHaulPolicy) -> SpacetimeDBReducerCall:
@@ -39,6 +57,14 @@ func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBRed
 ## 0. cooldown_seconds: int [br]
 func set_speed_change_cooldown(cooldown_seconds: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_speed_change_cooldown', [cooldown_seconds], [&'U32'])
+
+## 0. start_x: int [br]
+## 1. start_y: int [br]
+## 2. end_x: int [br]
+## 3. end_y: int [br]
+## 4. enabled: bool [br]
+func set_tile_block_enabled(start_x: int, start_y: int, end_x: int, end_y: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_tile_block_enabled', [start_x, start_y, end_x, end_y, enabled], [&'I32', &'I32', &'I32', &'I32', &'Bool'])
 
 ## 0. tile_id: int [br]
 ## 1. enabled: bool [br]

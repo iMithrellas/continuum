@@ -29,3 +29,4 @@ static func create_admin() -> ContinuumRole:
 
 static func create_operator() -> ContinuumRole:
 	return create(Options.operator)
+

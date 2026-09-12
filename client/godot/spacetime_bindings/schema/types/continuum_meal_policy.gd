@@ -29,3 +29,4 @@ static func create_normal() -> ContinuumMealPolicy:
 
 static func create_rationed() -> ContinuumMealPolicy:
 	return create(Options.rationed)
+
