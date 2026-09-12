@@ -126,6 +126,38 @@ pub enum HaulPolicy {
     DedicatedHaulers,
 }
 
+/// Colony-wide meal policy. Rationed meals use less food per eating interval,
+/// but remove hunger more slowly, so the existing hunger-to-mood consequences
+/// remain the only mood penalty.
+#[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MealPolicy {
+    Normal,
+    Rationed,
+}
+
+impl MealPolicy {
+    pub fn food_cost_multiplier(self) -> f32 {
+        match self {
+            MealPolicy::Normal => 1.0,
+            MealPolicy::Rationed => 0.5,
+        }
+    }
+
+    pub fn hunger_recovery_multiplier(self) -> f32 {
+        match self {
+            MealPolicy::Normal => 1.0,
+            MealPolicy::Rationed => 0.65,
+        }
+    }
+
+    /// Food units spent per hunger point recovered, relative to normal meals.
+    /// This keeps rationed meals at 50% of normal food cost despite recovering
+    /// only 65% as much hunger during the same eating interval.
+    pub fn food_cost_per_hunger_multiplier(self) -> f32 {
+        self.food_cost_multiplier() / self.hunger_recovery_multiplier()
+    }
+}
+
 /// A colonist's part in the production loop, derived from [`HaulPolicy`] every
 /// tick so it can never drift out of sync with the policy.
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
@@ -520,6 +552,7 @@ pub struct World {
     /// Stored goods available for consumption; excludes ground piles and cargo.
     pub resources: Resources,
     pub haul_policy: HaulPolicy,
+    pub meal_policy: MealPolicy,
     /// Total elapsed in-game seconds since the colony was founded.
     pub game_seconds: f64,
     /// Day-scale smoothed colony mood. This, not the instantaneous average, is
@@ -769,6 +802,7 @@ pub fn new_world() -> World {
             meat: 0.0,
         },
         haul_policy: HaulPolicy::SelfHaul,
+        meal_policy: MealPolicy::Normal,
         game_seconds: 8.0 * 3600.0,
         mood_ema: 80.0,
         productivity_ema: 90.0,
@@ -1218,14 +1252,18 @@ fn step_travel(colonist: &mut Colonist, tuning: &Tuning, dt_hours: f32) {
 }
 
 fn step_eat(world: &mut World, colonist_index: usize, tuning: &Tuning, dt_hours: f32) {
-    let want = (tuning.eat_rate_per_hour * dt_hours).min(world.colonists[colonist_index].hunger);
+    let recovery_multiplier = world.meal_policy.hunger_recovery_multiplier();
+    let cost_per_hunger =
+        tuning.food_per_hunger * world.meal_policy.food_cost_per_hunger_multiplier();
+    let want = (tuning.eat_rate_per_hour * dt_hours * recovery_multiplier)
+        .min(world.colonists[colonist_index].hunger);
     if want <= 0.0 {
         return;
     }
-    let needed = want * tuning.food_per_hunger;
+    let needed = want * cost_per_hunger;
     let taken = world.resources.take(ResourceKind::Food, needed);
-    let removed = if tuning.food_per_hunger > 0.0 {
-        taken / tuning.food_per_hunger
+    let removed = if cost_per_hunger > 0.0 {
+        taken / cost_per_hunger
     } else {
         want
     };

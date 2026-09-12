@@ -1,6 +1,8 @@
 //! Database rows and public wire types. Accessor names are stable across refactors.
 
-use crate::sim::{Activity, Goal, HaulPolicy, HaulRole, ResourceKind, TileKind, WorkType};
+use crate::sim::{
+    Activity, Goal, HaulPolicy, HaulRole, MealPolicy, ResourceKind, TileKind, WorkType,
+};
 use crate::tick;
 use spacetimedb::{table, Identity};
 
@@ -29,6 +31,8 @@ pub struct Config {
     /// Bumped every time the colony is reset.
     pub generation: u32,
     pub haul_policy: HaulPolicy,
+    #[default(MealPolicy::Normal)]
+    pub meal_policy: MealPolicy,
 }
 
 /// Singleton admin policy for speed changes. Missing rows on additive updates
