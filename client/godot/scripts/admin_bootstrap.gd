@@ -1,17 +1,18 @@
 ## Headless bootstrap used by scripts/run-admin-client.
 ## It prints only the client identity, never the bearer token.
-extends SceneTree
+extends Node
 
 const TIMEOUT_SECONDS := 20.0
 var _client: ContinuumModuleClient
 var _started := false
 var _elapsed := 0.0
 
-func _initialize() -> void:
+func _ready() -> void:
 	_client = ContinuumModuleClient.new()
-	root.add_child(_client)
+	add_child(_client)
 	_client.connected.connect(_on_connected)
 	_client.connection_error.connect(_on_error)
+	_connect.call_deferred()
 
 func _process(delta: float) -> bool:
 	_elapsed += delta
@@ -20,7 +21,6 @@ func _process(delta: float) -> bool:
 		return true
 	if not _started:
 		_started = true
-		_connect()
 	return false
 
 func _connect() -> void:
@@ -37,14 +37,14 @@ func _connect() -> void:
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	print("CLIENT_IDENTITY=%s" % identity.hex_encode())
 	print("CLIENT_PROFILE_READY")
-	quit(0)
+	get_tree().quit(0)
 
 func _on_error(code: int, reason: String) -> void:
 	_fail("client connection failed (%d): %s" % [code, reason])
 
 func _fail(message: String) -> void:
 	printerr("admin bootstrap: %s" % message)
-	quit(1)
+	get_tree().quit(1)
 
 func _option(name: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():

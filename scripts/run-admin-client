@@ -23,7 +23,7 @@ if [[ "$GRANT" == 1 && "$HOST" != "http://127.0.0.1:3000" ]]; then
     exit 2
 fi
 
-output="$($GODOT --headless --path "$ROOT/client/godot" --script res://scripts/admin_bootstrap.gd -- \
+output="$($GODOT --headless --path "$ROOT/client/godot" --scene res://scenes/admin_bootstrap.tscn -- \
     --stdb-host="$HOST" --stdb-db="$DB" --profile=admin)"
 identity="$(printf '%s\n' "$output" | awk -F= '$1 == "CLIENT_IDENTITY" { print $2; exit }')"
 [[ -n "$identity" ]] || { printf 'admin launcher: bootstrap did not return an identity\n' >&2; exit 1; }
