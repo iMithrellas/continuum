@@ -2,6 +2,7 @@
 //! Simulation is pure; schema, authorization, persistence and events are separate.
 
 mod auth;
+mod blocks;
 mod events;
 mod persistence;
 mod schema;
