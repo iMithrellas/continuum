@@ -8,12 +8,14 @@ DB="continuum-map-ui-it-$$"
 DATA="${NAME}-data"
 CONFIG="${NAME}-config"
 CONTAINER=""
+LOG="$(mktemp)"
 
 cleanup() {
     if [[ -n "$CONTAINER" ]]; then
         docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     fi
     docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
+    rm -f "$LOG"
 }
 trap cleanup EXIT
 
@@ -49,7 +51,22 @@ docker exec "$CONTAINER" spacetime publish --yes --anonymous \
     --server http://127.0.0.1:3000 \
     -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
 
+echo "==> importing Godot project and registering script classes"
+godot --headless --path "$ROOT/client/godot" --editor --quit
+
 echo "==> running scene-backed UI gate"
-timeout 90s godot --headless --path "$ROOT/client/godot" \
+if ! timeout 90s godot --headless --path "$ROOT/client/godot" \
     --scene res://tools/map_ui_test.tscn \
-    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB"
+    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB" >"$LOG" 2>&1; then
+    cat "$LOG"
+    exit 1
+fi
+cat "$LOG"
+if grep -Eq '(^| )SCRIPT ERROR:|(^| )ERROR:' "$LOG"; then
+    echo "map UI gate reported a Godot script/runtime error" >&2
+    exit 1
+fi
+if ! grep -qx 'MAP_UI_PASS' "$LOG"; then
+    echo "map UI gate did not report MAP_UI_PASS" >&2
+    exit 1
+fi
