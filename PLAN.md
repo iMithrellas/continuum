@@ -28,7 +28,7 @@
 - [ ] Autonomous colonists rather than direct unit control
 - [ ] Jobs / work orders
 - [ ] Work priorities
-- [ ] Construction (instant dining/sleep/recreation facilities; no construction jobs yet)
+- [x] Instant rectangular construction for all seven operational tile kinds; construction jobs are not implemented
 - [ ] Resource gathering
 - [ ] Production chains
 - [ ] Storage
@@ -47,7 +47,7 @@
 - [x] Production slice: farming, logging, mining, and hunting produce food, wood, stone, and meat on work tiles
 - [x] Work-order slice: standing per-tile orders, priorities `1..=3`, pause/remove, deterministic selection, and forest's independent logging and hunting orders
 - [x] Hauling slice: self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage
-- [x] Construction slice: operators can instantly build dining, sleep, or recreation facilities for 20 stored wood on one empty tile; construction jobs are not implemented
+- [x] Construction slice: operators can instantly build any of the seven operational tile kinds for 20 stored wood per cell across a fully empty rectangle; construction jobs are not implemented
 - [x] Environmental slice: every tile can have seeded, bounded, overlapping soil fertility, forest density, and moisture fields; no terrain-driven production or need effects are implemented
 - [x] Failure-chain slice: disabling recreation can produce unmet recreation, lower mood and sleep quality, more fatigue, lower productivity, and food shortage; this is not the full failure model
 
@@ -134,11 +134,12 @@
 - [ ] Browser macro execution
 - [ ] Different clients intentionally have different capability levels
 
-### Pending client slices
-- [ ] Godot mode/type picker for rectangular map operations
-- [ ] Godot drag-to-select rectangle
-- [ ] Godot block enable/disable and compatible work-order controls
-- [ ] Godot blended soil/vegetation terrain visualization
+### Implemented client slices
+- [x] Godot `Select` and `Build` modes, with a build type menu for farm, forest, mine, storage, dining, sleep, and recreation
+- [x] Godot drag-to-select inclusive rectangles, including one-cell selections; Build releases dispatch one `build_tile_block` intent after local occupied-cell and wood checks
+- [x] Map painting cancellation on Escape, right-click, release outside the drawn grid, or window focus loss
+- [x] Select-mode block controls for enabling/disabling non-empty tiles and setting or pausing compatible farming, logging, mining, and hunting orders; incompatible cells are skipped by the reducer
+- [x] Blended soil and ecological-cover terrain visualization, with independent overlapping soil/forest fields; terrain is decorative and has no production modifiers yet
 
 ## API
 - [ ] API-first design from the beginning
