@@ -36,6 +36,40 @@ pub enum TileKind {
     Recreation,
 }
 
+pub const FACILITY_BUILD_WOOD_COST: f32 = 20.0;
+
+impl TileKind {
+    pub fn is_buildable(self) -> bool {
+        matches!(
+            self,
+            TileKind::Dining | TileKind::Sleep | TileKind::Recreation
+        )
+    }
+}
+
+pub fn validate_facility_build(
+    tile: &Tile,
+    kind: TileKind,
+    stored_wood: f32,
+) -> Result<(), String> {
+    if !kind.is_buildable() {
+        return Err("only dining, sleep, or recreation facilities can be built".into());
+    }
+    if tile.x < 0 || tile.x >= GRID_W || tile.y < 0 || tile.y >= GRID_H {
+        return Err("facility must be built inside the colony grid".into());
+    }
+    if tile.kind != TileKind::Empty {
+        return Err("facility can only be built on an empty tile".into());
+    }
+    if !stored_wood.is_finite() || stored_wood < FACILITY_BUILD_WOOD_COST {
+        return Err(format!(
+            "building requires {:.0} stored wood; colony has {:.1}",
+            FACILITY_BUILD_WOOD_COST, stored_wood
+        ));
+    }
+    Ok(())
+}
+
 #[derive(SpacetimeType, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Activity {
     Idle,
