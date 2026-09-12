@@ -13,7 +13,8 @@ use events::{emit_sim_events, log_event, reconcile_alerts, trim_event_log};
 use persistence::{load_world, save_world, seed_colony, upsert_config};
 pub use schema::*;
 use sim::{
-    validate_facility_build, HaulPolicy, TileKind, Tuning, WorkType, FACILITY_BUILD_WOOD_COST,
+    validate_facility_build, HaulPolicy, MealPolicy, TileKind, Tuning, WorkType,
+    FACILITY_BUILD_WOOD_COST,
 };
 use spacetimedb::{reducer, Identity, ReducerContext, Table, TimeDuration};
 
@@ -278,6 +279,33 @@ pub fn set_haul_policy(ctx: &ReducerContext, policy: HaulPolicy) -> Result<(), S
         Severity::Info,
         format!(
             "Hauling mode changed to {policy:?} by operator {}.",
+            identity_hex(ctx.sender())
+        ),
+    );
+    Ok(())
+}
+
+/// Set the colony-wide meal policy. Rationing saves food at the cost of slower
+/// hunger recovery; the simulation's normal hunger-to-mood relationship applies.
+#[reducer]
+pub fn set_meal_policy(ctx: &ReducerContext, policy: MealPolicy) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Operator)?;
+    let mut config = ctx
+        .db
+        .config()
+        .id()
+        .find(0)
+        .ok_or_else(|| "colony is not initialised".to_string())?;
+    if config.meal_policy == policy {
+        return Ok(());
+    }
+    config.meal_policy = policy;
+    ctx.db.config().id().update(config);
+    log_event(
+        ctx,
+        Severity::Info,
+        format!(
+            "Meal policy changed to {policy:?} by operator {}.",
             identity_hex(ctx.sender())
         ),
     );

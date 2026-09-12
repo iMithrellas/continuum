@@ -43,7 +43,7 @@
 
 ## Unattended operation
 - [ ] Standing orders
-- [ ] Policies
+- [x] Policies (meal rationing slice; broader policy systems remain)
 - [ ] Priorities
 - [ ] Automation
 - [ ] Threshold-based behavior

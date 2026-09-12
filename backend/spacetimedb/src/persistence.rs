@@ -1,7 +1,7 @@
 //! Loading and saving simulation state. Only explicit seed/reset installs defaults.
 
 use crate::schema::*;
-use crate::sim::{self, HaulPolicy, Resources, World};
+use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
 
 /// Wipe colony state and recreate it from the default layout.
@@ -63,6 +63,7 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
             game_seconds: world.game_seconds,
             generation,
             haul_policy: world.haul_policy,
+            meal_policy: MealPolicy::Normal,
         },
     );
     upsert_colony(ctx, colony_row(&world));
@@ -182,6 +183,10 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
             .as_ref()
             .map(|config| config.haul_policy)
             .unwrap_or(HaulPolicy::SelfHaul),
+        meal_policy: config
+            .as_ref()
+            .map(|config| config.meal_policy)
+            .unwrap_or(MealPolicy::Normal),
         resources: Resources {
             food: colony.as_ref().map(|colony| colony.food).unwrap_or(0.0),
             wood: colony.as_ref().map(|colony| colony.wood).unwrap_or(0.0),
