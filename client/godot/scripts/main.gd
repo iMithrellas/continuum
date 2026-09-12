@@ -22,7 +22,7 @@ static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
 	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
 	"SELECT * FROM item_stack", "SELECT * FROM work_order",
-	"SELECT * FROM speed_control",
+	"SELECT * FROM speed_control", "SELECT * FROM terrain", "SELECT * FROM world_seed",
 ])
 
 const SEVERITY_COLORS: Array[Color] = [
@@ -73,6 +73,12 @@ var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
 var _selected_tile_id: int = -1
+var _selected_rect := Rect2i()
+var _mode_buttons: Dictionary = {}
+var _build_menu: OptionButton
+var _block_box: VBoxContainer
+var _block_info: Label
+var _block_controls: Dictionary = {}
 var _dirty: bool = true
 var _map_dirty: bool = true
 var _refresh_timer: float = 0.0
@@ -88,6 +94,8 @@ func _ready() -> void:
 	_history = SessionHistoryModel.new()
 	_build_side_panel()
 	map.tile_selected.connect(_on_tile_selected)
+	map.rectangle_selected.connect(_on_rectangle_selected)
+	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	client.connected.connect(_on_connected)
@@ -247,8 +255,59 @@ func _on_table_changed(table_name: String) -> void:
 
 func _on_tile_selected(tile_id: int) -> void:
 	_selected_tile_id = tile_id
+	_selected_rect = map.selected_rect()
 	_refresh_controls()
 	_dirty = true
+
+
+func _on_rectangle_selected(rect: Rect2i) -> void:
+	_selected_rect = rect
+	map.set_selected_rect(rect)
+	var tile: ContinuumTile = _tile_at(rect.position)
+	_selected_tile_id = tile.id if tile != null else -1
+	_refresh_controls()
+	_dirty = true
+
+
+func _tile_at(pos: Vector2i) -> ContinuumTile:
+	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+		if Vector2i(tile.x, tile.y) == pos:
+			return tile
+	return null
+
+
+func _on_build_rectangle_requested(rect: Rect2i) -> void:
+	_selected_rect = rect
+	map.set_selected_rect(rect)
+	_refresh_controls()
+	if not _state_ready or _intent_request != null:
+		_intent_feedback.text = "Build blocked: waiting for subscription or another request."
+		return
+	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+	var occupied := 0
+	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+		if rect.has_point(Vector2i(tile.x, tile.y)) and tile.kind.value != ContinuumTileKind.Options.empty:
+			occupied += 1
+	var cost := rect.size.x * rect.size.y * 20.0
+	if occupied > 0:
+		_intent_feedback.text = "Build rejected locally: %d cell(s) already occupied." % occupied
+		return
+	if colony == null or colony.wood < cost:
+		_intent_feedback.text = "Build unavailable: needs %.0f wood (stored %.1f)." % [cost, 0.0 if colony == null else colony.wood]
+		return
+	_track_intent(SpacetimeDB.Continuum.reducers.build_tile_block(rect.position.x, rect.position.y,
+			rect.end.x - 1, rect.end.y - 1, ContinuumTileKind.create(_build_menu.get_selected_id())),
+			"Build %dx%d block" % [rect.size.x, rect.size.y])
+
+
+func _set_mode(mode: StringName) -> void:
+	map.set_interaction_mode(mode)
+	for key: StringName in _mode_buttons:
+		_mode_buttons[key].set_pressed_no_signal(key == mode)
+	if mode == &"build":
+		_intent_feedback.text = "Build mode: choose a type, then drag a rectangle on empty ground. Esc/right-click cancels."
+	else:
+		_intent_feedback.text = "Select mode: drag a rectangle to control the whole block."
 
 
 func _recreation_tiles() -> Array[ContinuumTile]:
@@ -528,6 +587,71 @@ func _build_side_panel() -> void:
 		_speed_buttons[speed] = button
 	side.add_child(speeds)
 
+	side.add_child(_heading("Map tools"))
+	var modes := HBoxContainer.new()
+	for mode: StringName in [&"select", &"build"]:
+		var button := Button.new()
+		button.text = "Select" if mode == &"select" else "Build"
+		button.toggle_mode = true
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.pressed.connect(_set_mode.bind(mode))
+		modes.add_child(button)
+		_mode_buttons[mode] = button
+	side.add_child(modes)
+	_build_menu = OptionButton.new()
+	for kind: int in [ContinuumTileKind.Options.farm, ContinuumTileKind.Options.forest,
+			ContinuumTileKind.Options.mine, ContinuumTileKind.Options.storage,
+			ContinuumTileKind.Options.dining, ContinuumTileKind.Options.sleep,
+			ContinuumTileKind.Options.recreation]:
+		_build_menu.add_item(ContinuumTileKind.parse_enum_name(kind).capitalize(), kind)
+	_build_menu.item_selected.connect(func(index: int) -> void:
+		map.set_build_kind(_build_menu.get_item_id(index)))
+	side.add_child(_build_menu)
+	var tool_note := Label.new()
+	tool_note.text = "Farm / Forestry / Mine / Storage / Dining / Sleep / Recreation\n20 wood per cell. Forestry creates a Forest work zone; natural forest cover is a separate terrain layer."
+	tool_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tool_note.add_theme_font_size_override("font_size", 11)
+	side.add_child(tool_note)
+	_block_box = VBoxContainer.new()
+	_block_info = Label.new()
+	_block_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_block_box.add_child(_block_info)
+	var enabled_row := HBoxContainer.new()
+	for enabled: bool in [true, false]:
+		var button := Button.new()
+		button.text = "Enable block" if enabled else "Disable block"
+		button.pressed.connect(_set_block_enabled.bind(enabled))
+		enabled_row.add_child(button)
+		_block_controls["enabled_%s" % enabled] = button
+	_block_box.add_child(enabled_row)
+	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
+			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
+		var row := HBoxContainer.new()
+		var label := Label.new()
+		label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		var add := Button.new()
+		add.text = "N"
+		add.tooltip_text = "Normal priority"
+		add.pressed.connect(_set_block_work.bind(work, 2, true))
+		row.add_child(add)
+		var priority_buttons: Array[Button] = []
+		for priority: int in [1, 2, 3]:
+			var priority_button := Button.new()
+			priority_button.text = ColonyMap.PRIORITY_NAMES[priority].left(1)
+			priority_button.tooltip_text = "%s priority" % ColonyMap.PRIORITY_NAMES[priority]
+			priority_button.pressed.connect(_set_block_work.bind(work, priority, true))
+			row.add_child(priority_button)
+			priority_buttons.append(priority_button)
+		var pause := Button.new()
+		pause.text = "Pause"
+		pause.pressed.connect(_set_block_work.bind(work, 2, false))
+		row.add_child(pause)
+		_block_controls[work] = {"row": row, "label": label, "set": add, "priority": priority_buttons, "pause": pause}
+		_block_box.add_child(row)
+	side.add_child(_block_box)
+
 	side.add_child(_heading("Selected tile / standing orders"))
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
@@ -588,6 +712,7 @@ func _build_side_panel() -> void:
 	_intent_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_intent_feedback.add_theme_font_size_override("font_size", 11)
 	side.add_child(_intent_feedback)
+	_set_mode(&"select")
 
 	side.add_child(_heading("Control"))
 	_recreation_button = Button.new()
@@ -679,6 +804,41 @@ func _sample_history() -> void:
 		"productivity": colony.smoothed_productivity,
 	}, config.generation):
 		_history_chart.set_points(_history.points())
+
+
+func _set_block_enabled(enabled: bool) -> void:
+	if _selected_rect.size == Vector2i.ZERO:
+		return
+	if not _state_ready or _intent_request != null:
+		return
+	_track_intent(SpacetimeDB.Continuum.reducers.set_tile_block_enabled(
+		_selected_rect.position.x, _selected_rect.position.y, _selected_rect.end.x - 1,
+		_selected_rect.end.y - 1, enabled), "Set block %s" % ("enabled" if enabled else "disabled"))
+
+
+func _set_block_work(work: int, priority: int, enabled: bool) -> void:
+	if _selected_rect.size == Vector2i.ZERO or not _state_ready or _intent_request != null:
+		return
+	_track_intent(SpacetimeDB.Continuum.reducers.set_block_work_order(
+		_selected_rect.position.x, _selected_rect.position.y, _selected_rect.end.x - 1,
+		_selected_rect.end.y - 1, ContinuumWorkType.create(work), priority, enabled),
+		"Set %s work for block" % ContinuumWorkType.parse_enum_name(work).capitalize())
+
+
+func _map_soil_name(fertility: float, moisture: float) -> String:
+	if fertility > 0.68 and moisture > 0.52:
+		return "chernozem"
+	if fertility > 0.36:
+		return "loamy ground"
+	return "sandy ground"
+
+
+func _map_cover_name(density: float) -> String:
+	if density > 0.72:
+		return "forest"
+	if density > 0.45:
+		return "woodland"
+	return "grassland"
 
 
 func _resource_text(kind: int, amount: float) -> String:
@@ -787,6 +947,67 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 
 func _refresh_controls() -> void:
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	var busy := not _state_ready or _intent_request != null
+	_build_menu.disabled = busy
+	_tile_action_box.visible = false
+	_block_box.visible = true
+	var block_tiles := 0
+	var occupied := 0
+	var enabled_count := 0
+	var compatible_counts: Dictionary = {}
+	if _selected_rect.size != Vector2i.ZERO:
+		for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+			if not _selected_rect.has_point(Vector2i(tile.x, tile.y)):
+				continue
+			block_tiles += 1
+			if tile.kind.value != ContinuumTileKind.Options.empty:
+				occupied += 1
+				if tile.enabled:
+					enabled_count += 1
+				for work: int in ColonyMap.compatible_work(tile.kind.value):
+					compatible_counts[work] = int(compatible_counts.get(work, 0)) + 1
+	var rect_text := "No rectangle selected."
+	if _selected_rect.size != Vector2i.ZERO:
+		rect_text = "%dx%d block: %d cells, %d occupied, %d enabled" % [
+			_selected_rect.size.x, _selected_rect.size.y, block_tiles, occupied, enabled_count]
+		if map.interaction_mode == &"build":
+			rect_text += "\nPreview cost: %.0f wood" % (_selected_rect.size.x * _selected_rect.size.y * 20.0)
+		else:
+			rect_text += "\nControls skip empty cells; work controls skip incompatible tiles."
+		var terrain_count := 0
+		var fertility := 0.0
+		var moisture := 0.0
+		var cover := 0.0
+		for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+			if not _selected_rect.has_point(Vector2i(tile.x, tile.y)):
+				continue
+			var fields: ContinuumTerrain = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
+			if fields != null:
+				terrain_count += 1
+				fertility += fields.soil_fertility
+				moisture += fields.moisture
+				cover += fields.forest_density
+		if terrain_count > 0:
+			fertility /= terrain_count
+			moisture /= terrain_count
+			cover /= terrain_count
+			rect_text += "\nSoil avg: %s (fertility %.2f, moisture %.2f) | Cover avg: %s (density %.2f)" % [
+				_map_soil_name(fertility, moisture), fertility, moisture, _map_cover_name(cover), cover]
+	_block_info.text = rect_text
+	var block_busy := busy or _selected_rect.size == Vector2i.ZERO
+	for key: String in ["enabled_true", "enabled_false"]:
+		_block_controls[key].disabled = block_busy
+	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
+			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
+		var controls: Dictionary = _block_controls[work]
+		var count: int = compatible_counts.get(work, 0)
+		controls.label.text = "%s (%d compatible)" % [ContinuumWorkType.parse_enum_name(work).capitalize(), count]
+		controls.set.disabled = block_busy or count == 0
+		controls.pause.disabled = block_busy or count == 0
+		for priority_button: Button in controls.priority:
+			priority_button.disabled = block_busy or count == 0
+		controls.row.tooltip_text = "Only compatible facility tiles are changed; unrelated jobs remain untouched."
+
 	_haul_button.disabled = not _state_ready or config == null or _haul_request != null
 	if config != null:
 		var dedicated := config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers
@@ -829,7 +1050,6 @@ func _refresh_controls() -> void:
 		_recreation_button.text = ("Disable recreation zone" if any_enabled
 				else "Enable recreation zone")
 
-	var busy := not _state_ready or _intent_request != null
 	_speed_label.text = "Waiting for config..." if config == null else (
 		"Server: paused" if config.time_scale == 0.0 else "Server: %.2fx (1x = 4h/day)" % (config.time_scale / BASE_TIME_SCALE))
 	if not _state_ready and config != null:

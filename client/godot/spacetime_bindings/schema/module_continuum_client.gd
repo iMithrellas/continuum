@@ -22,8 +22,10 @@ const EventLog = Types.EventLog
 const ItemStack = Types.ItemStack
 const Role = Types.Role
 const SpeedControl = Types.SpeedControl
+const Terrain = Types.Terrain
 const Tile = Types.Tile
 const WorkOrder = Types.WorkOrder
+const WorldSeed = Types.WorldSeed
 
 
 var reducers: ContinuumModuleReducers

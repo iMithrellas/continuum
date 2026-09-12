@@ -2,8 +2,8 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumAlertTable extends _ModuleTable
 
-var code: ContinuumAlertCodeUniqueIndex
 var id: ContinuumAlertIdUniqueIndex
+var code: ContinuumAlertCodeUniqueIndex
 
 func _init() -> void:
 	set_meta("table_name", "alert")
@@ -13,8 +13,8 @@ func _init() -> void:
 static func create(p_local_db: LocalDatabase) -> ContinuumAlertTable:
 	var table: ContinuumAlertTable = ContinuumAlertTable.new()
 	table._db = p_local_db
-	table.code = ContinuumAlertCodeUniqueIndex.create(p_local_db)
 	table.id = ContinuumAlertIdUniqueIndex.create(p_local_db)
+	table.code = ContinuumAlertCodeUniqueIndex.create(p_local_db)
 	return table
 
 func iter() -> Array[ContinuumAlert]:

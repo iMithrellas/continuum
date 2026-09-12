@@ -7,6 +7,8 @@ class_name ColonyMap
 extends Control
 
 signal tile_selected(tile_id: int)
+signal rectangle_selected(rect: Rect2i)
+signal build_rectangle_requested(rect: Rect2i)
 
 const TILE_COLORS: Dictionary[int, Color] = {
 	ContinuumTileKind.Options.empty: Color("2a2e37"),
@@ -39,6 +41,13 @@ const LEGEND_HEIGHT := 90.0
 const PRIORITY_NAMES := {1: "High", 2: "Normal", 3: "Low"}
 
 var selected_tile_id: int = -1
+var interaction_mode := &"select"
+var build_kind := ContinuumTileKind.Options.farm
+var _selection_rect := Rect2i()
+var _dragging := false
+var _drag_start := Vector2i.ZERO
+var _drag_current := Vector2i.ZERO
+var _drag_inside := false
 
 ## Rendered colonist positions, eased towards the authoritative tile positions so
 ## movement reads as movement instead of teleporting.
@@ -55,6 +64,33 @@ var _stock_pulses: Dictionary[int, float] = {}
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
 	set_process(true)
+	set_process_input(true)
+	mouse_default_cursor_shape = Control.CURSOR_CROSS
+
+
+func set_interaction_mode(mode: StringName) -> void:
+	interaction_mode = mode
+	_dragging = false
+	queue_redraw()
+
+
+func set_build_kind(kind: int) -> void:
+	build_kind = kind
+	queue_redraw()
+
+
+func set_selected_rect(rect: Rect2i) -> void:
+	_selection_rect = rect
+	queue_redraw()
+
+
+func selected_rect() -> Rect2i:
+	if _dragging:
+		return MapUiModel.normalize_rect(_drag_start, _drag_current)
+	if selected_tile_id < 0:
+		return Rect2i()
+	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(selected_tile_id)
+	return Rect2i(Vector2i(tile.x, tile.y), Vector2i.ONE) if tile != null else Rect2i()
 
 
 static func compatible_work(kind: int) -> Array[int]:
@@ -148,6 +184,9 @@ func _draw() -> void:
 	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
 		var rect := Rect2(origin + Vector2(tile.x * cell, tile.y * cell), Vector2(cell, cell))
 		var colour: Color = TILE_COLORS.get(tile.kind.value, Color("2a2e37"))
+		var terrain: Resource = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
+		if tile.kind.value == ContinuumTileKind.Options.empty:
+			colour = _soil_colour(terrain)
 		if not tile.enabled:
 			colour = colour.lerp(DISABLED_COLOR, 0.75)
 		draw_rect(rect.grow(-1.0), colour)
@@ -163,6 +202,8 @@ func _draw() -> void:
 
 		if tile.id == selected_tile_id:
 			draw_rect(rect.grow(-1.0), SELECTION_COLOR, false, 2.0)
+		if terrain != null and terrain.forest_density > 0.45:
+			_draw_cover(rect, cell, terrain.forest_density)
 
 	for i in range(_grid.x + 1):
 		var x := origin.x + i * cell
@@ -177,7 +218,60 @@ func _draw() -> void:
 	_draw_storage(origin, cell)
 	_draw_colonists(origin, cell)
 	_draw_ground_items(origin, cell)
+	if _selection_rect.size != Vector2i.ZERO and not _dragging:
+		var selection_rect := Rect2(origin + Vector2(_selection_rect.position) * cell,
+			Vector2(_selection_rect.size) * cell)
+		draw_rect(selection_rect.grow(-1.0), Color("64d8cb"), false, 2.0)
+	_draw_drag_preview(origin, cell)
 	_draw_legend()
+
+
+func _soil_colour(terrain: Resource) -> Color:
+	if terrain == null:
+		return Color("2a2e37")
+	# Continuous interpolation keeps fertile, wet forest ground visibly distinct.
+	var sandy := Color("b99862")
+	var loamy := Color("78664f")
+	var chernozem := Color("403f36")
+	var fertility: float = clampf(terrain.soil_fertility, 0.0, 1.0)
+	var moisture: float = clampf(terrain.moisture, 0.0, 1.0)
+	var soil := sandy.lerp(loamy, fertility)
+	soil = soil.lerp(chernozem, fertility * moisture)
+	return soil
+
+
+func _draw_cover(rect: Rect2, cell: float, density: float) -> void:
+	var alpha := clampf((density - 0.45) * 0.9, 0.08, 0.5)
+	var cover := Color("4d8b52", alpha)
+	if density > 0.72:
+		cover = Color("1d5138", alpha)
+	var radius := maxf(1.0, cell * 0.12)
+	draw_circle(rect.position + Vector2(cell * 0.28, cell * 0.3), radius, cover)
+	draw_circle(rect.position + Vector2(cell * 0.68, cell * 0.64), radius * 0.8, cover)
+
+
+func _draw_drag_preview(origin: Vector2, cell: float) -> void:
+	if not _dragging:
+		return
+	var rect := MapUiModel.normalize_rect(_drag_start, _drag_current)
+	var colour := Color("64d8cb") if interaction_mode == &"select" else Color("f5d76e")
+	colour.a = 0.22
+	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour)
+	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour.lightened(0.3), false, 2.0)
+	var occupied := 0
+	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+		if rect.has_point(Vector2i(tile.x, tile.y)) and tile.kind.value != ContinuumTileKind.Options.empty:
+			occupied += 1
+	var text := "%dx%d  %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
+	if interaction_mode == &"build":
+		text += "  %.0f wood" % (rect.size.x * rect.size.y * 20.0)
+		if occupied > 0:
+			text += "  OCCUPIED"
+		var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+		if colony == null or colony.wood < rect.size.x * rect.size.y * 20.0:
+			text += "  NOT ENOUGH WOOD"
+	draw_string(_font, origin + Vector2(rect.position.x * cell + 4.0, rect.position.y * cell - 5.0),
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(int(cell * 0.34), 10, 15), Color("f1f4f8"))
 
 
 ## One label per zone, at the zone's top-left tile, so the map reads without a legend.
@@ -312,7 +406,7 @@ func _draw_legend() -> void:
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("ccd3df"))
 	draw_string(_font, Vector2(12, y + 39), "Shared storage: no limit. Stock flashes on increases. Hover or select a pile's tile for amounts.",
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("9aa4b2"))
-	draw_string(_font, Vector2(12, y + 57), "Active orders: F/M/L/H = profession; 1 High, 2 Normal, 3 Low. Hover for paused/missing orders.",
+	draw_string(_font, Vector2(12, y + 57), "Terrain: soil blend + independent ecological cover. Decorative only; it does not modify production.",
 			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("f5d76e"))
 
 
@@ -381,6 +475,12 @@ func _get_tooltip(at_position: Vector2) -> String:
 			lines.append("%s (%d, %d) / %s" % [
 				ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.x, tile.y,
 				"enabled" if tile.enabled else "disabled"])
+			var terrain: Resource = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
+			if terrain != null:
+				lines.append("Soil: %s  fertility %.2f  moisture %.2f" % [
+					_soil_name(terrain.soil_fertility, terrain.moisture), terrain.soil_fertility, terrain.moisture])
+				lines.append("Cover: %s  density %.2f (decorative)" % [
+					_cover_name(terrain.forest_density), terrain.forest_density])
 			for work: int in compatible_work(tile.kind.value):
 				var description := "no order (no production)"
 				for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
@@ -409,22 +509,95 @@ func _get_tooltip(at_position: Vector2) -> String:
 	return "\n".join(lines)
 
 
+func _soil_name(fertility: float, moisture: float) -> String:
+	if fertility > 0.68 and moisture > 0.52:
+		return "chernozem"
+	if fertility > 0.36:
+		return "loamy ground"
+	return "sandy ground"
+
+
+func _cover_name(density: float) -> String:
+	if density > 0.72:
+		return "forest"
+	if density > 0.45:
+		return "woodland"
+	return "grassland"
+
+
+func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
+	var cell := _cell_size()
+	if cell <= 0.0:
+		return null
+	var local := (position - _origin()) / cell
+	var grid_pos := Vector2i(floori(local.x), floori(local.y))
+	if clamp_to_grid:
+		return MapUiModel.clamp_cell(grid_pos, _grid)
+	if grid_pos.x < 0 or grid_pos.y < 0 or grid_pos.x >= _grid.x or grid_pos.y >= _grid.y:
+		return null
+	return grid_pos
+
+
+func _input(event: InputEvent) -> void:
+	if not _has_state:
+		return
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		_dragging = false
+		queue_redraw()
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+		var right_click := event as InputEventMouseButton
+		var right_point := get_global_transform().affine_inverse() * right_click.position
+		if get_rect().has_point(right_point):
+			_dragging = false
+			queue_redraw()
+		return
+	if event is InputEventMouseMotion and _dragging:
+		var motion := event as InputEventMouseMotion
+		var point := get_global_transform().affine_inverse() * motion.position
+		_drag_inside = get_rect().has_point(point)
+		if _drag_inside:
+			_drag_current = _cell_at(point, true)
+			queue_redraw()
+		return
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and _dragging:
+		var release := event as InputEventMouseButton
+		var point := get_global_transform().affine_inverse() * release.position
+		if not get_rect().has_point(point) or not _drag_inside:
+			_dragging = false
+			queue_redraw()
+			return
+		var finish: Vector2i = _cell_at(point, true)
+		var rect := MapUiModel.normalize_rect(_drag_start, finish)
+		_dragging = false
+		if interaction_mode == &"build":
+			build_rectangle_requested.emit(rect)
+		else:
+			rectangle_selected.emit(rect)
+		queue_redraw()
+		return
+
+
 func _gui_input(event: InputEvent) -> void:
 	if not _has_state:
 		return
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
-		var cell := _cell_size()
-		if cell <= 0.0:
+		var point := (event as InputEventMouseButton).position
+		var grid_pos: Variant = _cell_at(point)
+		if grid_pos == null:
 			return
-		var local: Vector2 = ((event as InputEventMouseButton).position - _origin()) / cell
-		var gx := int(floor(local.x))
-		var gy := int(floor(local.y))
-		if gx < 0 or gy < 0 or gx >= _grid.x or gy >= _grid.y:
+		_dragging = true
+		_drag_inside = true
+		_drag_start = grid_pos
+		_drag_current = grid_pos
+		accept_event()
+		if interaction_mode != &"select":
+			queue_redraw()
 			return
 		var tile: ContinuumTile = null
 		for candidate: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-			if candidate.x == gx and candidate.y == gy:
+			if candidate.x == grid_pos.x and candidate.y == grid_pos.y:
 				tile = candidate
 				break
 		if tile != null:
