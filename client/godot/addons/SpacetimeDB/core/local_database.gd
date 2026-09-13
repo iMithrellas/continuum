@@ -256,6 +256,18 @@ func clear_local_db():
 				"deletes": deletes_to_emit})
 	emit_db_callbacks(all_deletes_to_emit)
 
+## Clear only the sender-scoped authorization view before reconnecting it.
+## Do not use the broad clear_local_db() path for authorization refreshes.
+func clear_role_view() -> void:
+	if not _tables.has("my_role"):
+		return
+	var deletes: Array = []
+	for row in get_all_rows("my_role"):
+		deletes.append([row])
+	_tables["my_role"].clear()
+	if not deletes.is_empty():
+		emit_db_callbacks([{"table_name": ["my_role"], "inserts": [], "updates": [], "deletes": deletes}])
+
 # --- Access Methods ---
 func get_row_by_pk(table_name: String, primary_key_value) -> _ModuleTableType:
 	var table_name_lower: String = table_name

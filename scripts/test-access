@@ -2,19 +2,32 @@
 # Private authorization integration test. It owns its server, database, and volumes.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NAME="continuum-access-it-${USER:-user}-$$"
+NAME="${CONTINUUM_ACCESS_NAME:-continuum-access-it-${USER:-user}-$$}"
 DB="continuum-access-it-$$"
 DATA="${NAME}-data"
 CONFIG="${NAME}-config"
 CONTAINER="$NAME"
-cleanup() { docker rm -f "$CONTAINER" >/dev/null 2>&1 || true; docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true; }
+watch_file=""
+watch_pid=""
+signal_file=""
+resume_file=""
+cleanup() {
+    if [[ -n "$watch_pid" ]]; then kill "$watch_pid" >/dev/null 2>&1 || true; fi
+    [[ -z "$watch_file" ]] || rm -f "$watch_file"
+    [[ -z "$signal_file" ]] || rm -f "$signal_file"
+    [[ -z "$resume_file" ]] || rm -f "$resume_file"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
+}
 trap cleanup EXIT
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
+[[ "$NAME" == continuum-access-it-* ]] || fail "refusing non-private test resource name"
 docker volume create "$DATA" >/dev/null
 docker volume create "$CONFIG" >/dev/null
 docker run --rm --user root --entrypoint sh -v "$DATA:/home/spacetime/.local/share/spacetime" -v "$CONFIG:/home/spacetime/.config/spacetime" clockworklabs/spacetime:v2.10.0 -c 'chown -R 1000:1000 /home/spacetime/.local/share/spacetime /home/spacetime/.config/spacetime'
 cargo build --manifest-path "$ROOT/backend/spacetimedb/Cargo.toml" --release --target wasm32-unknown-unknown >/dev/null
 docker run -d --name "$CONTAINER" -p 127.0.0.1::3000 -v "$DATA:/home/spacetime/.local/share/spacetime" -v "$CONFIG:/home/spacetime/.config/spacetime" -v "$ROOT/backend/spacetimedb:/project:ro" clockworklabs/spacetime:v2.10.0 start --listen-addr 0.0.0.0:3000 >/dev/null
+if [[ "${CONTINUUM_ACCESS_INJECT_FAILURE:-}" == "after-start" ]]; then fail "injected cleanup failure"; fi
 for _ in {1..30}; do docker exec "$CONTAINER" spacetime server ping local >/dev/null 2>&1 && break || sleep 1; done
 PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
 HOST="http://127.0.0.1:$PORT"
@@ -22,14 +35,16 @@ docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0
 docker exec "$CONTAINER" spacetime publish --yes --delete-data=always --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB"
 probe() { godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- --stdb-host="$HOST" --stdb-db="$DB" --profile="$1" --expected="$2"; }
 viewer="$(probe normal Viewer)"; [[ "$viewer" == *$'ACCESS_ROLE=Viewer OPERATE=false ADMIN=false\nACCESS_PASS'* ]] || fail "absent member was not Viewer"
-watch_file="/tmp/continuum-access-watch-$$"
-godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
-    --stdb-host="$HOST" --stdb-db="$DB" --profile=normal --sequence=Viewer,Operator,Viewer --hold=true >"$watch_file" 2>&1 &
-watch_pid=$!
-trap 'kill "$watch_pid" >/dev/null 2>&1 || true; rm -f "$watch_file"' EXIT
-for _ in {1..30}; do awk '/CLIENT_IDENTITY=/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
-operator_id="$(awk -F= '$1 == "CLIENT_IDENTITY" {print $2; exit}' "$watch_file")"; [[ -n "$operator_id" ]] || fail "operator identity missing"
+operator_id="$(printf '%s\n' "$viewer" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2}')"; [[ -n "$operator_id" ]] || fail "operator identity missing"
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$operator_id\"" true >/dev/null
+watch_file="/tmp/continuum-access-watch-$$"
+signal_file="/tmp/continuum-access-disconnected-$$"
+resume_file="/tmp/continuum-access-resume-$$"
+godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=normal --sequence=Operator,Viewer \
+    --disconnect-after=Operator --signal-file="$signal_file" --resume-file="$resume_file" >"$watch_file" 2>&1 &
+watch_pid=$!
+for _ in {1..30}; do awk '/CLIENT_IDENTITY=/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
 for _ in {1..30}; do awk '/ACCESS_ROLE=Operator OPERATE=true ADMIN=false/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
 awk '/ACCESS_ROLE=Operator OPERATE=true ADMIN=false/{found=1} END{exit !found}' "$watch_file" || fail "operator role discovery did not refresh"
 admin="$(probe admin Viewer)"; admin_id="$(printf '%s\n' "$admin" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2}')"; [[ -n "$admin_id" ]] || fail "admin identity missing"
@@ -37,8 +52,11 @@ if docker exec "$CONTAINER" spacetime call --anonymous --server http://127.0.0.1
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" grant_admin "\"$admin_id\"" >/dev/null
 sleep 1
 admin_role="$(probe admin Admin)"; [[ "$admin_role" == *$'ACCESS_ROLE=Admin OPERATE=true ADMIN=true\nACCESS_PASS'* ]] || fail "admin role discovery failed"
+for _ in {1..30}; do [[ -f "$signal_file" ]] && break || sleep 1; done
+[[ -f "$signal_file" ]] || fail "persistent client did not signal disconnect"
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$operator_id\"" false >/dev/null
-for _ in {1..30}; do awk '/ACCESS_ROLE=Viewer OPERATE=false ADMIN=false/{count++} END{exit !(count >= 2)}' "$watch_file" && break || sleep 1; done
-awk '/ACCESS_ROLE=Viewer OPERATE=false ADMIN=false/{count++} END{exit !(count >= 2)}' "$watch_file" || fail "operator revocation did not refresh"
+touch "$resume_file"
+for _ in {1..30}; do awk '/ACCESS_ROLE=Viewer OPERATE=false ADMIN=false/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
+awk '/ACCESS_ROLE=Viewer OPERATE=false ADMIN=false/{found=1} END{exit !found}' "$watch_file" || fail "revoked role was not restored as Viewer after reconnect"
 wait "$watch_pid"
 printf 'PASS: isolated access role/grant/revocation integration coverage\n'

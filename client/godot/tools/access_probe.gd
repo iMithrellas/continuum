@@ -11,6 +11,11 @@ var expected_role := ""
 var expected_sequence: PackedStringArray
 var sequence_index := 0
 var hold := false
+var disconnect_after := ""
+var signal_file := ""
+var resume_file := ""
+var waiting_reconnect := false
+var allow_unknown := false
 
 func _initialize() -> void:
 	client = ContinuumModuleClient.new()
@@ -26,12 +31,19 @@ func _initialize() -> void:
 	var sequence := _option("--sequence", "")
 	if not sequence.is_empty():
 		expected_sequence = sequence.split(",")
+	disconnect_after = _option("--disconnect-after", "")
+	signal_file = _option("--signal-file", "")
+	resume_file = _option("--resume-file", "")
 
 func _process(delta: float) -> bool:
 	elapsed += delta
 	if elapsed > TIMEOUT:
 		_fail("role discovery timed out")
 		return true
+	if waiting_reconnect and FileAccess.file_exists(resume_file):
+		DirAccess.remove_absolute(resume_file)
+		waiting_reconnect = false
+		client.reconnect_db()
 	if not connected and not _started:
 		_started = true
 		_connect()
@@ -50,6 +62,8 @@ func _connect() -> void:
 
 func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) -> void:
 	if role_name == ContinuumAccess.ROLE_UNKNOWN:
+		if allow_unknown:
+			return
 		_fail("authorization became Unknown")
 		return
 	var expected := expected_role
@@ -63,6 +77,15 @@ func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) ->
 		return
 	print("ACCESS_ROLE=%s OPERATE=%s ADMIN=%s" % [role_name, can_operate, is_admin])
 	sequence_index += 1
+	if role_name == disconnect_after:
+		allow_unknown = true
+		waiting_reconnect = true
+		client.disconnect_db()
+		var signal_handle := FileAccess.open(signal_file, FileAccess.WRITE)
+		if signal_handle:
+			signal_handle.store_string("disconnected")
+			signal_handle.close()
+		return
 	if not hold or (not expected_sequence.is_empty() and sequence_index == expected_sequence.size()):
 		print("ACCESS_PASS")
 		quit(0)

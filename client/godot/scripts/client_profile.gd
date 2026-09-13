@@ -8,4 +8,8 @@ static func token_path(profile: String, host: String, database: String) -> Strin
 	if profile != NORMAL and profile != ADMIN:
 		push_error("unknown Continuum client profile: %s" % profile)
 		return "user://continuum_invalid_profile.token"
-	return "user://continuum_%s_identity_%s.token" % [profile, (host.trim_suffix("/") + "/" + database.to_lower()).md5_text()]
+	var key := (host + "/" + database).md5_text()
+	if profile == NORMAL:
+		# Preserve the existing main-client identity without migration or copying.
+		return "user://continuum_identity_%s.token" % key
+	return "user://continuum_admin_identity_%s.token" % key

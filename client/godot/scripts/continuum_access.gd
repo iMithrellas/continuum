@@ -48,6 +48,7 @@ func _on_connected(_identity: PackedByteArray, _token: String) -> void:
 func _subscribe() -> void:
 	if _subscription and not _subscription.ended:
 		return
+	_client.get_local_database().clear_role_view()
 	_subscription = _client.subscribe(PackedStringArray(["SELECT * FROM my_role"]))
 	_subscription.applied.connect(_on_view_applied)
 	_subscription.end.connect(_on_view_ended)
