@@ -89,6 +89,8 @@ var _reconnect_timer: SceneTreeTimer
 var _closing := false
 var _history: SessionHistory
 var _history_chart: HistoryChart
+var _build_help: Label
+var _orders_help: Label
 var _role_name := "Unknown"
 var _can_operate := false
 var _is_admin := false
@@ -147,7 +149,7 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_can_operate = can_operate and _role_name != "Unknown"
 	if lost_operator and map.interaction_mode == &"build":
 		map.set_interaction_mode(&"select")
-		_intent_feedback.text = "Build cancelled: operator permission was lost."
+		_set_feedback(_intent_feedback, "Build cancelled", "Build cancelled: operator permission was lost.")
 		_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	_refresh_permissions()
 	_refresh_controls()
@@ -186,20 +188,20 @@ func _process(delta: float) -> void:
 		_intent_seconds -= delta
 		if _intent_seconds <= 0.0:
 			_intent_request = null
-			_intent_feedback.text = "%s: no response. Outcome unknown; check server state before retrying." % _intent_name
+			_set_feedback(_intent_feedback, "No response", "%s: no response. Outcome unknown; check server state before retrying." % _intent_name)
 			_dirty = true
 	if _haul_request != null:
 		_haul_request_seconds -= delta
 		if _haul_request_seconds <= 0.0:
 			_haul_request = null
-			_haul_feedback.text = "No response received. Outcome unknown; check the server mode before retrying."
+			_set_feedback(_haul_feedback, "No response", "No response received. Outcome unknown; check the server mode before retrying.")
 			_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 			_dirty = true
 	if _meal_request != null:
 		_meal_request_seconds -= delta
 		if _meal_request_seconds <= 0.0:
 			_meal_request = null
-			_meal_feedback.text = "No response received. Outcome unknown; check the server meal policy before retrying."
+			_set_feedback(_meal_feedback, "No response", "No response received. Outcome unknown; check the server meal policy before retrying.")
 			_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 			_dirty = true
 	_refresh_timer -= delta
@@ -259,14 +261,14 @@ func _schedule_reconnect() -> void:
 	_state_ready = false
 	if _intent_request != null:
 		_intent_request = null
-		_intent_feedback.text = "%s: connection lost; outcome unknown. Waiting for server state." % _intent_name
+		_set_feedback(_intent_feedback, "Connection lost", "%s: connection lost; outcome unknown. Waiting for server state." % _intent_name)
 	if _haul_request != null:
 		_haul_request = null
-		_haul_feedback.text = "Connection lost. Hauling request outcome unknown; waiting for server state."
+		_set_feedback(_haul_feedback, "Connection lost", "Connection lost. Hauling request outcome unknown; waiting for server state.")
 		_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if _meal_request != null:
 		_meal_request = null
-		_meal_feedback.text = "Connection lost. Meal policy outcome unknown; waiting for server state."
+		_set_feedback(_meal_feedback, "Connection lost", "Connection lost. Meal policy outcome unknown; waiting for server state.")
 		_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	_dirty = true
 	if _closing or _reconnect_timer != null:
@@ -323,10 +325,10 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 	map.set_selected_rect(rect)
 	_refresh_controls()
 	if not _can_operate:
-		_intent_feedback.text = "Build blocked: operator permission is not available."
+		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: operator permission is not available.")
 		return
 	if not can_send_map_intent(_state_ready, _intent_request != null):
-		_intent_feedback.text = "Build blocked: waiting for subscription or another request."
+		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: waiting for subscription or another request.")
 		return
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	var occupied := 0
@@ -335,17 +337,17 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 			occupied += 1
 	var cost := rect.size.x * rect.size.y * 20.0
 	if occupied > 0:
-		_intent_feedback.text = "Build rejected locally: %d cell(s) already occupied." % occupied
+		_set_feedback(_intent_feedback, "Build rejected", "Build rejected locally: %d cell(s) already occupied." % occupied)
 		return
 	if colony == null or colony.wood < cost:
-		_intent_feedback.text = "Build unavailable: needs %.0f wood (stored %.1f)." % [cost, 0.0 if colony == null else colony.wood]
+		_set_feedback(_intent_feedback, "Build unavailable", "Build unavailable: needs %.0f wood (stored %.1f)." % [cost, 0.0 if colony == null else colony.wood])
 		return
 	_dispatch_build_block(rect, ContinuumTileKind.create(_build_menu.get_selected_id()))
 
 
 func _dispatch_build_block(rect: Rect2i, kind: ContinuumTileKind) -> void:
 	if not _can_operate:
-		_intent_feedback.text = "Build blocked: operator permission is not available."
+		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: operator permission is not available.")
 		return
 	if map_intent_override.is_valid():
 		map_intent_override.call("build_tile_block", [rect.position.x, rect.position.y,
@@ -362,15 +364,15 @@ static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
 
 func _set_mode(mode: StringName) -> void:
 	if mode == &"build" and not _can_operate:
-		_intent_feedback.text = "Build mode requires operator permission."
+		_set_feedback(_intent_feedback, "Operator permission required", "Build mode requires operator permission.")
 		return
 	map.set_interaction_mode(mode)
 	for key: StringName in _mode_buttons:
 		_mode_buttons[key].set_pressed_no_signal(key == mode)
 	if mode == &"build":
-		_intent_feedback.text = "Build mode: choose a type, then drag a rectangle on empty ground. Esc/right-click cancels."
+		_set_feedback(_intent_feedback, "Build: drag rectangle", "Choose a type, then drag a rectangle on empty ground. Esc/right-click cancels.")
 	else:
-		_intent_feedback.text = "Select mode: drag a rectangle to control the whole block."
+		_set_feedback(_intent_feedback, "Select: drag rectangle", "Drag a rectangle to control the whole block.")
 
 
 func _recreation_tiles() -> Array[ContinuumTile]:
@@ -405,13 +407,13 @@ func _change_speed(speed: float) -> void:
 func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 	_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if call.error != OK:
-		_intent_feedback.text = "%s could not be sent (%d)." % [description, call.error]
+		_set_feedback(_intent_feedback, "Send failed", "%s could not be sent (%d)." % [description, call.error])
 		_refresh_controls()
 		return
 	_intent_request = call
 	_intent_name = description
 	_intent_seconds = 10.0
-	_intent_feedback.text = "%s: pending. Displayed values follow the server." % description
+	_set_feedback(_intent_feedback, "Pending", "%s: pending. Displayed values follow the server." % description)
 	call.response.connect(func(response: ReducerResultMessage) -> void:
 		if _intent_request != call:
 			return
@@ -419,11 +421,11 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 		_dirty = true
 		_intent_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
 		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-			_intent_feedback.text = "%s rejected: %s" % [description, response.reducer_result.get_err()]
+			_set_feedback(_intent_feedback, "Rejected", "%s rejected: %s" % [description, response.reducer_result.get_err()])
 		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-			_intent_feedback.text = "%s failed: %s" % [description, response.reducer_result.get_internal_error()]
+			_set_feedback(_intent_feedback, "Failed", "%s failed: %s" % [description, response.reducer_result.get_internal_error()])
 		else:
-			_intent_feedback.text = "%s accepted. Values follow server state." % description
+			_set_feedback(_intent_feedback, "Accepted", "%s accepted. Values follow server state." % description)
 			_intent_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
 	, CONNECT_ONE_SHOT)
 	_refresh_controls()
@@ -447,11 +449,11 @@ func _toggle_haul_policy() -> void:
 	var call := SpacetimeDB.Continuum.reducers.set_haul_policy(policy)
 	_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if call.error != OK:
-		_haul_feedback.text = "Hauling mode could not be sent (%d)." % call.error
+		_set_feedback(_haul_feedback, "Send failed", "Hauling mode could not be sent (%d)." % call.error)
 		return
 	_haul_request = call
 	_haul_request_seconds = 10.0
-	_haul_feedback.text = "Request sent. Waiting for the server; displayed mode is not changed locally."
+	_set_feedback(_haul_feedback, "Pending", "Request sent. Waiting for the server; displayed mode is not changed locally.")
 	call.response.connect(_on_haul_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
 	_dirty = true
 	_haul_button.disabled = true
@@ -464,11 +466,11 @@ func _on_haul_policy_response(response: ReducerResultMessage, request_id: int) -
 	_dirty = true
 	_haul_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_haul_feedback.text = "Hauling mode rejected: %s" % response.reducer_result.get_err()
+		_set_feedback(_haul_feedback, "Rejected", "Hauling mode rejected: %s" % response.reducer_result.get_err())
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_haul_feedback.text = "Hauling mode failed: %s" % response.reducer_result.get_internal_error()
+		_set_feedback(_haul_feedback, "Failed", "Hauling mode failed: %s" % response.reducer_result.get_internal_error())
 	else:
-		_haul_feedback.text = "Request accepted. The mode above follows server state."
+		_set_feedback(_haul_feedback, "Accepted", "Request accepted. The mode above follows server state.")
 		_haul_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
 
 
@@ -484,12 +486,12 @@ func _set_meal_policy(policy: int) -> void:
 	var call := SpacetimeDB.Continuum.reducers.set_meal_policy(ContinuumMealPolicy.create(policy))
 	_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if call.error != OK:
-		_meal_feedback.text = "Meal policy could not be sent (%d)." % call.error
+		_set_feedback(_meal_feedback, "Send failed", "Meal policy could not be sent (%d)." % call.error)
 		_refresh_controls()
 		return
 	_meal_request = call
 	_meal_request_seconds = 10.0
-	_meal_feedback.text = "Request sent. Waiting for the server; displayed policy is not changed locally."
+	_set_feedback(_meal_feedback, "Pending", "Request sent. Waiting for the server; displayed policy is not changed locally.")
 	call.response.connect(_on_meal_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
 	_dirty = true
 	_refresh_controls()
@@ -502,11 +504,11 @@ func _on_meal_policy_response(response: ReducerResultMessage, request_id: int) -
 	_dirty = true
 	_meal_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_meal_feedback.text = "Meal policy rejected: %s" % response.reducer_result.get_err()
+		_set_feedback(_meal_feedback, "Rejected", "Meal policy rejected: %s" % response.reducer_result.get_err())
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_meal_feedback.text = "Meal policy failed: %s" % response.reducer_result.get_internal_error()
+		_set_feedback(_meal_feedback, "Failed", "Meal policy failed: %s" % response.reducer_result.get_internal_error())
 	else:
-		_meal_feedback.text = "Request accepted. The policy above follows server state."
+		_set_feedback(_meal_feedback, "Accepted", "Request accepted. The policy above follows server state.")
 		_meal_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
 
 
@@ -547,10 +549,10 @@ func _build_side_panel() -> void:
 	side = section
 	side.add_child(_heading("Global hauling mode"))
 	_haul_button = Button.new()
-	_haul_button.custom_minimum_size.y = 52
 	_haul_button.text = "Waiting for hauling policy..."
 	_haul_button.disabled = true
 	_haul_button.add_theme_font_size_override("font_size", 15)
+	_haul_button.tooltip_text = "Toggle hauling assignment. Server state remains authoritative."
 	_haul_button.pressed.connect(_toggle_haul_policy)
 	side.add_child(_haul_button)
 	_haul_description = Label.new()
@@ -595,7 +597,8 @@ func _build_side_panel() -> void:
 	side = section
 	side.add_child(_heading("Session history"))
 	var history_note := Label.new()
-	history_note.text = "This session / since connection. Not saved on the server."
+	history_note.text = "Session history"
+	history_note.tooltip_text = "This session / since connection. Not saved on the server."
 	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	history_note.add_theme_font_size_override("font_size", 11)
 	history_note.add_theme_color_override("font_color", Color("7f8b9c"))
@@ -641,11 +644,12 @@ func _build_side_panel() -> void:
 	_build_menu.item_selected.connect(func(index: int) -> void:
 		map.set_build_kind(_build_menu.get_item_id(index)))
 	side.add_child(_build_menu)
-	var tool_note := Label.new()
-	tool_note.text = "Farm / Forestry / Mine / Storage / Dining / Sleep / Recreation\n20 wood per cell. Forestry creates a Forest work zone; natural forest cover is a separate terrain layer."
-	tool_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tool_note.add_theme_font_size_override("font_size", 11)
-	side.add_child(tool_note)
+	_build_help = Label.new()
+	_build_help.text = "7 types | 20 wood/cell"
+	_build_help.tooltip_text = "Farm, Forestry, Mine, Storage, Dining, Sleep, Recreation. Forestry creates a Forest work zone; natural forest cover is separate terrain."
+	_build_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_build_help.add_theme_font_size_override("font_size", 11)
+	side.add_child(_build_help)
 	_block_box = VBoxContainer.new()
 	_block_info = Label.new()
 	_block_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -695,11 +699,10 @@ func _build_side_panel() -> void:
 	_order_summary = Label.new()
 	_order_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_order_summary)
-	var explanation := Label.new()
-	explanation.text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
-	explanation.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	explanation.add_theme_font_size_override("font_size", 11)
-	side.add_child(explanation)
+	_orders_help = Label.new()
+	_orders_help.text = "Orders: priority + distance"
+	_orders_help.tooltip_text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
+	side.add_child(_orders_help)
 	_intent_feedback = Label.new()
 	_intent_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_intent_feedback.add_theme_font_size_override("font_size", 11)
@@ -800,11 +803,21 @@ func _set_connection_text(text: String, colour: Color) -> void:
 	_render_connection_role()
 
 
+func _set_feedback(label: Label, compact: String, details: String) -> void:
+	label.text = compact
+	label.tooltip_text = details
+
+
+func _compact_text(text: String, limit: int) -> String:
+	return text if text.length() <= limit else text.substr(0, maxi(1, limit - 3)) + "..."
+
+
 func _render_connection_role() -> void:
 	if _connection_label == null:
 		return
-	_connection_label.text = "%s\nRole: %s%s" % [_connection_message, _role_name,
+	_connection_label.text = "%s\nRole: %s%s" % [_compact_text(_connection_message, 48), _role_name,
 		" (admin)" if _is_admin else (" (operator)" if _can_operate else " (view only)")]
+	_connection_label.tooltip_text = "%s\nRole: %s" % [_connection_message, _role_name]
 	_connection_label.add_theme_color_override("font_color", _connection_colour)
 
 
@@ -814,6 +827,7 @@ func _refresh() -> void:
 	_refresh_controls()
 	_refresh_alerts()
 	_refresh_feed()
+	sidebar._apply_responsive_theme()
 
 
 func _refresh_status() -> void:
@@ -831,12 +845,12 @@ func _refresh_status() -> void:
 	_status_label.text = "\n".join([
 		"[b]Day %d[/b]  %02d:%02d   [color=#7f8b9c](%.0fx speed)[/color]"
 				% [day, hour, minute, config.time_scale / BASE_TIME_SCALE],
-		"[b]Stored resources[/b]  [color=#7f8b9c]No storage limit[/color]",
+		"[b]Resources[/b]  [color=#7f8b9c]unlimited storage[/color]",
 		_resource_text(ContinuumResourceKind.Options.food, colony.food) + "    "
 				+ _resource_text(ContinuumResourceKind.Options.wood, colony.wood),
 		_resource_text(ContinuumResourceKind.Options.stone, colony.stone) + "    "
 				+ _resource_text(ContinuumResourceKind.Options.meat, colony.meat),
-		"[color=#7f8b9c]Ground piles and carried cargo are not stored yet.[/color]",
+		"[color=#7f8b9c]Ground / cargo tracked separately[/color]",
 		"Average mood: %s  [color=#7f8b9c](trend %.0f)[/color]" % [
 			_coloured("%.0f%%" % colony.avg_mood, colony.avg_mood), colony.smoothed_mood,
 		],
@@ -1051,7 +1065,8 @@ func _refresh_controls() -> void:
 			cover /= terrain_count
 			rect_text += "\nSoil avg: %s (fertility %.2f, moisture %.2f) | Cover avg: %s (density %.2f)" % [
 				_map_soil_name(fertility, moisture), fertility, moisture, _map_cover_name(cover), cover]
-	_block_info.text = rect_text
+	_block_info.text = rect_text.get_slice("\n", 0)
+	_block_info.tooltip_text = rect_text
 	var block_busy := busy or not _can_operate or _selected_rect.size == Vector2i.ZERO
 	for key: String in ["enabled_true", "enabled_false"]:
 		_block_controls[key].disabled = block_busy
@@ -1069,12 +1084,12 @@ func _refresh_controls() -> void:
 	_haul_button.disabled = not _can_operate or not _state_ready or config == null or _haul_request != null
 	if config != null:
 		var dedicated := config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers
-		_haul_button.text = ("PAIRED: producer + hauler\nSwitch to everyone producing + hauling" if dedicated
-				else "EVERYONE: produce + haul\nSwitch to producer + hauler pairs")
-		_haul_description.text = ("Each job's pair splits into one producer and one hauler. Haulers carry only their job's resource."
-				if dedicated else "All eight workers produce their job's resource and haul full stacks to storage.")
+		_haul_button.text = "Paired" if dedicated else "Everyone"
+		_haul_description.text = "Producer + hauler" if dedicated else "Produce + haul"
+		_haul_description.tooltip_text = ("Each job's pair splits into one producer and one hauler. Haulers carry only their job's resource."
+			if dedicated else "All workers produce their job's resource and haul full stacks to storage.")
 		if not _state_ready:
-			_haul_description.text += " (Last known state; reconnecting.)"
+			_haul_description.text += " | stale"
 	else:
 		_haul_button.text = "Waiting for hauling policy..."
 		_haul_description.text = ""
@@ -1086,10 +1101,11 @@ func _refresh_controls() -> void:
 		button.set_pressed_no_signal(config != null and config.meal_policy.value == policy)
 	if config != null:
 		var rationed := config.meal_policy.value == ContinuumMealPolicy.Options.rationed
-		_meal_description.text = ("Rationed: 50% food cost per eating time, 65% hunger recovery; higher hunger can lower mood and productivity." if rationed
+		_meal_description.text = "Cost 50% | recovery 65%" if rationed else "Normal cost | normal recovery"
+		_meal_description.tooltip_text = ("Rationed: 50% food cost per eating time, 65% hunger recovery; higher hunger can lower mood and productivity." if rationed
 				else "Normal: existing food cost and hunger recovery. No direct mood penalty either way.")
 		if not _state_ready:
-			_meal_description.text += " (Last known state; reconnecting.)"
+			_meal_description.text += " | stale"
 	else:
 		_meal_description.text = "Waiting for meal policy..."
 
@@ -1101,17 +1117,19 @@ func _refresh_controls() -> void:
 			break
 
 	if recreation.is_empty():
-		_recreation_button.text = "Recreation zone: unknown"
+		_recreation_button.text = "Recreation: unknown"
+		_recreation_button.tooltip_text = "No recreation tiles are currently subscribed."
 		_recreation_button.disabled = true
 	else:
 		_recreation_button.disabled = not _can_operate or not _state_ready
 		_recreation_button.text = ("Disable recreation zone" if any_enabled
 				else "Enable recreation zone")
 
-	_speed_label.text = "Waiting for config..." if config == null else (
-		"Server: paused" if config.time_scale == 0.0 else "Server: %.2fx (1x = 4h/day)" % (config.time_scale / BASE_TIME_SCALE))
+	_speed_label.text = "Config: waiting" if config == null else (
+		"Paused" if config.time_scale == 0.0 else "%.2fx" % (config.time_scale / BASE_TIME_SCALE))
+	_speed_label.tooltip_text = "Server simulation speed. 1x equals four real hours per in-game day."
 	if not _state_ready and config != null:
-		_speed_label.text += " (last known)"
+		_speed_label.text += " | stale"
 	for speed: int in _speed_buttons:
 		var speed_button: Button = _speed_buttons[speed]
 		speed_button.disabled = not _is_admin or busy or config == null
@@ -1129,25 +1147,29 @@ func _refresh_controls() -> void:
 			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
 		var work_name := ContinuumWorkType.parse_enum_name(work).capitalize()
 		counts.append("%s %d" % [work_name, active_counts.get(work, 0)])
-	_order_summary.text = "Enabled orders%s: %s" % [" (last known)" if not _state_ready else "", ", ".join(counts)]
+	_order_summary.text = "Orders: %s%s" % [", ".join(counts), " | stale" if not _state_ready else ""]
+	_order_summary.tooltip_text = "Enabled standing orders by work type. Values come from subscribed server rows."
 	if tile == null:
 		_tile_info.text = "Click a tile on the map to select it."
+		_tile_info.tooltip_text = "Select a tile or drag a rectangle on the map."
 		return
 
-	_tile_info.text = "Selected: %s tile #%d at (%d, %d) - %s" % [
+	var tile_details := "Selected: %s tile #%d at (%d, %d) - %s" % [
 		ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.id, tile.x, tile.y,
 		"enabled" if tile.enabled else "disabled",
 	]
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
 		if stack.x == tile.x and stack.y == tile.y:
-			_tile_info.text += "\nGround: %.1f %s" % [stack.amount,
+			tile_details += "\nGround: %.1f %s" % [stack.amount,
 				ContinuumResourceKind.parse_enum_name(stack.kind.value)]
 	if tile.kind.value == ContinuumTileKind.Options.storage:
-		_tile_info.text += "\nStorage tiles share the colony's unlimited stored totals; stocks are not per tile."
+		tile_details += "\nStorage: shared unlimited stock"
 	if not compatible.is_empty() and not tile.enabled:
-		_tile_info.text += "\nTile disabled: enabled orders cannot produce here."
+		tile_details += "\nProduction: disabled"
 	if not _state_ready:
-		_tile_info.text += "\nLast known state; waiting for subscription."
+		tile_details += "\nState: stale"
+	_tile_info.text = tile_details.get_slice("\n", 0)
+	_tile_info.tooltip_text = tile_details
 
 
 func _refresh_alerts() -> void:
@@ -1172,7 +1194,8 @@ func _refresh_alerts() -> void:
 		var row := HBoxContainer.new()
 
 		var label := Label.new()
-		label.text = alert.message + ("  (acknowledged)" if alert.acknowledged else "")
+		label.text = _compact_text(alert.message, 56) + ("  [ack]" if alert.acknowledged else "")
+		label.tooltip_text = alert.message + (" (acknowledged)" if alert.acknowledged else "")
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.add_theme_font_size_override("font_size", 11)
 		label.add_theme_color_override("font_color", _severity_colour(alert.severity))
@@ -1204,9 +1227,12 @@ func _refresh_feed() -> void:
 		events = events.slice(events.size() - MAX_FEED_LINES)
 
 	var lines := PackedStringArray()
+	var details := PackedStringArray()
 	for event: ContinuumEventLog in events:
+		details.append("d%d %02d:%02d %s" % [event.day, event.hour, event.minute, event.message])
 		lines.append("[color=#5c6675]d%d %02d:%02d[/color] [color=%s]%s[/color]" % [
 			event.day, event.hour, event.minute,
-			_severity_colour(event.severity).to_html(false), event.message,
+			_severity_colour(event.severity).to_html(false), _compact_text(event.message, 72),
 		])
 	_feed.text = "\n".join(lines)
+	_feed.tooltip_text = "\n".join(details)

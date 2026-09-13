@@ -3,7 +3,11 @@ class_name ContinuumSidebar
 extends PanelContainer
 
 signal filter_changed(query: String)
+signal width_changed(width: float)
 
+const MIN_WIDTH := 300.0
+const MAX_WIDTH := 560.0
+const MAP_MIN_WIDTH := 280.0
 const OPEN_WIDTH := 430.0
 const CLOSED_WIDTH := 48.0
 
@@ -20,10 +24,18 @@ var section_order: Array[String] = []
 var _collapsed := false
 var _pre_search_expanded: Dictionary = {}
 var _no_matches: Label
+var _splitter: Control
+var _dragging_splitter := false
+var _preferred_width := 430.0
+var _last_viewport_width := -1.0
+var _font_size := 13
+var _button_height := 40.0
+var _spacing := 8
+var _padding := 10
 
 
 func setup() -> void:
-	custom_minimum_size.x = OPEN_WIDTH
+	set_sidebar_width(_preferred_width)
 	var margin := MarginContainer.new()
 	margin.name = "Margin"
 	margin.add_theme_constant_override("margin_left", 12)
@@ -32,7 +44,7 @@ func setup() -> void:
 	margin.add_theme_constant_override("margin_bottom", 10)
 	add_child(margin)
 	_body = VBoxContainer.new()
-	_body.add_theme_constant_override("separation", 8)
+	_body.add_theme_constant_override("separation", _spacing)
 	margin.add_child(_body)
 	var header := HBoxContainer.new()
 	_body.add_child(header)
@@ -47,6 +59,22 @@ func setup() -> void:
 	toggle_button.custom_minimum_size = Vector2(40, 40)
 	toggle_button.pressed.connect(toggle)
 	header.add_child(toggle_button)
+	_splitter = Control.new()
+	_splitter.name = "WidthGrip"
+	_splitter.custom_minimum_size = Vector2(36, 40)
+	_splitter.mouse_default_cursor_shape = Control.CURSOR_HSIZE
+	_splitter.tooltip_text = "Drag to resize sidebar"
+	_splitter.mouse_filter = Control.MOUSE_FILTER_STOP
+	_splitter.gui_input.connect(_on_splitter_input)
+	var grip := Label.new()
+	grip.text = "|||"
+	grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	grip.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	grip.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	grip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grip.tooltip_text = "Drag to resize sidebar"
+	_splitter.add_child(grip)
+	header.add_child(_splitter)
 	_search_row = HBoxContainer.new()
 	_body.add_child(_search_row)
 	search = LineEdit.new()
@@ -54,24 +82,22 @@ func setup() -> void:
 	search.tooltip_text = "Filter by section, label, or alias (Ctrl+F)"
 	search.clear_button_enabled = true
 	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	search.custom_minimum_size.y = 40
 	search.text_changed.connect(_on_search_changed)
 	_search_row.add_child(search)
 	clear_button = Button.new()
 	clear_button.text = "Clear"
 	clear_button.tooltip_text = "Clear search without changing pending actions"
-	clear_button.custom_minimum_size.y = 40
 	clear_button.pressed.connect(func() -> void: search.clear())
 	_search_row.add_child(clear_button)
 	_sections_scroll = ScrollContainer.new()
 	_sections_scroll.name = "Sections"
 	_sections_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_sections_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_sections_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
 	_body.add_child(_sections_scroll)
 	section_list = VBoxContainer.new()
 	section_list.name = "SectionList"
 	section_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	section_list.add_theme_constant_override("separation", 8)
+	section_list.add_theme_constant_override("separation", _spacing)
 	_sections_scroll.add_child(section_list)
 	_no_matches = Label.new()
 	_no_matches.text = "No matching sidebar controls."
@@ -88,7 +114,6 @@ func add_section(key: String, label_text: String, aliases: PackedStringArray = [
 	var header := Button.new()
 	header.text = "v  " + label_text
 	header.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	header.custom_minimum_size.y = 40
 	header.tooltip_text = "Expand or collapse %s" % label_text
 	header.pressed.connect(_toggle_section.bind(key))
 	_apply_button_style(header)
@@ -96,7 +121,7 @@ func add_section(key: String, label_text: String, aliases: PackedStringArray = [
 	var content := VBoxContainer.new()
 	content.name = "Content"
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	content.add_theme_constant_override("separation", 6)
+	content.add_theme_constant_override("separation", _spacing - 2)
 	wrapper.add_child(content)
 	list.add_child(wrapper)
 	sections[key] = {"label": label_text, "aliases": aliases, "wrapper": wrapper,
@@ -176,13 +201,72 @@ func _matches(query: String, label_text: String, aliases: PackedStringArray) -> 
 
 func toggle() -> void:
 	_collapsed = not _collapsed
-	custom_minimum_size.x = CLOSED_WIDTH if _collapsed else OPEN_WIDTH
+	custom_minimum_size.x = CLOSED_WIDTH if _collapsed else _preferred_width
 	_header_title.visible = not _collapsed
 	_search_row.visible = not _collapsed
 	_sections_scroll.visible = not _collapsed
 	toggle_button.text = ">" if _collapsed else "<"
 	toggle_button.tooltip_text = "Reopen sidebar" if _collapsed else "Collapse sidebar (Ctrl+\\)"
 	queue_redraw()
+
+
+func set_sidebar_width(width: float) -> void:
+	var viewport_width := get_viewport_rect().size.x
+	var available := maxf(140.0, viewport_width - MAP_MIN_WIDTH)
+	var maximum := minf(MAX_WIDTH, available)
+	var minimum := minf(MIN_WIDTH, maximum)
+	_preferred_width = clampf(width, minimum, maximum)
+	if not _collapsed:
+		custom_minimum_size.x = _preferred_width
+	_apply_responsive_theme()
+	width_changed.emit(_preferred_width)
+
+
+func _on_splitter_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_dragging_splitter = event.pressed
+		if event.pressed:
+			get_viewport().set_input_as_handled()
+	elif event is InputEventMouseMotion and _dragging_splitter:
+		set_sidebar_width(get_global_mouse_position().x - global_position.x)
+		get_viewport().set_input_as_handled()
+
+
+func _process(_delta: float) -> void:
+	var viewport_width := get_viewport_rect().size.x
+	if not is_equal_approx(viewport_width, _last_viewport_width):
+		_last_viewport_width = viewport_width
+		set_sidebar_width(_preferred_width)
+
+
+func _apply_responsive_theme() -> void:
+	var scale := clampf(inverse_lerp(MIN_WIDTH, MAX_WIDTH, _preferred_width), 0.0, 1.0)
+	_font_size = int(round(lerpf(11.0, 15.0, scale)))
+	_button_height = lerpf(36.0, 48.0, scale)
+	_spacing = int(round(lerpf(4.0, 10.0, scale)))
+	_padding = int(round(lerpf(8.0, 14.0, scale)))
+	if not is_instance_valid(_body):
+		return
+	_body.add_theme_constant_override("separation", _spacing)
+	var margin: MarginContainer = get_node("Margin")
+	margin.add_theme_constant_override("margin_left", _padding)
+	margin.add_theme_constant_override("margin_top", _padding)
+	margin.add_theme_constant_override("margin_right", _padding)
+	margin.add_theme_constant_override("margin_bottom", _padding)
+	section_list.add_theme_constant_override("separation", _spacing)
+	for section: Dictionary in sections.values():
+		section.content.add_theme_constant_override("separation", maxi(2, _spacing - 2))
+	_apply_control_theme(self)
+
+
+func _apply_control_theme(node: Node) -> void:
+	for child: Node in node.get_children():
+		if child is Control:
+			var control := child as Control
+			control.add_theme_font_size_override("font_size", _font_size)
+			if control is Button or control is LineEdit:
+				control.custom_minimum_size.y = _button_height
+		_apply_control_theme(child)
 
 
 func _apply_button_style(button: Button) -> void:

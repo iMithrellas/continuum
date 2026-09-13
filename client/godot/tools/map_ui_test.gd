@@ -148,6 +148,41 @@ func _test_sidebar_surface(main: Control) -> void:
 		"sidebar collapses to a reachable narrow rail")
 	main.sidebar.toggle()
 	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.OPEN_WIDTH, "sidebar reopens")
+	main.sidebar.set_sidebar_width(320.0)
+	var narrow_font: int = main.sidebar._font_size
+	var narrow_button: float = main.sidebar._button_height
+	var narrow_padding: int = main.sidebar._padding
+	main.sidebar.set_sidebar_width(430.0)
+	var middle_font: int = main.sidebar._font_size
+	main.sidebar.set_sidebar_width(550.0)
+	_assert(main.sidebar._font_size > middle_font and middle_font > narrow_font,
+		"sidebar font scale follows width")
+	_assert(main.sidebar._button_height > narrow_button, "sidebar button scale follows width")
+	_assert(main.sidebar._padding > narrow_padding, "sidebar padding scale follows width")
+	_assert(not main._build_help.text.contains("\n") and not main._orders_help.text.contains("\n"),
+		"help surfaces use compact labels rather than text blocks")
+	_assert(not main._build_help.tooltip_text.is_empty() and not main._orders_help.tooltip_text.is_empty(),
+		"compact help labels retain hover details")
+	main._set_feedback(main._intent_feedback, "Failed", "Full reducer error detail")
+	_assert(main._intent_feedback.text == "Failed" and main._intent_feedback.tooltip_text == "Full reducer error detail",
+		"error status stays concise while retaining details")
+	main.sidebar.toggle()
+	var preferred_width: float = main.sidebar._preferred_width
+	main.sidebar.toggle()
+	_assert(is_equal_approx(main.sidebar._preferred_width, preferred_width),
+		"collapse preserves preferred width")
+	main.sidebar.set_sidebar_width(9999.0)
+	_assert(main.sidebar.custom_minimum_size.x <= get_viewport().get_visible_rect().size.x - main.sidebar.MAP_MIN_WIDTH,
+		"sidebar width clamps while retaining map space")
+	var press := InputEventMouseButton.new()
+	press.button_index = MOUSE_BUTTON_LEFT
+	press.pressed = true
+	main.sidebar._on_splitter_input(press)
+	_assert(main.sidebar._dragging_splitter, "splitter grip starts a resize")
+	press.pressed = false
+	main.sidebar._on_splitter_input(press)
+	_assert(not main.sidebar._dragging_splitter and not main.map._dragging,
+		"splitter release does not arm map painting")
 	main._set_permissions("viewer", false, false)
 	_assert(not main.sidebar.sections["policies"].wrapper.visible and
 			not main.sidebar.sections["administration"].wrapper.visible,
