@@ -39,8 +39,7 @@ an admin to authorize the temporary smoke identity with `set_operator`, then
 run:
 
 ```sh
-just smoke -- \
-  --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
+just smoke --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
 ```
 
 Omit `--expected-speed-cooldown` to exercise the missing-row compatibility path.

@@ -248,7 +248,7 @@ is required.
 Observe the live colony in a terminal:
 
 ```bash
-just watch -- --seconds=120
+just watch --seconds=120
 ```
 
 The watcher reports stored totals without capacity denominators, ground totals
@@ -315,7 +315,7 @@ Normal and admin client tokens use separate `user://` profile paths. The normal
 client remains the default:
 
 ```bash
-just run -- --profile=normal
+just run --profile=normal
 ```
 
 On a local server, bootstrap the separate admin profile with the
@@ -338,10 +338,11 @@ requires the authorized persistent publisher identity; do not copy tokens or pas
 them into the client. After backend changes, publish the module and regenerate
 bindings before using an existing server:
 
-The pass-through `--` form shown for `run` and `watch` is intended to preserve user
-arguments; confirm exact argument-separator behavior with the implementation recipe
-before relying on additional flags. `--yes` prints the identity, never a token,
-rejects non-local publisher endpoints, and is only for an explicit local grant.
+`admin` and `admin-grant` accept the supported client-launch options; `--yes` only
+bypasses the confirmation prompt. It prints the identity, never a token, and still
+requires the authorized persistent publisher identity. A grant is allowed only when
+the target matches the configured `CONTINUUM_PUBLISHER_HOST`; a remote publisher
+may be used intentionally by setting that configuration to the same endpoint.
 
 After changing Rust tables, reducers, or types, publish and regenerate bindings:
 
@@ -387,6 +388,5 @@ Every Godot instance connects to the same `continuum` database by default. Run a
 second instance normally, or override the endpoint and database after `--`:
 
 ```bash
-just run -- \
-  --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
+just run --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
 ```
