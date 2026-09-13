@@ -46,11 +46,11 @@ publish-fresh: up
 # Regenerate Godot bindings from the published module schema.
 bindings: publish
     echo "==> importing Godot project"
-    {{godot}} --headless --path client/godot --import >/dev/null
+    {{quote(godot)}} --headless --path client/godot --import >/dev/null
     echo "==> generating bindings"
-    {{godot}} --headless --path client/godot --script res://tools/generate_bindings.gd
+    {{quote(godot)}} --headless --path client/godot --script res://tools/generate_bindings.gd
     echo "==> re-importing generated scripts"
-    {{godot}} --headless --path client/godot --import >/dev/null
+    {{quote(godot)}} --headless --path client/godot --import >/dev/null
     echo "==> done: client/godot/spacetime_bindings/"
 
 # Start SpacetimeDB, publish the Rust module, and generate client bindings.
@@ -58,15 +58,15 @@ setup: bindings
 
 # Run the Godot client against the local SpacetimeDB server.
 run *args: up
-    {{godot}} --path client/godot "$@"
+    {{quote(godot)}} --path client/godot -- "$@"
 
 # Run the headless Godot smoke test after publishing the current module.
-smoke: setup
-    {{godot}} --headless --path client/godot --script res://tools/smoke_test.gd
+smoke *args: setup
+    {{quote(godot)}} --headless --path client/godot --script res://tools/smoke_test.gd -- "$@"
 
 # Observe the live colony from a terminal for two minutes.
-watch: up
-    {{godot}} --headless --path client/godot --script res://tools/watch.gd -- --seconds=120
+watch *args: up
+    if (( $# == 0 )); then set -- --seconds=120; fi; {{quote(godot)}} --headless --path client/godot --script res://tools/watch.gd -- "$@"
 
 # Run the SpacetimeDB CLI inside the matching server container. Just escapes each
 # positional argument, preserving spaces and shell metacharacters.
@@ -77,7 +77,8 @@ stdb *args:
 logs:
     docker compose logs -f spacetimedb
 
-# Launch the admin-profile client. Pass client flags after `--`.
+# Launch the admin-profile client. Supported flags are --grant, --yes,
+# --stdb-host=URL, and --stdb-db=NAME.
 admin *args:
     scripts/internal/run-admin-client "$@"
 
