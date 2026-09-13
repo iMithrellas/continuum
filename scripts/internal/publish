@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Build the Rust module to WebAssembly and publish it into the running SpacetimeDB.
 #
-#   scripts/publish              # normal publish, keeps colony data
-#   scripts/publish --fresh      # wipe the database first (breaking schema changes)
+#   just publish              # normal publish, keeps colony data
+#   just publish-fresh        # wipe the database first (breaking schema changes)
 #
 # The wasm is built on the host (fast, uses your cargo cache) and handed to the
 # in-container CLI through the ./backend/spacetimedb bind mount, so no SpacetimeDB
 # install is needed on the host.
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 MODULE_DIR="backend/spacetimedb"
 WASM="target/wasm32-unknown-unknown/release/continuum_module.wasm"
@@ -52,4 +52,4 @@ stdb publish --yes "${EXTRA[@]}" -b "/project/$WASM" "$DATABASE"
 
 echo
 echo "==> done. If the schema changed, regenerate the Godot bindings:"
-echo "    scripts/generate-bindings"
+echo "    just bindings"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Private end-to-end authorization test against the production main scene.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="continuum-sidebar-access-it-${USER:-user}-$$"
 DB="continuum-sidebar-access-it-$$"
 DATA="${NAME}-data"
@@ -42,7 +42,7 @@ chmod +x "$PUBLISHER_WRAPPER"
 printf '%s\n' '#!/usr/bin/env bash' 'case "$*" in *res://scenes/admin_bootstrap.tscn*|*res://tools/access_probe.gd*) exec godot "$@";; esac' "printf '%s\\n' \"\$*\" >\"$LAUNCH_ARGS\"" >"$GODOT_WRAPPER"
 chmod +x "$GODOT_WRAPPER"
 CONTINUUM_STDB="$PUBLISHER_WRAPPER" CONTINUUM_PUBLISHER_HOST="$HOST" GODOT="$GODOT_WRAPPER" \
-    "$ROOT/scripts/run-admin-client" --grant --yes --stdb-host="$HOST" --stdb-db="$DB" >/dev/null
+    "$ROOT/scripts/internal/run-admin-client" --grant --yes --stdb-host="$HOST" --stdb-db="$DB" >/dev/null
 grep -q -- '--profile=admin' "$LAUNCH_ARGS"
 grep -q -- "--stdb-host=$HOST" "$LAUNCH_ARGS"
 grep -q -- "--stdb-db=$DB" "$LAUNCH_ARGS"

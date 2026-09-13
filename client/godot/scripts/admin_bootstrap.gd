@@ -1,4 +1,4 @@
-## Headless bootstrap used by scripts/run-admin-client.
+## Headless bootstrap used by the just admin recipes.
 ## It prints only the client identity, never the bearer token.
 extends Node
 
