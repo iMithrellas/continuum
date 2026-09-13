@@ -112,7 +112,7 @@ func _test_controller_surface() -> void:
 	_assert(main._tile_action_box.visible and main._tile_info != null, "one-cell inspection detail remains visible")
 	_assert(main._block_controls[ContinuumWorkType.Options.farming].row.visible,
 		"block work controls are not hidden by legacy refresh")
-	_test_sidebar_surface(main)
+	await _test_sidebar_surface(main)
 	if failed:
 		return
 	main._map_dirty = false
@@ -146,8 +146,15 @@ func _test_sidebar_surface(main: Control) -> void:
 	main.sidebar.toggle()
 	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.CLOSED_WIDTH,
 		"sidebar collapses to a reachable narrow rail")
+	_assert(not main.sidebar._splitter.visible, "collapsed rail hides the resize grip")
+	await get_tree().process_frame
+	_assert(main.sidebar.size.x <= main.sidebar.CLOSED_WIDTH + 12.0,
+		"collapsed container uses the narrow rail width")
 	main.sidebar.toggle()
 	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.OPEN_WIDTH, "sidebar reopens")
+	await get_tree().process_frame
+	_assert(main.sidebar.size.x >= main.sidebar.OPEN_WIDTH - 12.0,
+		"reopened container restores its open width")
 	main.sidebar.set_sidebar_width(320.0)
 	var narrow_font: int = main.sidebar._font_size
 	var narrow_button: float = main.sidebar._button_height
@@ -180,10 +187,23 @@ func _test_sidebar_surface(main: Control) -> void:
 	main.sidebar._on_splitter_input(press)
 	_assert(main.sidebar._dragging_splitter, "splitter grip starts a resize")
 	press.pressed = false
-	main.sidebar._on_splitter_input(press)
+	main.sidebar._input(press)
 	_assert(not main.sidebar._dragging_splitter and not main.map._dragging,
 		"splitter release does not arm map painting")
+	main._set_permissions("operator", true, false)
+	main.sidebar.search.text = "build"
+	main.sidebar.search.text_changed.emit("build")
 	main._set_permissions("viewer", false, false)
+	_assert(not main._mode_buttons[&"build"].visible and
+		not main._build_menu.visible and not main._block_box.visible,
+		"viewer search cannot resurrect unauthorized Build controls")
+	main.sidebar.search.text = "forest"
+	main.sidebar.search.text_changed.emit("forest")
+	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible and
+			not main._block_box.visible,
+		"viewer search cannot reveal unauthorized build aliases")
+	main.sidebar.search.clear()
+	main.sidebar.search.text_changed.emit("")
 	_assert(not main.sidebar.sections["policies"].wrapper.visible and
 			not main.sidebar.sections["administration"].wrapper.visible,
 		"viewer cannot discover unauthorized policy or admin sections")
@@ -200,6 +220,21 @@ func _test_sidebar_surface(main: Control) -> void:
 	main._set_mode(&"build")
 	main._set_permissions("viewer", false, false)
 	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
+	main._set_permissions("operator", true, false)
+	var ack_probe := Button.new()
+	ack_probe.text = "Ack"
+	main._alert_box.add_child(ack_probe)
+	_assert(ack_probe.is_inside_tree(), "operator alert rows are present before downgrade")
+	main._set_permissions("viewer", false, false)
+	await get_tree().process_frame
+	_assert(not is_instance_valid(ack_probe), "permission downgrade immediately rebuilds alert rows")
+	main._set_permissions("operator", true, false)
+	main._set_permissions("maintenance", true, false)
+	_assert(not main._can_operate and main._role_name == "Unknown",
+		"unknown role input fails closed")
+	main._set_permissions("admin", true, false)
+	_assert(not main._can_operate and not main._is_admin,
+		"inconsistent admin flags fail closed")
 	main._set_permissions("admin", true, true)
 	_assert(main.sidebar.sections["administration"].wrapper.visible and
 		main._speed_buttons[0].visible, "admin can see administration controls")

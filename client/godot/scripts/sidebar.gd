@@ -135,13 +135,23 @@ func register_entry(section_key: String, node: Control, label_text: String, alia
 	if not sections.has(section_key):
 		return
 	sections[section_key].entries.append({"node": node, "label": label_text, "aliases": aliases,
-			"visible": true})
+			"visible": true, "authorized": true})
+
+
+func set_entry_authorized(node: Control, authorized: bool) -> void:
+	for section: Dictionary in sections.values():
+		for entry: Dictionary in section.entries:
+			if entry.node == node:
+				entry.authorized = authorized
+				entry.node.visible = authorized
+	_refresh_filter()
 
 
 func set_section_authorized(section_key: String, authorized: bool) -> void:
 	if sections.has(section_key):
 		sections[section_key].authorized = authorized
 		sections[section_key].wrapper.visible = authorized
+	_refresh_filter()
 
 
 func _toggle_section(key: String) -> void:
@@ -163,7 +173,7 @@ func _on_search_changed(query: String) -> void:
 			section.content.visible = section.expanded
 			section.header.text = ("v  " if section.expanded else ">  ") + section.label
 			for entry: Dictionary in section.entries:
-				entry.node.visible = entry.visible
+				entry.node.visible = entry.visible and entry.authorized
 		_pre_search_expanded.clear()
 		_no_matches.visible = false
 		filter_changed.emit("")
@@ -174,9 +184,9 @@ func _on_search_changed(query: String) -> void:
 	for key: String in section_order:
 		var section: Dictionary = sections[key]
 		var section_match := _matches(normalized, section.label, section.aliases)
-		var any_match := section_match
+		var any_match := false
 		for entry: Dictionary in section.entries:
-			var matches := section_match or _matches(normalized, entry.label, entry.aliases)
+			var matches: bool = entry.authorized and (section_match or _matches(normalized, entry.label, entry.aliases))
 			entry.node.visible = entry.visible and matches
 			any_match = any_match or matches
 		section.wrapper.visible = section.authorized and any_match
@@ -188,6 +198,10 @@ func _on_search_changed(query: String) -> void:
 			_no_matches.visible = false
 			break
 	filter_changed.emit(normalized)
+
+
+func _refresh_filter() -> void:
+	_on_search_changed(search.text if is_instance_valid(search) else "")
 
 
 func _matches(query: String, label_text: String, aliases: PackedStringArray) -> bool:
@@ -205,6 +219,13 @@ func toggle() -> void:
 	_header_title.visible = not _collapsed
 	_search_row.visible = not _collapsed
 	_sections_scroll.visible = not _collapsed
+	_splitter.visible = not _collapsed
+	var margin: MarginContainer = get_node("Margin")
+	var rail_padding := 0 if _collapsed else _padding
+	margin.add_theme_constant_override("margin_left", rail_padding)
+	margin.add_theme_constant_override("margin_right", rail_padding)
+	margin.add_theme_constant_override("margin_top", rail_padding)
+	margin.add_theme_constant_override("margin_bottom", rail_padding)
 	toggle_button.text = ">" if _collapsed else "<"
 	toggle_button.tooltip_text = "Reopen sidebar" if _collapsed else "Collapse sidebar (Ctrl+\\)"
 	queue_redraw()
@@ -230,6 +251,16 @@ func _on_splitter_input(event: InputEvent) -> void:
 	elif event is InputEventMouseMotion and _dragging_splitter:
 		set_sidebar_width(get_global_mouse_position().x - global_position.x)
 		get_viewport().set_input_as_handled()
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed:
+		_dragging_splitter = false
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_dragging_splitter = false
 
 
 func _process(_delta: float) -> void:

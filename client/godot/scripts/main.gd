@@ -143,10 +143,19 @@ func _ready() -> void:
 ## and after disconnect, the UI remains fail-closed as Unknown/viewer. This slice
 ## is not live-admin ready until that provider is wired and its server tests exist.
 func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> void:
-	var lost_operator := _can_operate and not can_operate
-	_role_name = role_name if not role_name.is_empty() else "Unknown"
-	_is_admin = is_admin and can_operate
-	_can_operate = can_operate and _role_name != "Unknown"
+	var normalized_role := role_name.strip_edges().to_lower()
+	var valid_role := normalized_role in ["viewer", "operator", "admin"]
+	var role_can_operate := normalized_role in ["operator", "admin"]
+	var role_is_admin := normalized_role == "admin"
+	if not valid_role or can_operate != role_can_operate or is_admin != role_is_admin:
+		normalized_role = "unknown"
+	var old_can_operate := _can_operate
+	var old_is_admin := _is_admin
+	var old_role := _role_name
+	_role_name = normalized_role.capitalize()
+	_is_admin = role_is_admin and normalized_role != "unknown"
+	_can_operate = role_can_operate and normalized_role != "unknown"
+	var lost_operator := old_can_operate and not _can_operate
 	if lost_operator and map.interaction_mode == &"build":
 		map.set_interaction_mode(&"select")
 		_set_feedback(_intent_feedback, "Build cancelled", "Build cancelled: operator permission was lost.")
@@ -154,6 +163,9 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_refresh_permissions()
 	_refresh_controls()
 	_render_connection_role()
+	if old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name:
+		_refresh_alerts()
+		_dirty = true
 
 
 func _cli_option(option: String, fallback: String) -> String:
@@ -773,6 +785,13 @@ func _refresh_permissions() -> void:
 	# Unknown and disconnected are deliberately equivalent to viewer permissions.
 	sidebar.set_section_authorized("policies", _can_operate)
 	sidebar.set_section_authorized("administration", _is_admin)
+	_set_sidebar_entry_permission(_mode_buttons.get(&"select"), true)
+	_set_sidebar_entry_permission(_mode_buttons.get(&"build"), _can_operate)
+	_set_sidebar_entry_permission(_build_menu, _can_operate)
+	_set_sidebar_entry_permission(_block_box, _can_operate)
+	_set_sidebar_entry_permission(_haul_button, _can_operate)
+	_set_sidebar_entry_permission(_meal_buttons.get(ContinuumMealPolicy.Options.normal), _can_operate)
+	_set_sidebar_entry_permission(_speed_label, _is_admin)
 	if is_instance_valid(_mode_buttons.get(&"build")):
 		_mode_buttons[&"build"].visible = _can_operate
 	if is_instance_valid(_build_menu):
@@ -785,6 +804,11 @@ func _refresh_permissions() -> void:
 		_haul_button.visible = _can_operate
 	for button: Button in _meal_buttons.values():
 		button.visible = _can_operate
+
+
+func _set_sidebar_entry_permission(node: Control, authorized: bool) -> void:
+	if is_instance_valid(node):
+		sidebar.set_entry_authorized(node, authorized)
 
 
 func _heading(text: String) -> Label:
