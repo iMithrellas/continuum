@@ -17,6 +17,7 @@ var _client: ContinuumModuleClient
 var _subscription: SpacetimeDBSubscription
 var _view_applied := false
 var _stopped := false
+var _release_timer: SceneTreeTimer
 
 func _init(client: SpacetimeDBClient) -> void:
 	_client = client as ContinuumModuleClient
@@ -61,12 +62,12 @@ func _subscribe() -> void:
 
 func _on_disconnected() -> void:
 	_view_applied = false
-	_release_subscription()
+	_release_subscription(false)
 	_set_unknown()
 
 func _on_connection_error(_code: int, _reason: String) -> void:
 	_view_applied = false
-	_release_subscription()
+	_release_subscription(false)
 	_set_unknown()
 
 func _on_view_applied() -> void:
@@ -76,7 +77,10 @@ func _on_view_applied() -> void:
 func _on_view_ended() -> void:
 	_view_applied = false
 	_subscription = null
+	_release_timer = null
 	_set_unknown()
+	if _stopped:
+		_client = null
 
 func stop() -> void:
 	if _stopped:
@@ -84,22 +88,47 @@ func stop() -> void:
 	_stopped = true
 	_view_applied = false
 	_set_unknown()
+	if _client != null:
+		if _client.connected.is_connected(_on_connected):
+			_client.connected.disconnect(_on_connected)
+		if _client.disconnected.is_connected(_on_disconnected):
+			_client.disconnected.disconnect(_on_disconnected)
+		if _client.connection_error.is_connected(_on_connection_error):
+			_client.connection_error.disconnect(_on_connection_error)
+		if _client.row_inserted.is_connected(_on_role_row_change):
+			_client.row_inserted.disconnect(_on_role_row_change)
+		if _client.row_deleted.is_connected(_on_role_row_change):
+			_client.row_deleted.disconnect(_on_role_row_change)
+		if _client.row_updated.is_connected(_on_role_row_updated):
+			_client.row_updated.disconnect(_on_role_row_updated)
 	_release_subscription()
-	_client = null
+	if _subscription == null:
+		_client = null
 
-func _release_subscription() -> void:
+func _release_subscription(use_network: bool = true) -> void:
 	if _subscription == null:
 		return
 	var subscription := _subscription
-	if not subscription.ended and _client != null and _client.is_connected_db():
-		# Let the SDK receive unsubscribe-applied before it frees the handle.
+	if use_network and not subscription.ended and _client != null and _client.is_connected_db():
 		if subscription.unsubscribe() == OK:
+			# Do not retain a handle indefinitely if teardown loses the server ack.
+			_release_timer = _client.get_tree().create_timer(1.0)
+			_release_timer.timeout.connect(_force_release.bind(subscription), CONNECT_ONE_SHOT)
 			return
 	_subscription = null
 	if _client != null:
 		_client.discard_subscription(subscription)
 	else:
 		subscription.queue_free()
+
+func _force_release(subscription: SpacetimeDBSubscription) -> void:
+	if _subscription != subscription:
+		return
+	_subscription = null
+	_release_timer = null
+	if _client != null:
+		_client.discard_subscription(subscription)
+		_client = null
 
 func _on_role_row_updated(_table_name: String, _old_row: Resource, _new_row: Resource) -> void:
 	if _table_name != "my_role":

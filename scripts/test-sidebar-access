@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Private end-to-end authorization test against the production main scene.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+NAME="continuum-sidebar-access-it-${USER:-user}-$$"
+DB="continuum-sidebar-access-it-$$"
+DATA="${NAME}-data"
+CONFIG="${NAME}-config"
+CONTAINER="$NAME"
+NORMAL_LOG="$(mktemp)"
+ADMIN_LOG="$(mktemp)"
+IDENTITY_FILE="/tmp/${NAME}-identity"
+GRANTED_FILE="/tmp/${NAME}-granted"
+REVOKE_REQUEST_FILE="/tmp/${NAME}-revoke-request"
+REVOKED_FILE="/tmp/${NAME}-revoked"
+NORMAL_PID=""
+cleanup() {
+    [[ -z "$NORMAL_PID" ]] || kill "$NORMAL_PID" >/dev/null 2>&1 || true
+    rm -f "$NORMAL_LOG" "$ADMIN_LOG" "$IDENTITY_FILE" "$GRANTED_FILE" "$REVOKE_REQUEST_FILE" "$REVOKED_FILE"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+    docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+[[ "$NAME" == continuum-sidebar-access-it-* ]] || { printf 'refusing non-private resource name\n' >&2; exit 2; }
+
+cargo build --manifest-path "$ROOT/backend/spacetimedb/Cargo.toml" --release --target wasm32-unknown-unknown >/dev/null
+docker volume create "$DATA" >/dev/null
+docker volume create "$CONFIG" >/dev/null
+docker run --rm --user root --entrypoint sh -v "$DATA:/home/spacetime/.local/share/spacetime" -v "$CONFIG:/home/spacetime/.config/spacetime" clockworklabs/spacetime:v2.10.0 -c 'chown -R 1000:1000 /home/spacetime/.local/share/spacetime /home/spacetime/.config/spacetime'
+docker run -d --name "$CONTAINER" -p 127.0.0.1::3000 -v "$DATA:/home/spacetime/.local/share/spacetime" -v "$CONFIG:/home/spacetime/.config/spacetime" -v "$ROOT/backend/spacetimedb:/project:ro" clockworklabs/spacetime:v2.10.0 start --listen-addr 0.0.0.0:3000 >/dev/null
+for _ in {1..30}; do docker exec "$CONTAINER" spacetime server ping local >/dev/null 2>&1 && break || sleep 1; done
+PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
+HOST="http://127.0.0.1:$PORT"
+docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
+docker exec "$CONTAINER" spacetime publish --yes --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
+
+timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=normal \
+    --identity-file="$IDENTITY_FILE" --operator-granted-file="$GRANTED_FILE" \
+    --revoke-request-file="$REVOKE_REQUEST_FILE" --operator-revoked-file="$REVOKED_FILE" >"$NORMAL_LOG" 2>&1 &
+NORMAL_PID=$!
+for _ in {1..60}; do [[ -f "$IDENTITY_FILE" ]] && break || sleep 1; done
+[[ -f "$IDENTITY_FILE" ]] || { cat "$NORMAL_LOG"; exit 1; }
+OPERATOR_ID="$(<"$IDENTITY_FILE")"
+docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$OPERATOR_ID\"" true >/dev/null
+touch "$GRANTED_FILE"
+for _ in {1..60}; do [[ -f "$REVOKE_REQUEST_FILE" ]] && break || sleep 1; done
+[[ -f "$REVOKE_REQUEST_FILE" ]] || { cat "$NORMAL_LOG"; exit 1; }
+docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$OPERATOR_ID\"" false >/dev/null
+touch "$REVOKED_FILE"
+wait "$NORMAL_PID" || { cat "$NORMAL_LOG"; exit 1; }
+NORMAL_PID=""
+
+ADMIN_OUTPUT="$(godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Viewer)"
+ADMIN_ID="$(printf '%s\n' "$ADMIN_OUTPUT" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2; exit}')"
+[[ -n "$ADMIN_ID" ]] || { printf '%s\n' "$ADMIN_OUTPUT" >&2; exit 1; }
+docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" grant_admin "\"$ADMIN_ID\"" >/dev/null
+if ! timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --mode=admin >"$ADMIN_LOG" 2>&1; then
+    cat "$ADMIN_LOG"
+    exit 1
+fi
+cat "$NORMAL_LOG" "$ADMIN_LOG"
+if grep -Eq '(^| )SCRIPT ERROR:|(^| )ERROR:' "$NORMAL_LOG" "$ADMIN_LOG"; then
+    printf 'sidebar access gate reported a Godot runtime error\n' >&2
+    exit 1
+fi
+grep -qx 'SIDEBAR_ACCESS_PASS' "$NORMAL_LOG"
+grep -qx 'SIDEBAR_ACCESS_PASS' "$ADMIN_LOG"
+printf 'PASS: production main scene authorization lifecycle\n'

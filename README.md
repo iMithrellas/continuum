@@ -202,11 +202,20 @@ Run the isolated real-provider role lifecycle gate:
 ./scripts/test-access
 ```
 
-The map UI gate uses an explicit `--ui-fixture` controller fixture for layout and
-input assertions; it does not replace the real provider in the client. The access
-gate uses a real private module, `my_role` subscription, live grant/revocation, and
-disconnect/reconnect. Both scripts use unique private containers, volumes, and
-databases and remove them on exit; they never write the shared Compose database.
+Run the private production-main authorization gate:
+
+```bash
+./scripts/test-sidebar-access
+```
+
+The map UI gate uses a test-only subclass scene to exercise controller layout and
+input assertions; production `main.tscn` always constructs the real provider. The
+access gate uses a real private module, `my_role` subscription, live grant/revocation,
+and disconnect/reconnect. The sidebar gate uses the untouched production main scene,
+external publisher role changes, real operator/admin reducer calls, and fail-closed
+disconnect/reconnect checks. All three scripts use unique private containers,
+volumes, and databases and remove them on exit; they never write the shared Compose
+database.
 
 Run the isolated rectangular-reducer integration gate:
 

@@ -57,7 +57,7 @@ godot --headless --path "$ROOT/client/godot" --editor --quit
 echo "==> running scene-backed UI gate"
 if ! timeout 90s godot --headless --path "$ROOT/client/godot" \
     --scene res://tools/map_ui_test.tscn \
-    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB" --ui-fixture >"$LOG" 2>&1; then
+    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB" >"$LOG" 2>&1; then
     cat "$LOG"
     exit 1
 fi

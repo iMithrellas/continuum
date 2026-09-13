@@ -97,7 +97,6 @@ var _is_admin := false
 var _sections: Dictionary = {}
 var _access: ContinuumAccess
 var _profile := ContinuumClientProfile.NORMAL
-var _ui_fixture_mode := false
 
 
 func _ready() -> void:
@@ -122,11 +121,9 @@ func _ready() -> void:
 	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
 		_on_table_changed(table_name))
 	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
-	_ui_fixture_mode = "--ui-fixture" in OS.get_cmdline_user_args()
-	if not _ui_fixture_mode:
-		_access = ContinuumAccess.new(client)
-		_access.changed.connect(_set_permissions)
-		_access.start()
+	_access = _create_access(client)
+	_access.changed.connect(_set_permissions)
+	_access.start()
 
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
@@ -178,6 +175,10 @@ func _cli_option(option: String, fallback: String) -> String:
 		if argument.begins_with(option + "="):
 			return argument.substr(option.length() + 1)
 	return fallback
+
+
+func _create_access(client: ContinuumModuleClient) -> ContinuumAccess:
+	return ContinuumAccess.new(client)
 
 
 func _identity_token_path(host: String, database: String) -> String:

@@ -2,7 +2,7 @@
 ##   godot --headless --path client/godot --scene res://tools/map_ui_test.tscn -- --stdb-host=http://127.0.0.1:3300 --stdb-db=continuum-map-ui
 extends Node
 
-const MainScene = preload("res://scenes/main.tscn")
+const TestMainScene = preload("res://tools/ui_fixture_main.tscn")
 
 var map: ColonyMap
 var build_releases := 0
@@ -94,11 +94,11 @@ func _test_map_input() -> void:
 
 
 func _test_controller_surface() -> void:
-	var main := MainScene.instantiate()
+	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
-	main._set_permissions("operator", true, false)
+	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
 	main._build_menu.select(1)
 	main._build_menu.item_selected.emit(1)
@@ -195,10 +195,10 @@ func _test_sidebar_surface(main: Control) -> void:
 	main.sidebar._input(press)
 	_assert(not main.sidebar._dragging_splitter and not main.map._dragging,
 		"splitter release does not arm map painting")
-	main._set_permissions("operator", true, false)
+	_set_role(main, "operator", true, false)
 	main.sidebar.search.text = "build"
 	main.sidebar.search.text_changed.emit("build")
-	main._set_permissions("viewer", false, false)
+	_set_role(main, "viewer", false, false)
 	_assert(not main._mode_buttons[&"build"].visible and
 		not main._build_menu.visible and not main._block_box.visible,
 		"viewer search cannot resurrect unauthorized Build controls")
@@ -224,32 +224,36 @@ func _test_sidebar_surface(main: Control) -> void:
 	var before := reducer_calls.size()
 	main._dispatch_build_block(Rect2i(1, 1, 1, 1), ContinuumTileKind.create_farm())
 	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
-	main._set_permissions("operator", true, false)
+	_set_role(main, "operator", true, false)
 	_assert(main.sidebar.sections["policies"].wrapper.visible and
 			not main.sidebar.sections["administration"].wrapper.visible,
 		"operator inherits policy access but not admin access")
 	main._set_mode(&"build")
-	main._set_permissions("viewer", false, false)
+	_set_role(main, "viewer", false, false)
 	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
-	main._set_permissions("operator", true, false)
+	_set_role(main, "operator", true, false)
 	var ack_probe := Button.new()
 	ack_probe.text = "Ack"
 	main._alert_box.add_child(ack_probe)
 	_assert(ack_probe.is_inside_tree(), "operator alert rows are present before downgrade")
-	main._set_permissions("viewer", false, false)
+	_set_role(main, "viewer", false, false)
 	await get_tree().process_frame
 	_assert(not is_instance_valid(ack_probe), "permission downgrade immediately rebuilds alert rows")
-	main._set_permissions("operator", true, false)
-	main._set_permissions("maintenance", true, false)
+	_set_role(main, "operator", true, false)
+	_set_role(main, "maintenance", true, false)
 	_assert(not main._can_operate and main._role_name == "Unknown",
 		"unknown role input fails closed")
-	main._set_permissions("admin", true, false)
+	_set_role(main, "admin", true, false)
 	_assert(not main._can_operate and not main._is_admin,
 		"inconsistent admin flags fail closed")
-	main._set_permissions("admin", true, true)
+	_set_role(main, "admin", true, true)
 	_assert(main.sidebar.sections["administration"].wrapper.visible and
 		main._speed_buttons[0].visible, "admin can see administration controls")
 	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
+
+
+func _set_role(main: Control, role: String, can_operate: bool, is_admin: bool) -> void:
+	main.fixture_access.set_role(role, can_operate, is_admin)
 
 
 func _refresh_real_tiles(main: Control) -> void:

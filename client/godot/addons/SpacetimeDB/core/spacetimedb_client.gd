@@ -314,6 +314,9 @@ func _handle_parsed_message(message_resource: Resource):
 	elif message_resource is UnsubscribeAppliedMessage:
 		var message : UnsubscribeAppliedMessage = message_resource
 		var sub : SpacetimeDBSubscription= current_subscriptions.get(message.query_id.id)
+		if sub == null:
+			# A local owner may have discarded a handle after a lost transport.
+			return
 		_local_db.apply_database_unsubscription_applied(message)
 		sub.end.emit()
 		current_subscriptions.erase(sub.query_id)
