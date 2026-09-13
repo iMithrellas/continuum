@@ -170,7 +170,8 @@ func _on_search_changed(query: String) -> void:
 			var section: Dictionary = sections[key]
 			if _pre_search_expanded.has(key):
 				section.expanded = _pre_search_expanded[key]
-			section.content.visible = section.expanded
+			section.wrapper.visible = section.authorized
+			section.content.visible = section.authorized and section.expanded
 			section.header.text = ("v  " if section.expanded else ">  ") + section.label
 			for entry: Dictionary in section.entries:
 				entry.node.visible = entry.visible and entry.authorized

@@ -130,19 +130,24 @@ func _test_sidebar_surface(main: Control) -> void:
 		"sidebar section keys are stable for extensions")
 	main.sidebar._toggle_section("people")
 	_assert(not main.sidebar.sections["people"].content.visible, "section collapse hides its content")
-	main.sidebar._toggle_section("people")
-	_assert(main.sidebar.sections["people"].content.visible, "section reopens from its header")
 	main.sidebar.search.text = "forest"
 	main.sidebar.search.text_changed.emit("forest")
 	_assert(main.sidebar.sections["operations"].wrapper.visible, "search matches control aliases")
 	main.sidebar.search.clear()
 	main.sidebar.search.text_changed.emit("")
-	_assert(main.sidebar.sections["people"].content.visible, "clear restores pre-search section state")
+	_assert(main.sidebar.sections["people"].wrapper.is_visible_in_tree() and
+			not main.sidebar.sections["people"].content.visible,
+		"clear restores collapsed section wrapper and state")
+	main.sidebar._toggle_section("people")
+	_assert(main.sidebar.sections["people"].content.visible, "section reopens from its header")
 	main.sidebar.search.text = "no-such-control"
 	main.sidebar.search.text_changed.emit("no-such-control")
 	_assert(main.sidebar._no_matches.visible, "zero-result search is explicit")
 	main.sidebar.search.clear()
 	main.sidebar.search.text_changed.emit("")
+	for key: String in ["overview", "operations", "policies", "people", "alerts", "activity"]:
+		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
+			"clear restores allowed section wrapper: %s" % key)
 	main.sidebar.toggle()
 	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.CLOSED_WIDTH,
 		"sidebar collapses to a reachable narrow rail")
@@ -207,6 +212,12 @@ func _test_sidebar_surface(main: Control) -> void:
 	_assert(not main.sidebar.sections["policies"].wrapper.visible and
 			not main.sidebar.sections["administration"].wrapper.visible,
 		"viewer cannot discover unauthorized policy or admin sections")
+	for key: String in ["overview", "operations", "people", "alerts", "activity"]:
+		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
+			"viewer clear restores allowed section wrapper: %s" % key)
+	_assert(not main.sidebar.sections["policies"].wrapper.is_visible_in_tree() and
+			not main.sidebar.sections["administration"].wrapper.is_visible_in_tree(),
+		"viewer clear keeps forbidden section wrappers hidden")
 	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible,
 		"viewer cannot see mutation controls")
 	main.map_intent_override = _record_reducer_call
