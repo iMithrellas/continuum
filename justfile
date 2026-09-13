@@ -6,23 +6,23 @@ godot := env_var_or_default("GODOT", "godot")
 
 # Check the Rust module without building the WASM artifact.
 check:
-    cargo check --manifest-path {{module_manifest}}
+    cargo check --manifest-path {{ module_manifest }}
 
 # Run the Rust simulation and module tests.
 test:
-    cargo test --manifest-path {{module_manifest}}
+    cargo test --manifest-path {{ module_manifest }}
 
 # Check Rust formatting without modifying files.
 fmt-check:
-    cargo fmt --manifest-path {{module_manifest}} -- --check
+    cargo fmt --manifest-path {{ module_manifest }} -- --check
 
 # Format the Rust module in place.
 fmt:
-    cargo fmt --manifest-path {{module_manifest}}
+    cargo fmt --manifest-path {{ module_manifest }}
 
 # Compile the SpacetimeDB module to its release WASM artifact.
 wasm:
-    cargo build --manifest-path {{module_manifest}} --release --target wasm32-unknown-unknown
+    cargo build --manifest-path {{ module_manifest }} --release --target wasm32-unknown-unknown
 
 # Start SpacetimeDB and wait until its healthcheck passes.
 up:
@@ -46,11 +46,11 @@ publish-fresh: up
 # Regenerate Godot bindings from the published module schema.
 bindings: publish
     echo "==> importing Godot project"
-    {{quote(godot)}} --headless --path client/godot --import >/dev/null
+    {{ quote(godot) }} --headless --path client/godot --import >/dev/null
     echo "==> generating bindings"
-    {{quote(godot)}} --headless --path client/godot --script res://tools/generate_bindings.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/generate_bindings.gd
     echo "==> re-importing generated scripts"
-    {{quote(godot)}} --headless --path client/godot --import >/dev/null
+    {{ quote(godot) }} --headless --path client/godot --import >/dev/null
     echo "==> done: client/godot/spacetime_bindings/"
 
 # Start SpacetimeDB, publish the Rust module, and generate client bindings.
@@ -58,15 +58,20 @@ setup: bindings
 
 # Run the Godot client against the local SpacetimeDB server.
 run *args: up
-    {{quote(godot)}} --path client/godot -- "$@"
+    {{ quote(godot) }} --path client/godot -- "$@"
 
 # Run the headless Godot smoke test after publishing the current module.
 smoke *args: setup
-    {{quote(godot)}} --headless --path client/godot --script res://tools/smoke_test.gd -- "$@"
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/smoke_test.gd -- "$@"
+
+# Run smoke against an already running server and matching published bindings.
+# The smoke test mutates the selected database while restoring its state.
+smoke-existing *args:
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/smoke_test.gd -- "$@"
 
 # Observe the live colony from a terminal for two minutes.
 watch *args: up
-    if (( $# == 0 )); then set -- --seconds=120; fi; {{quote(godot)}} --headless --path client/godot --script res://tools/watch.gd -- "$@"
+    if (( $# == 0 )); then set -- --seconds=120; fi; {{ quote(godot) }} --headless --path client/godot --script res://tools/watch.gd -- "$@"
 
 # Run the SpacetimeDB CLI inside the matching server container. Just escapes each
 # positional argument, preserving spaces and shell metacharacters.
