@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HOST="${CONTINUUM_HOST:-http://127.0.0.1:3000}"
 DB="${CONTINUUM_DB:-continuum}"
 GODOT="${GODOT:-godot}"
+STDB="${CONTINUUM_STDB:-$ROOT/scripts/stdb}"
+PUBLISHER_HOST="${CONTINUUM_PUBLISHER_HOST:-http://127.0.0.1:3000}"
 GRANT=0
 YES=0
 for argument in "$@"; do
@@ -18,8 +20,8 @@ for argument in "$@"; do
     esac
 done
 
-if [[ "$GRANT" == 1 && "$HOST" != "http://127.0.0.1:3000" ]]; then
-    printf 'refusing publisher grant: scripts/stdb targets http://127.0.0.1:3000, got %s\n' "$HOST" >&2
+if [[ "$GRANT" == 1 && "$HOST" != "$PUBLISHER_HOST" ]]; then
+    printf 'refusing publisher grant: publisher targets %s, got %s\n' "$PUBLISHER_HOST" "$HOST" >&2
     exit 2
 fi
 
@@ -36,7 +38,7 @@ if [[ "$GRANT" == 1 ]]; then
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { printf 'grant cancelled\n'; exit 0; }
     fi
     printf 'granting admin through the existing publisher CLI...\n'
-    "$ROOT/scripts/stdb" call "$DB" grant_admin "\"$identity\"" >/dev/null
+    "$STDB" call "$DB" grant_admin "\"$identity\"" >/dev/null
 fi
 
 "$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \

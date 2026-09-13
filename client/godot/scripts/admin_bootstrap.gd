@@ -14,14 +14,13 @@ func _ready() -> void:
 	_client.connection_error.connect(_on_error)
 	_connect.call_deferred()
 
-func _process(delta: float) -> bool:
+func _process(delta: float) -> void:
 	_elapsed += delta
 	if _elapsed > TIMEOUT_SECONDS:
 		_fail("timed out obtaining an authenticated client identity")
-		return true
+		return
 	if not _started:
 		_started = true
-	return false
 
 func _connect() -> void:
 	var host := _option("--stdb-host", "http://127.0.0.1:3000")

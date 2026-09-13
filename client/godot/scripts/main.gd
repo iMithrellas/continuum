@@ -242,6 +242,7 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	_release_main_subscription()
 	if _access != null:
 		_access.stop()
 		_access = null
@@ -252,22 +253,36 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	print("Continuum identity: %s" % identity.hex_encode())
 	_set_connection_text("connected as %s..." % identity.hex_encode().substr(0, 12),
 			Color("6fcf7f"))
+	_release_main_subscription()
 	# Held for the life of the screen: a drop suspends this handle and the
-	# reconnect re-registers it, so it must not be replaced.
+	# reconnect creates a fresh handle after the old transport is gone.
 	_subscription = SpacetimeDB.Continuum.subscribe(SUBSCRIPTION_QUERIES)
 	if _subscription.error != OK:
 		_set_connection_text("subscription failed (%d)" % _subscription.error, Color("ff5c6c"))
 		return
-	_subscription.applied.connect(_on_subscription_applied)
+	_subscription.applied.connect(_on_subscription_applied.bind(_subscription))
 
 
-func _on_subscription_applied() -> void:
+func _release_main_subscription() -> void:
+	if _subscription == null:
+		return
+	var subscription := _subscription
+	_subscription = null
+	# Main subscriptions are recreated across reconnects. Discard locally rather
+	# than racing the closing transport with an unsubscribe request.
+	SpacetimeDB.Continuum.discard_subscription(subscription)
+
+
+func _on_subscription_applied(subscription: SpacetimeDBSubscription) -> void:
+	if _subscription != subscription:
+		return
 	_state_ready = true
 	_dirty = true
 	_map_dirty = true
 
 
 func _on_disconnected() -> void:
+	_release_main_subscription()
 	_set_permissions("Unknown", false, false)
 	_history.reset()
 	_history_chart.set_points([])
@@ -277,6 +292,7 @@ func _on_disconnected() -> void:
 
 
 func _on_connection_error(code: int, reason: String) -> void:
+	_release_main_subscription()
 	_set_connection_text("connection error %d: %s" % [code, reason], Color("ff5c6c"))
 	_schedule_reconnect()
 

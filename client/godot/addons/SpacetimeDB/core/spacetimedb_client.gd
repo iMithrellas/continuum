@@ -304,8 +304,11 @@ func _handle_parsed_message(message_resource: Resource):
 
 	elif message_resource is SubscribeAppliedMessage:
 		var message: SubscribeAppliedMessage = message_resource
-		_local_db.apply_database_subscription_applied(message)
 		var sub : SpacetimeDBSubscription= _pending_subscriptions.get(message.query_id.id)
+		if sub == null:
+			# A discarded request may still be acknowledged by the transport.
+			return
+		_local_db.apply_database_subscription_applied(message)
 		sub.applied.emit()
 		_pending_subscriptions.erase(sub.query_id)
 		current_subscriptions.set(sub.query_id, sub)

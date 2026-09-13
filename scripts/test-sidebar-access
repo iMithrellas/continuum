@@ -13,10 +13,13 @@ IDENTITY_FILE="/tmp/${NAME}-identity"
 GRANTED_FILE="/tmp/${NAME}-granted"
 REVOKE_REQUEST_FILE="/tmp/${NAME}-revoke-request"
 REVOKED_FILE="/tmp/${NAME}-revoked"
+PUBLISHER_WRAPPER="/tmp/${NAME}-publisher"
+GODOT_WRAPPER="/tmp/${NAME}-godot"
+LAUNCH_ARGS="/tmp/${NAME}-launch-args"
 NORMAL_PID=""
 cleanup() {
     [[ -z "$NORMAL_PID" ]] || kill "$NORMAL_PID" >/dev/null 2>&1 || true
-    rm -f "$NORMAL_LOG" "$ADMIN_LOG" "$IDENTITY_FILE" "$GRANTED_FILE" "$REVOKE_REQUEST_FILE" "$REVOKED_FILE"
+    rm -f "$NORMAL_LOG" "$ADMIN_LOG" "$IDENTITY_FILE" "$GRANTED_FILE" "$REVOKE_REQUEST_FILE" "$REVOKED_FILE" "$PUBLISHER_WRAPPER" "$GODOT_WRAPPER" "$LAUNCH_ARGS"
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
 }
@@ -33,6 +36,16 @@ PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
 HOST="http://127.0.0.1:$PORT"
 docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
 docker exec "$CONTAINER" spacetime publish --yes --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
+
+printf '%s\n' '#!/usr/bin/env bash' 'shift' "exec docker exec \"$CONTAINER\" spacetime call --server http://127.0.0.1:3000 \"\$@\"" >"$PUBLISHER_WRAPPER"
+chmod +x "$PUBLISHER_WRAPPER"
+printf '%s\n' '#!/usr/bin/env bash' 'case "$*" in *res://scenes/admin_bootstrap.tscn*|*res://tools/access_probe.gd*) exec godot "$@";; esac' "printf '%s\\n' \"\$*\" >\"$LAUNCH_ARGS\"" >"$GODOT_WRAPPER"
+chmod +x "$GODOT_WRAPPER"
+CONTINUUM_STDB="$PUBLISHER_WRAPPER" CONTINUUM_PUBLISHER_HOST="$HOST" GODOT="$GODOT_WRAPPER" \
+    "$ROOT/scripts/run-admin-client" --grant --yes --stdb-host="$HOST" --stdb-db="$DB" >/dev/null
+grep -q -- '--profile=admin' "$LAUNCH_ARGS"
+grep -q -- "--stdb-host=$HOST" "$LAUNCH_ARGS"
+grep -q -- "--stdb-db=$DB" "$LAUNCH_ARGS"
 
 timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
     --stdb-host="$HOST" --stdb-db="$DB" --profile=normal \
@@ -52,10 +65,9 @@ wait "$NORMAL_PID" || { cat "$NORMAL_LOG"; exit 1; }
 NORMAL_PID=""
 
 ADMIN_OUTPUT="$(godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
-    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Viewer)"
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Admin)"
 ADMIN_ID="$(printf '%s\n' "$ADMIN_OUTPUT" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2; exit}')"
 [[ -n "$ADMIN_ID" ]] || { printf '%s\n' "$ADMIN_OUTPUT" >&2; exit 1; }
-docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" grant_admin "\"$ADMIN_ID\"" >/dev/null
 if ! timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
     --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --mode=admin >"$ADMIN_LOG" 2>&1; then
     cat "$ADMIN_LOG"

@@ -50,6 +50,8 @@ func _test_operator_lifecycle() -> void:
 		"disconnect fails closed in the main scene")
 	SpacetimeDB.Continuum.reconnect_db()
 	await _wait_role("Viewer")
+	_assert(SpacetimeDB.Continuum.current_subscriptions.size() == 2,
+		"reconnect keeps main and role subscription handles stable")
 
 func _test_admin() -> void:
 	await _wait_role("Admin")
