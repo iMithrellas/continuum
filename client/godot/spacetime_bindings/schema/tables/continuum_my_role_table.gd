@@ -2,19 +2,21 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumMyRoleTable extends _ModuleTable
 
+var identity: ContinuumMyRoleIdentityUniqueIndex
 
 func _init() -> void:
 	set_meta("table_name", "my_role")
-	set_meta("is_event", "<null>")
-	set_meta("type", "ContinuumOwnRole")
+	set_meta("is_event", "false")
+	set_meta("type", "ContinuumMembership")
 
 static func create(p_local_db: LocalDatabase) -> ContinuumMyRoleTable:
 	var table: ContinuumMyRoleTable = ContinuumMyRoleTable.new()
 	table._db = p_local_db
+	table.identity = ContinuumMyRoleIdentityUniqueIndex.create(p_local_db)
 	return table
 
-func iter() -> Array[ContinuumOwnRole]:
+func iter() -> Array[ContinuumMembership]:
 	var rows: Array = super()
-	var typed_array: Array[ContinuumOwnRole] = []
+	var typed_array: Array[ContinuumMembership] = []
 	typed_array.assign(rows)
 	return typed_array

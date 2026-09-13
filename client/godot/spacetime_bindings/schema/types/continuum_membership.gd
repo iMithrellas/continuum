@@ -4,7 +4,7 @@
 class_name ContinuumMembership extends _ModuleTableType
 
 const module_name : String = "Continuum"
-const table_names: Array[String] = []
+const table_names: Array[String] = ['my_role']
 
 @export var identity: PackedByteArray
 @export var role: ContinuumRole

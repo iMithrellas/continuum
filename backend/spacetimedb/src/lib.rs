@@ -27,12 +27,8 @@ pub const DEFAULT_TIME_SCALE: f64 = 6.0;
 
 /// Authenticated, sender-filtered role discovery. Missing membership is Viewer.
 #[view(accessor = my_role, public)]
-pub fn my_role(ctx: &ViewContext) -> Option<OwnRole> {
-    ctx.db
-        .membership()
-        .identity()
-        .find(ctx.sender())
-        .map(|member| OwnRole { role: member.role })
+pub fn my_role(ctx: &ViewContext) -> Option<Membership> {
+    ctx.db.membership().identity().find(ctx.sender())
 }
 
 #[reducer(init)]

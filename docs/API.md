@@ -193,8 +193,8 @@ telemetry. Treat an identity and its token as credentials; use the persistent
 publishing identity only for administration.
 
 The public `my_role` view is the only client role-discovery surface. It is evaluated
-with the authenticated `ViewContext` sender and returns `Option<OwnRole>` containing
-only `role`; `None` means Viewer. Clients must treat the role as `Unknown` while
+with the authenticated `ViewContext` sender and returns at most that sender's private
+`Membership` row; `None` means Viewer. Clients must treat the role as `Unknown` while
 disconnected or before the view subscription is applied, and should refresh it after
 reconnect. The server still enforces every reducer independently.
 

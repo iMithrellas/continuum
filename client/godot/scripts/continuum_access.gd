@@ -15,6 +15,7 @@ var is_admin := false
 
 var _client: ContinuumModuleClient
 var _subscription: SpacetimeDBSubscription
+var _view_applied := false
 
 func _init(client: SpacetimeDBClient) -> void:
 	_client = client as ContinuumModuleClient
@@ -31,29 +32,48 @@ func _init(client: SpacetimeDBClient) -> void:
 		_on_connected(PackedByteArray(), &"")
 
 func start() -> void:
+	if _subscription and not _subscription.ended:
+		return
 	_set_unknown()
+	_view_applied = false
 	if _client == null or not _client.is_connected_db():
 		return
 	_subscribe()
 
 func _on_connected(_identity: PackedByteArray, _token: String) -> void:
 	_set_unknown()
+	_view_applied = false
 	_subscribe()
 
 func _subscribe() -> void:
 	if _subscription and not _subscription.ended:
 		return
 	_subscription = _client.subscribe(PackedStringArray(["SELECT * FROM my_role"]))
-	_subscription.applied.connect(_refresh_from_view)
-	_subscription.end.connect(_set_unknown)
+	_subscription.applied.connect(_on_view_applied)
+	_subscription.end.connect(_on_view_ended)
 
 func _on_disconnected() -> void:
+	_view_applied = false
+	_subscription = null
 	_set_unknown()
 
 func _on_connection_error(_code: int, _reason: String) -> void:
+	_view_applied = false
+	_subscription = null
+	_set_unknown()
+
+func _on_view_applied() -> void:
+	_view_applied = true
+	_refresh_from_view()
+
+func _on_view_ended() -> void:
+	_view_applied = false
+	_subscription = null
 	_set_unknown()
 
 func _on_role_row_updated(_table_name: String, _old_row: Resource, _new_row: Resource) -> void:
+	if _table_name != "my_role":
+		return
 	_refresh_from_view()
 
 func _on_role_row_change(table_name: String, _row: Resource) -> void:
@@ -61,10 +81,10 @@ func _on_role_row_change(table_name: String, _row: Resource) -> void:
 		_refresh_from_view()
 
 func _refresh_from_view() -> void:
-	if _client == null or not _client.is_connected_db():
+	if not _view_applied or _client == null or not _client.is_connected_db():
 		_set_unknown()
 		return
-	var rows: Array[ContinuumOwnRole] = _client.db.my_role.iter()
+	var rows: Array[ContinuumMembership] = _client.db.my_role.iter()
 	if rows.is_empty():
 		_set_role(ROLE_VIEWER, false, false)
 		return

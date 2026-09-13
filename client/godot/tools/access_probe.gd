@@ -7,6 +7,10 @@ var access: ContinuumAccess
 var elapsed := 0.0
 var connected := false
 var _started := false
+var expected_role := ""
+var expected_sequence: PackedStringArray
+var sequence_index := 0
+var hold := false
 
 func _initialize() -> void:
 	client = ContinuumModuleClient.new()
@@ -17,6 +21,11 @@ func _initialize() -> void:
 		connected = true
 		print("CLIENT_IDENTITY=%s" % identity.hex_encode()))
 	client.connection_error.connect(func(code: int, reason: String) -> void: _fail("connection error %d: %s" % [code, reason]))
+	expected_role = _option("--expected", "")
+	hold = _option("--hold", "false") == "true"
+	var sequence := _option("--sequence", "")
+	if not sequence.is_empty():
+		expected_sequence = sequence.split(",")
 
 func _process(delta: float) -> bool:
 	elapsed += delta
@@ -40,8 +49,23 @@ func _connect() -> void:
 	client.connect_db(host, database, options)
 
 func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) -> void:
+	if role_name == ContinuumAccess.ROLE_UNKNOWN:
+		_fail("authorization became Unknown")
+		return
+	var expected := expected_role
+	if not expected_sequence.is_empty():
+		if sequence_index >= expected_sequence.size():
+			_fail("unexpected extra role %s" % role_name)
+			return
+		expected = expected_sequence[sequence_index]
+	if expected.is_empty() or role_name != expected:
+		_fail("unexpected role %s (expected %s)" % [role_name, expected])
+		return
 	print("ACCESS_ROLE=%s OPERATE=%s ADMIN=%s" % [role_name, can_operate, is_admin])
-	quit(0)
+	sequence_index += 1
+	if not hold or (not expected_sequence.is_empty() and sequence_index == expected_sequence.size()):
+		print("ACCESS_PASS")
+		quit(0)
 
 func _fail(message: String) -> void:
 	printerr("access probe: %s" % message)
