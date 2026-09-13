@@ -398,7 +398,8 @@ container restarts and `just down` preserve it. Do not remove Compose volumes
 unless you intend to delete the colony and CLI identity.
 
 Every Godot instance connects to the same `continuum` database by default. Run a
-second instance normally, or override the endpoint and database after `--`:
+second instance normally, or pass endpoint and database overrides directly as
+recipe arguments:
 
 ```bash
 just run --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
