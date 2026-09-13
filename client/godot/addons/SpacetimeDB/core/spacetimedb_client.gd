@@ -516,6 +516,16 @@ func subscribe(queries: PackedStringArray) -> SpacetimeDBSubscription:
 	subscription._ended = true
 	return subscription
 
+## Drop a local handle when the transport is already gone. This is intentionally
+## separate from unsubscribe(), which needs a live WebSocket and a server ack.
+func discard_subscription(subscription: SpacetimeDBSubscription) -> void:
+	if subscription == null:
+		return
+	_pending_subscriptions.erase(subscription.query_id)
+	current_subscriptions.erase(subscription.query_id)
+	if is_instance_valid(subscription):
+		subscription.queue_free()
+
 func unsubscribe(query_id: int, send_deletes: UnsubscribeMessage.UnsubscribeFlags = UnsubscribeMessage.UnsubscribeFlags.Default) -> Error:
 	if not is_connected_db():
 		printerr("SpacetimeDBClient: Cannot unsubscribe, not connected.")

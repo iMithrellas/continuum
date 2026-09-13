@@ -16,6 +16,7 @@ var is_admin := false
 var _client: ContinuumModuleClient
 var _subscription: SpacetimeDBSubscription
 var _view_applied := false
+var _stopped := false
 
 func _init(client: SpacetimeDBClient) -> void:
 	_client = client as ContinuumModuleClient
@@ -32,6 +33,7 @@ func _init(client: SpacetimeDBClient) -> void:
 		_on_connected(PackedByteArray(), &"")
 
 func start() -> void:
+	_stopped = false
 	if _subscription and not _subscription.ended:
 		return
 	_set_unknown()
@@ -41,11 +43,15 @@ func start() -> void:
 	_subscribe()
 
 func _on_connected(_identity: PackedByteArray, _token: String) -> void:
+	if _stopped:
+		return
 	_set_unknown()
 	_view_applied = false
 	_subscribe()
 
 func _subscribe() -> void:
+	if _stopped:
+		return
 	if _subscription and not _subscription.ended:
 		return
 	_client.get_local_database().clear_role_view()
@@ -55,12 +61,12 @@ func _subscribe() -> void:
 
 func _on_disconnected() -> void:
 	_view_applied = false
-	_subscription = null
+	_release_subscription()
 	_set_unknown()
 
 func _on_connection_error(_code: int, _reason: String) -> void:
 	_view_applied = false
-	_subscription = null
+	_release_subscription()
 	_set_unknown()
 
 func _on_view_applied() -> void:
@@ -71,6 +77,29 @@ func _on_view_ended() -> void:
 	_view_applied = false
 	_subscription = null
 	_set_unknown()
+
+func stop() -> void:
+	if _stopped:
+		return
+	_stopped = true
+	_view_applied = false
+	_set_unknown()
+	_release_subscription()
+	_client = null
+
+func _release_subscription() -> void:
+	if _subscription == null:
+		return
+	var subscription := _subscription
+	if not subscription.ended and _client != null and _client.is_connected_db():
+		# Let the SDK receive unsubscribe-applied before it frees the handle.
+		if subscription.unsubscribe() == OK:
+			return
+	_subscription = null
+	if _client != null:
+		_client.discard_subscription(subscription)
+	else:
+		subscription.queue_free()
 
 func _on_role_row_updated(_table_name: String, _old_row: Resource, _new_row: Resource) -> void:
 	if _table_name != "my_role":

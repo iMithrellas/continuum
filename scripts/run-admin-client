@@ -37,7 +37,10 @@ if [[ "$GRANT" == 1 ]]; then
     fi
     printf 'granting admin through the existing publisher CLI...\n'
     "$ROOT/scripts/stdb" call "$DB" grant_admin "\"$identity\"" >/dev/null
-    "$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
-        --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Admin >/dev/null
-    printf 'admin grant verified through the sender-scoped role view\n'
 fi
+
+"$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Admin >/dev/null
+printf 'admin profile verified through the sender-scoped role view\n'
+exec "$GODOT" --path "$ROOT/client/godot" -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin

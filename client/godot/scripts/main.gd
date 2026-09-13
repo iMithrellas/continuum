@@ -95,6 +95,9 @@ var _role_name := "Unknown"
 var _can_operate := false
 var _is_admin := false
 var _sections: Dictionary = {}
+var _access: ContinuumAccess
+var _profile := ContinuumClientProfile.NORMAL
+var _ui_fixture_mode := false
 
 
 func _ready() -> void:
@@ -118,6 +121,12 @@ func _ready() -> void:
 		_on_table_changed(table_name))
 	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
 		_on_table_changed(table_name))
+	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
+	_ui_fixture_mode = "--ui-fixture" in OS.get_cmdline_user_args()
+	if not _ui_fixture_mode:
+		_access = ContinuumAccess.new(client)
+		_access.changed.connect(_set_permissions)
+		_access.start()
 
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
@@ -130,18 +139,14 @@ func _ready() -> void:
 	#   godot -- --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
 	_host = _cli_option("--stdb-host", "http://127.0.0.1:3000")
 	_database = _cli_option("--stdb-db", "continuum")
-	client.token_save_path = _identity_token_path(_host, _database)
+	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
 
 	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
 	client.connect_db(_host, _database, options)
 
 
-## Integration seam for the next trusted, server-backed role provider. That module
-## should call this after its server membership/role response is authoritative:
-## `_set_permissions(server_role, server_role != "viewer", server_role == "admin")`.
-## Do not derive these values from the identity token or local JWT. Until the call,
-## and after disconnect, the UI remains fail-closed as Unknown/viewer. This slice
-## is not live-admin ready until that provider is wired and its server tests exist.
+## Apply only the authenticated sender-scoped role view. The backend remains
+## authoritative; this state only controls what the UI exposes.
 func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> void:
 	var normalized_role := role_name.strip_edges().to_lower()
 	var valid_role := normalized_role in ["viewer", "operator", "admin"]
@@ -233,6 +238,12 @@ func _notification(what: int) -> void:
 		# tidy close means the server is not left holding a dead session.
 		_closing = true
 		SpacetimeDB.Continuum.disconnect_db()
+
+
+func _exit_tree() -> void:
+	if _access != null:
+		_access.stop()
+		_access = null
 
 
 func _on_connected(identity: PackedByteArray, _token: String) -> void:

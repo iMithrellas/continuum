@@ -196,6 +196,18 @@ Run the reproducible map UI gate, including input/controller coverage:
 ./scripts/test-map-ui
 ```
 
+Run the isolated real-provider role lifecycle gate:
+
+```bash
+./scripts/test-access
+```
+
+The map UI gate uses an explicit `--ui-fixture` controller fixture for layout and
+input assertions; it does not replace the real provider in the client. The access
+gate uses a real private module, `my_role` subscription, live grant/revocation, and
+disconnect/reconnect. Both scripts use unique private containers, volumes, and
+databases and remove them on exit; they never write the shared Compose database.
+
 Run the isolated rectangular-reducer integration gate:
 
 ```bash
@@ -270,17 +282,34 @@ The client discovers its own role from the authenticated sender-filtered `my_rol
 view. The view returns only the caller's role; missing membership is `Viewer`.
 `ContinuumAccess` starts as `Unknown` and returns to `Unknown` on disconnect,
 subscription termination, or connection errors, so unavailable authorization fails
-closed. Integrate its `changed` signal with
-`_set_permissions(role_name: String, can_operate: bool, is_admin: bool)` in the main
-screen. The backend remains authoritative and must not be replaced by this UI state.
+closed. The main scene applies the provider's `changed` signal only after the view is
+applied. The backend remains authoritative and must not be replaced by this UI state.
 
-Normal and admin client tokens use separate `user://` profile paths. To bootstrap an
-admin-profile identity, optionally grant that distinct identity with the existing
-publisher CLI:
+Normal and admin client tokens use separate `user://` profile paths. The normal
+client remains the default:
+
+```bash
+godot --path client/godot -- --profile=normal
+```
+
+On a local server, bootstrap and launch the separate admin profile with the
+persistent publishing identity (the command prompts before the grant):
 
 ```bash
 ./scripts/run-admin-client --grant
 ```
+
+For an already-granted profile, launch it again without granting:
+
+```bash
+./scripts/run-admin-client
+```
+
+The launcher verifies `Admin` through the authenticated role view before starting
+the main scene. `--grant` and `--profile` alone never grant UI access. Granting
+requires the authorized persistent publisher identity; do not copy tokens or paste
+them into the client. After backend changes, publish the module and regenerate
+bindings before using an existing server:
 
 Use `--yes` only for an explicitly intended local grant. It prints the identity, never
 a token, rejects non-local publisher endpoints, and does nothing without `--grant`.

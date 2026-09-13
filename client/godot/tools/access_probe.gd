@@ -16,6 +16,7 @@ var signal_file := ""
 var resume_file := ""
 var waiting_reconnect := false
 var allow_unknown := false
+var disconnected := false
 
 func _initialize() -> void:
 	client = ContinuumModuleClient.new()
@@ -26,6 +27,7 @@ func _initialize() -> void:
 		connected = true
 		print("CLIENT_IDENTITY=%s" % identity.hex_encode()))
 	client.connection_error.connect(func(code: int, reason: String) -> void: _fail("connection error %d: %s" % [code, reason]))
+	client.disconnected.connect(_on_disconnected)
 	expected_role = _option("--expected", "")
 	hold = _option("--hold", "false") == "true"
 	var sequence := _option("--sequence", "")
@@ -81,10 +83,6 @@ func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) ->
 		allow_unknown = true
 		waiting_reconnect = true
 		client.disconnect_db()
-		var signal_handle := FileAccess.open(signal_file, FileAccess.WRITE)
-		if signal_handle:
-			signal_handle.store_string("disconnected")
-			signal_handle.close()
 		return
 	if not hold or (not expected_sequence.is_empty() and sequence_index == expected_sequence.size()):
 		print("ACCESS_PASS")
@@ -93,6 +91,15 @@ func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) ->
 func _fail(message: String) -> void:
 	printerr("access probe: %s" % message)
 	quit(1)
+
+func _on_disconnected() -> void:
+	if disconnected:
+		return
+	disconnected = true
+	var signal_handle := FileAccess.open(signal_file, FileAccess.WRITE)
+	if signal_handle:
+		signal_handle.store_string("disconnected")
+		signal_handle.close()
 
 func _option(name: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():
