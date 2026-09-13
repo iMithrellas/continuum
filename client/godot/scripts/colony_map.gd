@@ -1,4 +1,4 @@
-## Draws the abstract colony grid and the colonist markers.
+## Draws the abstract colony grid and the sprite-backed colonist markers.
 ##
 ## Purely a view: it reads typed rows out of the generated `SpacetimeDB.Continuum`
 ## bindings and never mutates anything. Clicking a tile only emits
@@ -33,6 +33,10 @@ const COLONIST_COLORS: Array[Color] = [
 	Color("ec407a"), Color("8bc34a"), Color("b39ddb"),
 	Color("80cbc4"), Color("ffcc80"),
 ]
+const COLONIST_WALK_TEXTURE: Texture2D = preload("res://assets/colonist_worker_test_walk.png")
+const COLONIST_WALK_FRAME_COUNT := 4
+const COLONIST_WALK_FRAME_MS := 140
+const COLONIST_WALK_FRAME_SIZE := 32.0
 
 const DISABLED_COLOR := Color("50202a")
 const GRID_LINE_COLOR := Color(1, 1, 1, 0.06)
@@ -49,8 +53,8 @@ var _drag_start := Vector2i.ZERO
 var _drag_current := Vector2i.ZERO
 var _drag_inside := false
 
-## Rendered colonist positions, eased towards the authoritative tile positions so
-## movement reads as movement instead of teleporting.
+## Rendered colonist positions, eased towards the authoritative tile/progress
+## positions so movement reads as movement instead of teleporting.
 var _visual_positions: Dictionary[int, Vector2] = {}
 var _font: Font = null
 ## Grid extent, derived from the tiles the server actually sent.
@@ -59,12 +63,14 @@ var _has_state: bool = false
 var _generation := -1
 var _stored_amounts: Dictionary[int, float] = {}
 var _stock_pulses: Dictionary[int, float] = {}
+var _walk_frame := 0
 ## Global drag tracking must never treat floating windows as map cells.
 var input_blocked: Callable
 
 
 func _ready() -> void:
 	_font = ThemeDB.fallback_font
+	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	set_process(true)
 	set_process_input(true)
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
@@ -117,27 +123,43 @@ func _process(delta: float) -> void:
 	if not _has_state or SpacetimeDB.Continuum.db == null:
 		return
 	var changed: bool = false
+	var animation_frame := int(Time.get_ticks_msec() / float(COLONIST_WALK_FRAME_MS)) % COLONIST_WALK_FRAME_COUNT
+	if animation_frame != _walk_frame:
+		_walk_frame = animation_frame
+		changed = true
 	for kind: int in _stock_pulses.keys():
 		_stock_pulses[kind] = maxf(0.0, _stock_pulses[kind] - delta)
 		changed = true
 		if _stock_pulses[kind] <= 0.0:
 			_stock_pulses.erase(kind)
 	for colonist: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
-		var target := Vector2(colonist.x, colonist.y)
+		var target := _colonist_render_position(colonist)
 		if not _visual_positions.has(colonist.id):
 			_visual_positions[colonist.id] = target
 			changed = true
 			continue
 		var current: Vector2 = _visual_positions[colonist.id]
 		if current.distance_to(target) > 0.001:
-			# Snap when far behind (a big time-scale jump), ease when close.
-			if current.distance_to(target) > 3.0:
-				_visual_positions[colonist.id] = target
-			else:
-				_visual_positions[colonist.id] = current.lerp(target, clampf(delta * 8.0, 0.0, 1.0))
+			# High simulation speeds can advance several tiles per server tick;
+			# always ease the correction instead of visually teleporting.
+			_visual_positions[colonist.id] = current.lerp(target, clampf(delta * 8.0, 0.0, 1.0))
 			changed = true
 	if changed:
 		queue_redraw()
+
+
+func _colonist_render_position(colonist: ContinuumColonist) -> Vector2:
+	var position := Vector2(colonist.x, colonist.y)
+	var progress := clampf(colonist.move_progress, 0.0, 1.0)
+	if progress <= 0.0:
+		return position
+	if colonist.x != colonist.target_x:
+		position.x += 1.0 if colonist.target_x > colonist.x else -1.0
+	elif colonist.y != colonist.target_y:
+		position.y += 1.0 if colonist.target_y > colonist.y else -1.0
+	return Vector2(
+		lerpf(float(colonist.x), position.x, progress),
+		lerpf(float(colonist.y), position.y, progress))
 
 
 ## Called by [Main] after subscribed world rows change. Stock flashes show only
@@ -441,15 +463,20 @@ func _draw_colonists(origin: Vector2, cell: float) -> void:
 		if sharing.size() > 1:
 			centre += Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * cell * 0.25
 		var colour: Color = COLONIST_COLORS[index % COLONIST_COLORS.size()]
-		var radius := cell * (0.23 if sharing.size() > 1 else 0.32)
+		var sprite_size := cell * (0.62 if sharing.size() > 1 else 0.82)
+		var radius := sprite_size * 0.36
 
 		draw_circle(centre, radius + 2.0, Color(0, 0, 0, 0.55))
 		draw_circle(centre, radius, colour)
-
-		var font_size := int(maxf(9.0, cell * 0.42))
-		draw_string(_font, centre + Vector2(-font_size * 0.32, font_size * 0.36),
-				colonist.name.substr(0, 1), HORIZONTAL_ALIGNMENT_LEFT, -1, font_size,
-				Color("14161a"))
+		var walking := colonist.x != colonist.target_x \
+				or colonist.y != colonist.target_y \
+				or colonist.move_progress > 0.001
+		var frame := _walk_frame if walking else 0
+		var sprite_rect := Rect2(centre - Vector2.ONE * sprite_size * 0.5,
+				Vector2.ONE * sprite_size)
+		var source_rect := Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0.0,
+				COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE)
+		draw_texture_rect_region(COLONIST_WALK_TEXTURE, sprite_rect, source_rect)
 
 		if colonist.carried_amount > 0.0:
 			var cargo_colour: Color = RESOURCE_COLORS[colonist.carried_kind.value]
