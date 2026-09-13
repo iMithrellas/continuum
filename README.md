@@ -184,9 +184,10 @@ their own disposable containers and databases.
 
 Common recipes are `setup` (publish plus bindings), `publish`,
 `publish-fresh` (destructive database replacement), `bindings`, `run`, `smoke`,
-`watch`, and `stdb`. Backend checks are `check`, `test`, `fmt-check`, `fmt`, and
-`wasm`; local server control is `up`, `down`, and `logs`. Authorization and
-isolated integration gates are `admin-grant`, `admin`, `test-map-ui`,
+`smoke-existing` (run against an already prepared server and bindings), `watch`,
+and `stdb`. Backend checks are `check`, `test`, `fmt-check`, `fmt`, and `wasm`;
+local server control is `up`, `down`, and `logs`. Authorization and isolated
+integration gates are `admin-grant`, `admin`, `test-map-ui`,
 `test-access`, `test-sidebar-access`, `test-block-reducers`, and
 `test-access-cleanup`.
 
@@ -198,14 +199,26 @@ Run backend tests:
 just test
 ```
 
-Run the headless Godot end-to-end test:
+Run the headless Godot end-to-end test. This runs `setup` first, so it publishes
+the current module and refreshes bindings for the local default `continuum`
+database; it is not read-only:
 
 ```bash
 just smoke
 ```
 
 The smoke test accepts the same `--stdb-host` and `--stdb-db` user arguments as
-the client.
+the client, but those arguments affect the test client only. They do not retarget
+the preparation step or prevent its publish. For an already prepared matching
+server and bindings, use the non-publishing recipe instead:
+
+```bash
+just smoke-existing --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
+```
+
+Use `smoke-existing` when the target database and generated bindings already
+match; it does not publish or generate bindings. The smoke test itself may issue
+reducer calls, so this is not a read-only workflow.
 
 Run the reproducible map UI gate, including input/controller coverage:
 

@@ -281,19 +281,22 @@ just stdb call "$DB" set_speed_change_cooldown 300
 The command is not available in the baseline `continuum` schema. Its exact
 contract is documented in [speed-controls.md](speed-controls.md).
 
-For schema inspection, use the CLI's JSON description and the module's binding
-tooling; do not infer a schema from application tables:
+For schema inspection, use the CLI's JSON description; do not infer a schema from
+application tables:
 
 ```bash
 DB="${CONTINUUM_DB:-continuum}"
 just stdb describe --json "$DB"
+```
+
+Refresh generated bindings separately for the default local `continuum` database:
+
+```bash
 just bindings
 ```
 
-The pinned Godot generator fetches the same published schema from
-`GET /v1/database/{database}/schema?version=10` before emitting bindings.
-
-`just bindings` imports the Godot project, fetches the published schema from
-the running SpacetimeDB instance, and regenerates
+`just bindings` uses the generator's configured default `continuum` database; it
+does not provide a custom-DB generation mode. It imports the Godot project, fetches
+the published schema, and regenerates
 `client/godot/spacetime_bindings/`. It must be rerun after table, reducer, or
 type changes. Generated files are outputs and are not hand-edited.

@@ -36,10 +36,13 @@ just stdb call continuum set_time_scale 12
 The headless smoke test does not require admin access and accepts a missing row
 for legacy databases. Against an isolated database with a configured row, ask
 an admin to authorize the temporary smoke identity with `set_operator`, then
-run:
+run the test against that already prepared database:
 
 ```sh
-just smoke --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
+just smoke-existing --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
 ```
 
+Do not use `just smoke` for this target: `smoke` first prepares and publishes the
+local default `continuum` database. `smoke-existing` performs no preparation, so
+the server, database, and generated bindings must already match.
 Omit `--expected-speed-cooldown` to exercise the missing-row compatibility path.
