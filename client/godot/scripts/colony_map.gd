@@ -59,6 +59,8 @@ var _has_state: bool = false
 var _generation := -1
 var _stored_amounts: Dictionary[int, float] = {}
 var _stock_pulses: Dictionary[int, float] = {}
+## Global drag tracking must never treat floating windows as map cells.
+var input_blocked: Callable
 
 
 func _ready() -> void:
@@ -400,21 +402,23 @@ func _draw_storage(origin: Vector2, cell: float) -> void:
 
 func _draw_legend() -> void:
 	var y := size.y - LEGEND_HEIGHT + 19.0
+	var left := _origin().x + 12.0
+	var width := _cell_size() * _grid.x - 24.0
 	var index := 0
 	for kind: int in RESOURCE_COLORS:
-		var x := 12.0 + index * (size.x - 24.0) / 4.0
+		var x := left + index * width / 4.0
 		var colour: Color = RESOURCE_COLORS[kind]
 		draw_rect(Rect2(Vector2(x, y - 10), Vector2(9, 9)), colour)
 		draw_string(_font, Vector2(x + 14, y),
 				ContinuumResourceKind.parse_enum_name(kind).capitalize(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, colour)
 		index += 1
-	draw_string(_font, Vector2(12, y + 21), "Box = ground pile   Attached box = cargo   Dashed arrow = delivery destination",
-			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("ccd3df"))
-	draw_string(_font, Vector2(12, y + 39), "Shared storage: no limit. Stock flashes on increases. Hover or select a pile's tile for amounts.",
-			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("9aa4b2"))
-	draw_string(_font, Vector2(12, y + 57), "Terrain: soil blend + independent ecological cover. Decorative only; it does not modify production.",
-			HORIZONTAL_ALIGNMENT_LEFT, size.x - 24, 11, Color("f5d76e"))
+	draw_string(_font, Vector2(left, y + 21), "Box: ground pile   /   Attached box: cargo   /   Dashed line: delivery",
+			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("ccd3df"))
+	draw_string(_font, Vector2(left, y + 39), "Select terrain to inspect. F3 opens the inspector.",
+			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("9aa4b2"))
+	draw_string(_font, Vector2(left, y + 57), "Terrain is decorative; it does not modify production.",
+			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("f5d76e"))
 
 
 func _draw_colonists(origin: Vector2, cell: float) -> void:
@@ -549,6 +553,11 @@ func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
 func _input(event: InputEvent) -> void:
 	if not _has_state:
 		return
+	if event is InputEventMouse and input_blocked.is_valid() and input_blocked.call(event.position):
+		_dragging = false
+		_drag_inside = false
+		queue_redraw()
+		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		_dragging = false
 		queue_redraw()
@@ -558,19 +567,6 @@ func _input(event: InputEvent) -> void:
 		_dragging = false
 		_drag_inside = false
 		queue_redraw()
-		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed and not _dragging:
-		# `_input` also starts the drag so headless/viewport dispatch and normal GUI
-		# dispatch share the same grid-only boundary. UI clicks still map to null.
-		var press := event as InputEventMouseButton
-		var press_point := get_global_transform().affine_inverse() * press.position
-		var press_cell: Variant = _cell_at(press_point)
-		if press_cell != null:
-			_dragging = true
-			_drag_inside = true
-			_drag_start = press_cell
-			_drag_current = press_cell
-			queue_redraw()
 		return
 	if event is InputEventMouseMotion and _dragging:
 		var motion := event as InputEventMouseMotion

@@ -7,9 +7,10 @@ const TestMainScene = preload("res://tools/ui_fixture_main.tscn")
 var map: ColonyMap
 var build_releases := 0
 var selected_releases := 0
-var reducer_calls: Array = []
 var build_rects: Array[Rect2i] = []
 var selected_rects: Array[Rect2i] = []
+var reducer_calls: Array = []
+var isolated_path := ""
 var failed := false
 
 
@@ -51,7 +52,6 @@ func _test_map_input() -> void:
 	map.rectangle_selected.connect(func(rect: Rect2i) -> void:
 		selected_releases += 1
 		selected_rects.append(rect))
-
 	map.set_interaction_mode(&"build")
 	_drag(Vector2(130, 130), Vector2(30, 50))
 	_assert(build_releases == 1, "one reversed build drag emits one atomic request")
@@ -61,6 +61,8 @@ func _test_map_input() -> void:
 	_drag(Vector2(70, 70), Vector2(70, 70))
 	_assert(build_releases == 2, "one-cell build drag emits one request")
 	_assert(build_rects[1] == Rect2i(3, 3, 1, 1), "single-cell payload is exact")
+	_release(Vector2(70, 70))
+	_assert(build_releases == 2, "repeated release cannot submit another build")
 
 	# The drawn grid is 480x480; the remaining 90 pixels are the legend and must cancel.
 	_press(Vector2(10, 10))
@@ -80,13 +82,12 @@ func _test_map_input() -> void:
 	_press(Vector2(10, 10))
 	map._input(_button(MOUSE_BUTTON_RIGHT, true, Vector2(700, 700)))
 	_release(Vector2(30, 30))
-	_assert(build_releases == 2 and not map._dragging, "right-click on side panel cancels")
+	_assert(build_releases == 2 and not map._dragging, "right-click on workspace cancels")
 
 	_press(Vector2(10, 10))
 	map.notification(NOTIFICATION_WM_WINDOW_FOCUS_OUT)
 	_release(Vector2(30, 30))
 	_assert(build_releases == 2 and not map._dragging, "focus loss cancels stale drag")
-
 	map.set_interaction_mode(&"select")
 	_drag(Vector2(210, 210), Vector2(250, 250))
 	_assert(selected_releases == 1, "select mode emits one rectangular selection")
@@ -97,6 +98,7 @@ func _test_controller_surface() -> void:
 	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
+	isolated_path = main.fixture_workspace_path
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
 	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
@@ -112,7 +114,7 @@ func _test_controller_surface() -> void:
 	_assert(main._tile_action_box.visible and main._tile_info != null, "one-cell inspection detail remains visible")
 	_assert(main._block_controls[ContinuumWorkType.Options.farming].row.visible,
 		"block work controls are not hidden by legacy refresh")
-	await _test_sidebar_surface(main)
+	await _test_workspace_surface(main)
 	if failed:
 		return
 	main._map_dirty = false
@@ -122,112 +124,35 @@ func _test_controller_surface() -> void:
 	_assert(not main.can_send_map_intent(false, false) and not main.can_send_map_intent(true, true),
 		"disconnected and pending clients are gated")
 	await _refresh_real_tiles(main)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(isolated_path))
 
 
-func _test_sidebar_surface(main: Control) -> void:
-	_assert(main.sidebar.sections.size() == 7, "sidebar exposes seven extensible sections")
-	_assert(main.sidebar.sections.has("overview") and main.sidebar.sections.has("administration"),
-		"sidebar section keys are stable for extensions")
-	main.sidebar._toggle_section("people")
-	_assert(not main.sidebar.sections["people"].content.visible, "section collapse hides its content")
-	main.sidebar.search.text = "forest"
-	main.sidebar.search.text_changed.emit("forest")
-	_assert(main.sidebar.sections["operations"].wrapper.visible, "search matches control aliases")
-	main.sidebar.search.clear()
-	main.sidebar.search.text_changed.emit("")
-	_assert(main.sidebar.sections["people"].wrapper.is_visible_in_tree() and
-			not main.sidebar.sections["people"].content.visible,
-		"clear restores collapsed section wrapper and state")
-	main.sidebar._toggle_section("people")
-	_assert(main.sidebar.sections["people"].content.visible, "section reopens from its header")
-	main.sidebar.search.text = "no-such-control"
-	main.sidebar.search.text_changed.emit("no-such-control")
-	_assert(main.sidebar._no_matches.visible, "zero-result search is explicit")
-	main.sidebar.search.clear()
-	main.sidebar.search.text_changed.emit("")
-	for key: String in ["overview", "operations", "policies", "people", "alerts", "activity"]:
-		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
-			"clear restores allowed section wrapper: %s" % key)
-	main.sidebar.toggle()
-	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.CLOSED_WIDTH,
-		"sidebar collapses to a reachable narrow rail")
-	_assert(not main.sidebar._splitter.visible, "collapsed rail hides the resize grip")
-	await get_tree().process_frame
-	_assert(main.sidebar.size.x <= main.sidebar.CLOSED_WIDTH + 12.0,
-		"collapsed container uses the narrow rail width")
-	main.sidebar.toggle()
-	_assert(main.sidebar.custom_minimum_size.x == main.sidebar.OPEN_WIDTH, "sidebar reopens")
-	await get_tree().process_frame
-	_assert(main.sidebar.size.x >= main.sidebar.OPEN_WIDTH - 12.0,
-		"reopened container restores its open width")
-	main.sidebar.set_sidebar_width(320.0)
-	var narrow_font: int = main.sidebar._font_size
-	var narrow_button: float = main.sidebar._button_height
-	var narrow_padding: int = main.sidebar._padding
-	main.sidebar.set_sidebar_width(430.0)
-	var middle_font: int = main.sidebar._font_size
-	main.sidebar.set_sidebar_width(550.0)
-	_assert(main.sidebar._font_size > middle_font and middle_font > narrow_font,
-		"sidebar font scale follows width")
-	_assert(main.sidebar._button_height > narrow_button, "sidebar button scale follows width")
-	_assert(main.sidebar._padding > narrow_padding, "sidebar padding scale follows width")
+func _test_workspace_surface(main: Control) -> void:
+	_assert(main._sections.size() == 8 and main.workspace.windows.size() == 8,
+		"workspace manager exposes eight extensible panels")
+	_assert(main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
+		"workspace manager starts on the daily built-in layout")
 	_assert(not main._build_help.text.contains("\n") and not main._orders_help.text.contains("\n"),
 		"help surfaces use compact labels rather than text blocks")
 	_assert(not main._build_help.tooltip_text.is_empty() and not main._orders_help.tooltip_text.is_empty(),
 		"compact help labels retain hover details")
 	main._set_feedback(main._intent_feedback, "Failed", "Full reducer error detail")
-	_assert(main._intent_feedback.text == "Failed" and main._intent_feedback.tooltip_text == "Full reducer error detail",
+	_assert(main._intent_feedback.text == "Failed" and
+			main._intent_feedback.tooltip_text == "Full reducer error detail",
 		"error status stays concise while retaining details")
-	main.sidebar.toggle()
-	var preferred_width: float = main.sidebar._preferred_width
-	main.sidebar.toggle()
-	_assert(is_equal_approx(main.sidebar._preferred_width, preferred_width),
-		"collapse preserves preferred width")
-	main.sidebar.set_sidebar_width(9999.0)
-	_assert(main.sidebar.custom_minimum_size.x <= get_viewport().get_visible_rect().size.x - main.sidebar.MAP_MIN_WIDTH,
-		"sidebar width clamps while retaining map space")
-	var press := InputEventMouseButton.new()
-	press.button_index = MOUSE_BUTTON_LEFT
-	press.pressed = true
-	main.sidebar._on_splitter_input(press)
-	_assert(main.sidebar._dragging_splitter, "splitter grip starts a resize")
-	press.pressed = false
-	main.sidebar._input(press)
-	_assert(not main.sidebar._dragging_splitter and not main.map._dragging,
-		"splitter release does not arm map painting")
-	_set_role(main, "operator", true, false)
-	main.sidebar.search.text = "build"
-	main.sidebar.search.text_changed.emit("build")
 	_set_role(main, "viewer", false, false)
+	_assert(not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"],
+		"viewer workspace authorization fails closed")
 	_assert(not main._mode_buttons[&"build"].visible and
-		not main._build_menu.visible and not main._block_box.visible,
-		"viewer search cannot resurrect unauthorized Build controls")
-	main.sidebar.search.text = "forest"
-	main.sidebar.search.text_changed.emit("forest")
-	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible and
-			not main._block_box.visible,
-		"viewer search cannot reveal unauthorized build aliases")
-	main.sidebar.search.clear()
-	main.sidebar.search.text_changed.emit("")
-	_assert(not main.sidebar.sections["policies"].wrapper.visible and
-			not main.sidebar.sections["administration"].wrapper.visible,
-		"viewer cannot discover unauthorized policy or admin sections")
-	for key: String in ["overview", "operations", "people", "alerts", "activity"]:
-		_assert(main.sidebar.sections[key].wrapper.is_visible_in_tree(),
-			"viewer clear restores allowed section wrapper: %s" % key)
-	_assert(not main.sidebar.sections["policies"].wrapper.is_visible_in_tree() and
-			not main.sidebar.sections["administration"].wrapper.is_visible_in_tree(),
-		"viewer clear keeps forbidden section wrappers hidden")
-	_assert(not main._mode_buttons[&"build"].visible and not main._build_menu.visible,
+			not main._build_menu.visible and not main._block_box.visible,
 		"viewer cannot see mutation controls")
 	main.map_intent_override = _record_reducer_call
 	var before := reducer_calls.size()
 	main._dispatch_build_block(Rect2i(1, 1, 1, 1), ContinuumTileKind.create_farm())
 	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
 	_set_role(main, "operator", true, false)
-	_assert(main.sidebar.sections["policies"].wrapper.visible and
-			not main.sidebar.sections["administration"].wrapper.visible,
-		"operator inherits policy access but not admin access")
+	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"],
+		"operator inherits policy and operations workspace access")
 	main._set_mode(&"build")
 	_set_role(main, "viewer", false, false)
 	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
@@ -247,13 +172,28 @@ func _test_sidebar_surface(main: Control) -> void:
 	_assert(not main._can_operate and not main._is_admin,
 		"inconsistent admin flags fail closed")
 	_set_role(main, "admin", true, true)
-	_assert(main.sidebar.sections["administration"].wrapper.visible and
-		main._speed_buttons[0].visible, "admin can see administration controls")
+	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"] and
+			main._speed_strip.visible, "admin can see workspace panels and header speed controls")
 	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
-
-
-func _set_role(main: Control, role: String, can_operate: bool, is_admin: bool) -> void:
-	main.fixture_access.set_role(role, can_operate, is_admin)
+	var desktop_size := main.size
+	main.size = Vector2(390, 844)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	_assert(main.workspace.compact and main.workspace.area.size.x == 390,
+		"production UI fits a phone viewport without a fixed-width sidebar")
+	_assert(main.workspace.area.position.y < 140,
+		"telemetry text cannot inflate the header through narrow wrapping")
+	main.size = desktop_size
+	await get_tree().process_frame
+	await get_tree().process_frame
+	for window: WorkspaceWindow in main.workspace.windows.values():
+		window.size = WorkspaceLayout.MIN_SIZE
+	await get_tree().process_frame
+	await get_tree().process_frame
+	for window: WorkspaceWindow in main.workspace.windows.values():
+		_assert(window.content.get_combined_minimum_size().x <= window.scroll.size.x,
+			"panel contents fit minimum width: %s" % window.name)
+	main.workspace._apply_layout()
 
 
 func _refresh_real_tiles(main: Control) -> void:
@@ -291,13 +231,17 @@ func _refresh_real_tiles(main: Control) -> void:
 	if not compatible.is_empty():
 		_assert(main._block_controls[compatible[0]].set.disabled,
 			"empty refresh disables incompatible block work control")
-	main.map_intent_override = _record_reducer_call
 	main._dispatch_build_block(Rect2i(7, 4, 2, 3), ContinuumTileKind.create_farm())
 	_assert(reducer_calls.size() == 1, "controller dispatches one reducer invocation")
-	_assert(reducer_calls[0][0] == "build_tile_block" and reducer_calls[0][1].slice(0, 4) == [7, 4, 8, 6],
+	_assert(reducer_calls[0][0] == "build_tile_block" and
+			reducer_calls[0][1].slice(0, 4) == [7, 4, 8, 6],
 		"reducer receives normalized inclusive rectangle payload")
 	main._dispatch_build_block(Rect2i(3, 3, 1, 1), ContinuumTileKind.create_mine())
-	_assert(reducer_calls.size() == 2, "each completed release maps to one reducer invocation")
+	_assert(reducer_calls.size() == 2, "each completed block maps to one reducer invocation")
+
+
+func _set_role(main: Control, role: String, can_operate: bool, is_admin: bool) -> void:
+	main.fixture_access.set_role(role, can_operate, is_admin)
 
 
 func _record_reducer_call(name: String, args: Array) -> void:

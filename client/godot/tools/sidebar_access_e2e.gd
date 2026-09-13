@@ -20,14 +20,14 @@ func _ready() -> void:
 
 func _test_operator_lifecycle() -> void:
 	await _wait_role("Viewer")
-	_assert(not main.sidebar.sections["policies"].wrapper.visible and
-			not main.sidebar.sections["administration"].wrapper.visible and
+	_assert(not main.workspace.authorized["policies"] and
+			not main.workspace.authorized["operations"] and
 			not main._build_menu.visible, "viewer mutation and admin controls are hidden")
 	_write_identity(_option("--identity-file", ""))
 	await _wait_file(_option("--operator-granted-file", ""))
 	await _wait_role("Operator")
-	_assert(main.sidebar.sections["policies"].wrapper.visible and
-			not main.sidebar.sections["administration"].wrapper.visible and
+	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"] and
+			not main._speed_strip.visible and
 		main._haul_button.visible, "operator sees operations and policies, not administration")
 	var rationed := main._meal_buttons[ContinuumMealPolicy.Options.rationed] as Button
 	rationed.pressed.emit()
@@ -36,17 +36,16 @@ func _test_operator_lifecycle() -> void:
 		return config != null and config.meal_policy.value == ContinuumMealPolicy.Options.rationed)
 	_assert(not failed and main._meal_request == null, "operator meal control changed authoritative config")
 	main._set_mode(&"build")
-	main.sidebar.search.text = "build"
 	_write_marker(_option("--revoke-request-file", ""))
 	await _wait_file(_option("--operator-revoked-file", ""))
 	await _wait_role("Viewer")
-	_assert(not main.sidebar.sections["policies"].wrapper.visible and
+	_assert(not main.workspace.authorized["policies"] and
 			not main._build_menu.visible and main.map.interaction_mode == &"select",
-		"revocation while searching hides controls and keeps map out of Build mode")
+		"revocation hides workspace controls and keeps map out of Build mode")
 	SpacetimeDB.Continuum.disconnect_db()
 	await _wait_role("Unknown")
-	_assert(not main.sidebar.sections["policies"].wrapper.visible and
-			not main.sidebar.sections["administration"].wrapper.visible,
+	_assert(not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"] and
+			not main._speed_strip.visible,
 		"disconnect fails closed in the main scene")
 	SpacetimeDB.Continuum.reconnect_db()
 	await _wait_role("Viewer")
@@ -55,8 +54,8 @@ func _test_operator_lifecycle() -> void:
 
 func _test_admin() -> void:
 	await _wait_role("Admin")
-	_assert(main.sidebar.sections["administration"].wrapper.visible and
-		main._speed_buttons[60].visible and main._is_admin,
+	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"] and
+		main._speed_strip.visible and main._is_admin,
 		"authenticated admin sees administration controls")
 	(main._speed_buttons[60] as Button).pressed.emit()
 	await _wait_until(func() -> bool:
@@ -74,7 +73,7 @@ func _wait_until(condition: Callable) -> void:
 		if failed or condition.call():
 			return
 		await get_tree().process_frame
-	_fail("timed out waiting for sidebar state")
+	_fail("timed out waiting for workspace state")
 
 func _wait_file(path: String) -> void:
 	_assert(not path.is_empty(), "required coordination path is configured")

@@ -95,6 +95,11 @@ admin-grant *args:
 test-map-ui:
     scripts/internal/test-map-ui
 
+# Run the backend-free workspace layout and interaction regression scene.
+test-workspaces:
+    {{ quote(godot) }} --headless --path client/godot --editor --quit
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/workspace_test.tscn
+
 test-access:
     scripts/internal/test-access
 

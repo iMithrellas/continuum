@@ -124,6 +124,49 @@ selects; the selected-block buttons separately dispatch the corresponding
 enable/disable or work-order mutation. Displayed state follows the subscribed
 server rows, and pending requests do not optimistically change the map.
 
+## Workspace UI
+
+The map is the primary surface. The workspace manager provides eight real game
+panels: **overview**, **people**, **inspector**, **operations**, **policies**,
+**alerts**, **activity**, and **trends**. It replaces the former sidebar; panel
+contents are the same live colony controls and data, not prototype placeholders.
+
+Keyboard controls are stable and ordered as follows:
+
+| Key | Panel |
+| --- | --- |
+| F1 | Overview |
+| F2 | People |
+| F3 | Inspector |
+| F4 | Operations |
+| F5 | Policies |
+| F6 | Alerts |
+| F7 | Activity |
+| F8 | Trends |
+
+`Ctrl+F` opens the panel chooser for the active workspace. `Ctrl+\` toggles
+Map mode, hiding panels so the whole viewport is available to the map. Drag a
+window title bar to move it or its corner grip to resize it; neighboring edges
+snap with a gutter, and holding `Alt` bypasses snapping. Pinning preserves a
+panel's position and size. Restore minimized panels from the dock; reopen closed
+panels through the chooser or their function key. Selecting a map block opens the
+inspector unless Map mode is active. `Escape` cancels a move or resize.
+
+The manager includes **Daily operations**, **Logistics & build**, **Colonist
+welfare**, and **Diagnostics** layouts. Users can create, rename, reset, and
+delete custom layouts; built-in layouts cannot be deleted. Preferences are
+personal to this device and auto-save locally to `user://workspaces.json`.
+They contain no colony state, roles, or replicated data. `--workspace-file=PATH`
+selects an alternate file for test or disposable runs.
+
+On narrow viewports the manager enters compact mode and shows one panel at a
+time without replacing the stored desktop geometry. Unauthorized operator and
+policy panels stay hidden, while the map and permitted inspection panels remain
+available. Simulation speed controls are in the top header and are visible only
+to admins; workspace permissions do not grant reducer authority.
+
+Run `just test-workspaces` for the backend-free layout and viewport-input tests.
+
 The map renders a blended soil layer and independent ecological cover. Soil
 fertility, moisture, and forest density may overlap and are currently
 decorative: terrain does not modify production, movement, needs, or other
@@ -241,7 +284,8 @@ just test-sidebar-access
 The map UI gate uses a test-only subclass scene to exercise controller layout and
 input assertions; production `main.tscn` always constructs the real provider. The
 access gate uses a real private module, `my_role` subscription, live grant/revocation,
-and disconnect/reconnect. The sidebar gate uses the untouched production main scene,
+and disconnect/reconnect. The UI authorization gate (still named `test-sidebar-access`)
+uses the production main scene,
 external publisher role changes, real operator/admin reducer calls, and fail-closed
 disconnect/reconnect checks. All three scripts use unique private containers,
 volumes, and databases and remove them on exit; they never write the shared Compose

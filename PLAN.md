@@ -41,13 +41,32 @@
 - [ ] Cascading failures
 - [ ] Failures should generally be understandable after investigating them
 
+### Construction direction
+
+Construction should be material-driven and bottom-up rather than based on
+placing semantic building entities. Function should emerge from the interaction
+of designations, physical modifications, material properties, environmental
+conditions, and suitability. For example, a space may progress from cleared
+ground, to a storage designation, to a room with a floor, walls, and roof, and
+then gain insulation or cooling until it becomes suitable for food storage. The
+simulation should not require a discrete `FoodStorageBuilding` entity.
+
+- [ ] Separate space designations from physical construction and derived function
+- [ ] Support construction as incremental work with materials, labor, progress, interruption, and completion events
+- [ ] Model physical modifications such as clearing, floors, walls, roofs, insulation, and cooling
+- [ ] Model material properties that affect strength, thermal behavior, permeability, durability, and other outcomes
+- [ ] Model environmental conditions that affect suitability and function
+- [ ] Derive room and space capabilities from their actual construction and conditions
+- [ ] Allow unfinished, damaged, improvised, and partially suitable spaces to remain meaningful
+- [ ] Replace semantic facility requirements with capability and suitability checks wherever practical
+
 ### Implemented slices
 - [x] Needs slice: hunger, fatigue, recreation, mood, productivity, sleep hours, and recent sleep quality are simulated per colonist; social, comfort, safety, relationships, and food quality are not implemented
 - [x] Autonomous colonist goals cover eating, sleeping, recreation, work, and hauling; direct unit control is not implemented
 - [x] Production slice: farming, logging, mining, and hunting produce food, wood, stone, and meat on work tiles
 - [x] Work-order slice: standing per-tile orders, priorities `1..=3`, pause/remove, deterministic selection, and forest's independent logging and hunting orders
 - [x] Hauling slice: self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage
-- [x] Construction slice: operators can instantly build any of the seven operational tile kinds for 20 stored wood per cell across a fully empty rectangle; construction jobs are not implemented
+- [x] Construction PoC: operators can instantly build any of the seven semantic operational tile kinds for 20 stored wood per cell across a fully empty rectangle; construction jobs are not implemented
 - [x] Environmental slice: every tile can have seeded, bounded, overlapping soil fertility, forest density, and moisture fields; no terrain-driven production or need effects are implemented
 - [x] Failure-chain slice: disabling recreation can produce unmet recreation, lower mood and sleep quality, more fatigue, lower productivity, and food shortage; this is not the full failure model
 
@@ -216,7 +235,7 @@
 
 ## Clear Next Iterations
 - [ ] Persistent named blocks that can be reused, renamed, and edited as first-class objects
-- [ ] Construction jobs with materials, progress, labor, interruption, and completion events
+- [ ] Material-driven construction jobs that replace the current semantic facility-building PoC
 - [ ] Terrain effects wired into farming, forestry, moisture, movement, or other operational outcomes
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
 - [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies

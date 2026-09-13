@@ -1,4 +1,4 @@
-## The single Continuum screen: colony map, status panel, alerts and event feed.
+## Live colony panels inside the player's personal workspace deck.
 ##
 ## Every value shown here comes from the SpacetimeDB subscription, and every button
 ## issues an intent-level reducer through the generated bindings. Nothing is
@@ -8,7 +8,7 @@ extends Control
 const SessionHistoryModel = preload("res://scripts/session_history.gd")
 const HistoryChartControl = preload("res://scripts/history_chart.gd")
 
-## How often the side panel is rebuilt. The backend ticks once a real second;
+## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
 const REFRESH_INTERVAL := 0.25
 
@@ -38,8 +38,8 @@ const NEED_BARS := [
 	{"key": "productivity", "label": "Productivity", "invert": false},
 ]
 
-@onready var map: ColonyMap = $Layout/MapPanel/Map
-@onready var sidebar: ContinuumSidebar = $Layout/SidePanel
+@onready var map: ColonyMap = $Map
+@onready var workspace: WorkspaceDeck = $Workspace
 
 var _status_label: RichTextLabel
 var _colonist_box: VBoxContainer
@@ -97,12 +97,20 @@ var _is_admin := false
 var _sections: Dictionary = {}
 var _access: ContinuumAccess
 var _profile := ContinuumClientProfile.NORMAL
+var _clock: Label
+var _resource_labels: Dictionary = {}
+var _population: Label
+var _speed_strip: HBoxContainer
 
 
 func _ready() -> void:
 	_history = SessionHistoryModel.new()
-	sidebar.setup()
-	_build_side_panel()
+	theme = DeckTheme.create()
+	workspace.setup(map, _cli_option("--workspace-file", WorkspaceLayout.SAVE_PATH))
+	_build_panels()
+	workspace.finish_setup()
+	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
+	map.input_blocked = workspace.blocks_map_input
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
 	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
@@ -183,21 +191,6 @@ func _create_access(client: ContinuumModuleClient) -> ContinuumAccess:
 
 func _identity_token_path(host: String, database: String) -> String:
 	return "user://continuum_identity_%s.token" % (host + "/" + database).md5_text()
-
-
-func _unhandled_input(event: InputEvent) -> void:
-	if not event is InputEventKey or not event.pressed or event.echo:
-		return
-	var key_event := event as InputEventKey
-	if key_event.ctrl_pressed and key_event.keycode == KEY_F:
-		sidebar.search.grab_focus()
-		get_viewport().set_input_as_handled()
-	elif key_event.ctrl_pressed and key_event.keycode == KEY_BACKSLASH:
-		sidebar.toggle()
-		get_viewport().set_input_as_handled()
-	elif key_event.keycode == KEY_ESCAPE and sidebar.search.has_focus():
-		sidebar.search.clear()
-		get_viewport().set_input_as_handled()
 
 
 func _process(delta: float) -> void:
@@ -351,6 +344,8 @@ func _on_rectangle_selected(rect: Rect2i) -> void:
 	_selected_tile_id = tile.id if tile != null else -1
 	_refresh_controls()
 	_dirty = true
+	if not workspace.map_only and not workspace.windows["inspector"].visible:
+		workspace.toggle_panel("inspector")
 
 
 func _tile_at(pos: Vector2i) -> ContinuumTile:
@@ -568,15 +563,11 @@ func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 			reducer_name, response.reducer_result.get_internal_error()], Color("ff5c6c"))
 
 
-func _build_side_panel() -> void:
-	var side: VBoxContainer = sidebar.add_section("overview", "Overview", ["status", "colony", "resources"])
-	_sections["overview"] = side
-	_sections["operations"] = sidebar.add_section("operations", "Operations", ["map", "build", "select", "block", "production"])
-	_sections["policies"] = sidebar.add_section("policies", "Policies", ["meal", "hauling", "recreation"])
-	_sections["people"] = sidebar.add_section("people", "People", ["colonists", "workers", "roster"])
-	_sections["alerts"] = sidebar.add_section("alerts", "Alerts", ["warning", "acknowledge"])
-	_sections["activity"] = sidebar.add_section("activity", "Activity", ["history", "events", "feed"])
-	_sections["administration"] = sidebar.add_section("administration", "Administration", ["speed", "admin"])
+func _build_panels() -> void:
+	for key: String in WorkspaceLayout.PANEL_NAMES:
+		_sections[key] = workspace.add_panel(key)
+	_build_telemetry()
+	var side: VBoxContainer
 	var section: VBoxContainer = _sections["overview"]
 	side = section
 
@@ -633,34 +624,32 @@ func _build_side_panel() -> void:
 	_status_label.scroll_active = false
 	side.add_child(_status_label)
 
-	section = _sections["activity"]
+	section = _sections["trends"]
 	side = section
-	side.add_child(_heading("Session history"))
 	var history_note := Label.new()
-	history_note.text = "Session history"
+	history_note.text = "MOOD / PRODUCTIVITY\nSince connection; not saved with the colony."
 	history_note.tooltip_text = "This session / since connection. Not saved on the server."
 	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	history_note.add_theme_font_size_override("font_size", 11)
 	history_note.add_theme_color_override("font_color", Color("7f8b9c"))
 	side.add_child(history_note)
 	_history_chart = HistoryChartControl.new()
+	_history_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_history_chart)
 
-	section = _sections["administration"]
-	side = section
-	side.add_child(_heading("Simulation speed (admin-only)"))
 	_speed_label = Label.new()
-	side.add_child(_speed_label)
-	var speeds := HBoxContainer.new()
+	_speed_label.tooltip_text = "Authoritative simulation speed"
+	workspace.telemetry.add_child(_speed_label)
+	_speed_strip = HBoxContainer.new()
 	for speed: int in [0, 6, 60, 600, 3600]:
 		var button := Button.new()
 		button.text = "Pause" if speed == 0 else "%dx" % (speed / 6)
 		button.toggle_mode = true
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(_change_speed.bind(float(speed)))
-		speeds.add_child(button)
+		_speed_strip.add_child(button)
 		_speed_buttons[speed] = button
-	side.add_child(speeds)
+	workspace.telemetry.add_child(_speed_strip)
 
 	section = _sections["operations"]
 	side = section
@@ -694,7 +683,7 @@ func _build_side_panel() -> void:
 	_block_info = Label.new()
 	_block_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_block_box.add_child(_block_info)
-	var enabled_row := HBoxContainer.new()
+	var enabled_row := HFlowContainer.new()
 	for enabled: bool in [true, false]:
 		var button := Button.new()
 		button.text = "Enable block" if enabled else "Disable block"
@@ -704,13 +693,13 @@ func _build_side_panel() -> void:
 	_block_box.add_child(enabled_row)
 	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
 			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
-		var row := HBoxContainer.new()
+		var row := HFlowContainer.new()
 		var label := Label.new()
 		label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		label.custom_minimum_size.x = 110
 		row.add_child(label)
 		var add := Button.new()
-		add.text = "N"
+		add.text = "Set"
 		add.tooltip_text = "Normal priority"
 		add.pressed.connect(_set_block_work.bind(work, 2, true))
 		row.add_child(add)
@@ -730,7 +719,8 @@ func _build_side_panel() -> void:
 		_block_box.add_child(row)
 	side.add_child(_block_box)
 
-	side.add_child(_heading("Selected tile detail (inspect)"))
+	side = _sections["inspector"]
+	side.add_child(_heading("Selected terrain & facilities"))
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
 	_tile_info = Label.new()
@@ -742,11 +732,19 @@ func _build_side_panel() -> void:
 	_orders_help = Label.new()
 	_orders_help.text = "Orders: priority + distance"
 	_orders_help.tooltip_text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
+	_orders_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_orders_help)
+	var map_key := Label.new()
+	map_key.text = "MAP KEY\nBox: ground pile. Attached box: carried cargo.\nDashed arrow: delivery destination.\nTerrain is decorative; fertility and cover do not modify production."
+	map_key.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	map_key.add_theme_font_size_override("font_size", 11)
+	map_key.add_theme_color_override("font_color", DeckTheme.MUTED)
+	side.add_child(map_key)
 	_intent_feedback = Label.new()
-	_intent_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_intent_feedback.custom_minimum_size.x = 160
+	_intent_feedback.clip_text = true
 	_intent_feedback.add_theme_font_size_override("font_size", 11)
-	side.add_child(_intent_feedback)
+	workspace.telemetry.add_child(_intent_feedback)
 	_set_mode(&"select")
 
 	section = _sections["policies"]
@@ -758,68 +756,65 @@ func _build_side_panel() -> void:
 
 	section = _sections["people"]
 	side = section
-	side.add_child(_heading("Colonists"))
+	side.add_child(_heading("Needs / assignments / cargo"))
 	_colonist_box = VBoxContainer.new()
 	_colonist_box.add_theme_constant_override("separation", 8)
 	side.add_child(_colonist_box)
 
 	section = _sections["alerts"]
 	side = section
-	side.add_child(_heading("Alerts"))
+	side.add_child(_heading("Colony attention"))
 	_alert_box = VBoxContainer.new()
 	_alert_box.add_theme_constant_override("separation", 4)
 	side.add_child(_alert_box)
 
 	section = _sections["activity"]
 	side = section
-	side.add_child(_heading("Recent events"))
+	side.add_child(_heading("Server events / latest 40"))
 	_feed = RichTextLabel.new()
 	_feed.bbcode_enabled = true
-	_feed.custom_minimum_size = Vector2(0, 220)
+	_feed.custom_minimum_size = Vector2(0, 70)
+	_feed.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_feed.scroll_following = true
 	side.add_child(_feed)
 
-	for entry: Array in [
-		["overview", _status_label, "Colony status", ["resources", "population"]],
-		["operations", _mode_buttons[&"select"], "Select", ["inspect", "selection"]],
-		["operations", _mode_buttons[&"build"], "Build", ["construct"]],
-		["operations", _build_menu, "Build type", ["farm", "forest", "mine", "storage"]],
-		["operations", _block_box, "Block tools", ["enable", "disable", "work order"]],
-		["policies", _haul_button, "Hauling policy", ["haul", "producer"]],
-		["policies", _meal_buttons[ContinuumMealPolicy.Options.normal], "Meal policy", ["ration"]],
-		["people", _colonist_box, "Colonists", ["workers", "roster"]],
-		["alerts", _alert_box, "Alerts", ["ack"]],
-		["activity", _history_chart, "History", ["trend"]],
-		["activity", _feed, "Recent events", ["log"]],
-		["administration", _speed_label, "Simulation speed", ["pause", "time scale"]],
-	]:
-		sidebar.register_entry(entry[0], entry[1], entry[2], PackedStringArray(entry[3]))
-	_style_sidebar_buttons(sidebar)
 	_refresh_permissions()
 
 
-func _style_sidebar_buttons(node: Node) -> void:
-	for child: Node in node.get_children():
-		if child is Button:
-			var button := child as Button
-			button.custom_minimum_size.y = maxf(button.custom_minimum_size.y, 40.0)
-			sidebar._apply_button_style(button)
-		_style_sidebar_buttons(child)
+func _build_telemetry() -> void:
+	var brand := Label.new()
+	brand.text = "CONTINUUM  /"
+	brand.add_theme_font_size_override("font_size", 17)
+	brand.add_theme_color_override("font_color", DeckTheme.ACCENT)
+	workspace.telemetry.add_child(brand)
+	_clock = Label.new()
+	_clock.text = "DAY --  --:--"
+	_clock.custom_minimum_size.x = 140
+	workspace.telemetry.add_child(_clock)
+	for kind: int in ColonyMap.RESOURCE_COLORS:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("152530"), DeckTheme.LINE, 5))
+		card.tooltip_text = "Stored %s. Ground stacks and carried cargo are separate." % ContinuumResourceKind.parse_enum_name(kind)
+		var label := Label.new()
+		label.text = "%s  --" % ContinuumResourceKind.parse_enum_name(kind).to_upper()
+		label.custom_minimum_size.x = 100
+		label.add_theme_color_override("font_color", ColonyMap.RESOURCE_COLORS[kind])
+		card.add_child(label)
+		workspace.telemetry.add_child(card)
+		_resource_labels[kind] = label
+	_population = Label.new()
+	_population.text = "CREW --"
+	workspace.telemetry.add_child(_population)
 
 
 func _refresh_permissions() -> void:
-	if not is_instance_valid(sidebar):
+	if not is_instance_valid(workspace):
 		return
 	# Unknown and disconnected are deliberately equivalent to viewer permissions.
-	sidebar.set_section_authorized("policies", _can_operate)
-	sidebar.set_section_authorized("administration", _is_admin)
-	_set_sidebar_entry_permission(_mode_buttons.get(&"select"), true)
-	_set_sidebar_entry_permission(_mode_buttons.get(&"build"), _can_operate)
-	_set_sidebar_entry_permission(_build_menu, _can_operate)
-	_set_sidebar_entry_permission(_block_box, _can_operate)
-	_set_sidebar_entry_permission(_haul_button, _can_operate)
-	_set_sidebar_entry_permission(_meal_buttons.get(ContinuumMealPolicy.Options.normal), _can_operate)
-	_set_sidebar_entry_permission(_speed_label, _is_admin)
+	workspace.set_panel_authorized("policies", _can_operate)
+	workspace.set_panel_authorized("operations", _can_operate)
+	if is_instance_valid(_speed_strip):
+		_speed_strip.visible = _is_admin
 	if is_instance_valid(_mode_buttons.get(&"build")):
 		_mode_buttons[&"build"].visible = _can_operate
 	if is_instance_valid(_build_menu):
@@ -832,11 +827,6 @@ func _refresh_permissions() -> void:
 		_haul_button.visible = _can_operate
 	for button: Button in _meal_buttons.values():
 		button.visible = _can_operate
-
-
-func _set_sidebar_entry_permission(node: Control, authorized: bool) -> void:
-	if is_instance_valid(node):
-		sidebar.set_entry_authorized(node, authorized)
 
 
 func _heading(text: String) -> Label:
@@ -879,7 +869,6 @@ func _refresh() -> void:
 	_refresh_controls()
 	_refresh_alerts()
 	_refresh_feed()
-	sidebar._apply_responsive_theme()
 
 
 func _refresh_status() -> void:
@@ -893,6 +882,11 @@ func _refresh_status() -> void:
 	var second_of_day: float = fmod(config.game_seconds, 86400.0)
 	var hour: int = int(second_of_day / 3600.0)
 	var minute: int = int(fmod(second_of_day, 3600.0) / 60.0)
+	_clock.text = "DAY %02d  %02d:%02d%s" % [day, hour, minute, " | stale" if not _state_ready else ""]
+	for kind: int in _resource_labels:
+		var resource := ContinuumResourceKind.parse_enum_name(kind)
+		_resource_labels[kind].text = "%s  %.0f" % [resource.to_upper(), colony.get(resource)]
+	_population.text = "CREW %02d" % colony.population
 
 	_status_label.text = "\n".join([
 		"[b]Day %d[/b]  %02d:%02d   [color=#7f8b9c](%.0fx speed)[/color]"
@@ -981,6 +975,7 @@ func _coloured(text: String, value_0_100: float) -> String:
 
 func _refresh_colonists() -> void:
 	for child in _colonist_box.get_children():
+		_colonist_box.remove_child(child)
 		child.queue_free()
 
 	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
@@ -988,8 +983,11 @@ func _refresh_colonists() -> void:
 		return a.id < b.id)
 
 	for colonist: ContinuumColonist in colonists:
+		var card := PanelContainer.new()
+		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("192c37"), DeckTheme.LINE, 10))
 		var panel := VBoxContainer.new()
-		panel.add_theme_constant_override("separation", 1)
+		panel.add_theme_constant_override("separation", 4)
+		card.add_child(panel)
 
 		var header := Label.new()
 		var suffix := ""
@@ -1009,10 +1007,13 @@ func _refresh_colonists() -> void:
 			ContinuumWorkType.parse_enum_name(colonist.work.value).capitalize(), role,
 		]
 		job.add_theme_font_size_override("font_size", 12)
+		job.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		job.add_theme_color_override("font_color", DeckTheme.MUTED)
 		panel.add_child(job)
 		var cargo := Label.new()
 		cargo.text = "Cargo: empty hands"
 		cargo.add_theme_font_size_override("font_size", 12)
+		cargo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		if colonist.carried_amount > 0.0:
 			cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
 				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
@@ -1024,7 +1025,9 @@ func _refresh_colonists() -> void:
 			panel.add_child(_stat_row(str(bar["label"]),
 					float(colonist.get(str(bar["key"]))), bool(bar["invert"])))
 
-		_colonist_box.add_child(panel)
+		_colonist_box.add_child(card)
+	if colonists.is_empty():
+		_colonist_box.add_child(_heading("Waiting for colonist data"))
 
 
 ## One labelled 0-100 bar. `invert` means "high is bad" (a need), so the colour
@@ -1126,7 +1129,7 @@ func _refresh_controls() -> void:
 			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
 		var controls: Dictionary = _block_controls[work]
 		var count: int = compatible_counts.get(work, 0)
-		controls.label.text = "%s (%d compatible)" % [ContinuumWorkType.parse_enum_name(work).capitalize(), count]
+		controls.label.text = "%s (%d)" % [ContinuumWorkType.parse_enum_name(work).capitalize(), count]
 		controls.set.disabled = block_busy or count == 0
 		controls.pause.disabled = block_busy or count == 0
 		for priority_button: Button in controls.priority:
@@ -1220,12 +1223,18 @@ func _refresh_controls() -> void:
 		tile_details += "\nProduction: disabled"
 	if not _state_ready:
 		tile_details += "\nState: stale"
-	_tile_info.text = tile_details.get_slice("\n", 0)
+	var terrain: ContinuumTerrain = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
+	if terrain != null:
+		tile_details += "\n\nSoil: %s\nFertility: %.0f%%\nMoisture: %.0f%%\nCover: %s (%.0f%%)" % [
+			_map_soil_name(terrain.soil_fertility, terrain.moisture), terrain.soil_fertility * 100.0,
+			terrain.moisture * 100.0, _map_cover_name(terrain.forest_density), terrain.forest_density * 100.0]
+	_tile_info.text = tile_details
 	_tile_info.tooltip_text = tile_details
 
 
 func _refresh_alerts() -> void:
 	for child in _alert_box.get_children():
+		_alert_box.remove_child(child)
 		child.queue_free()
 
 	var active: Array[ContinuumAlert] = []
@@ -1246,7 +1255,7 @@ func _refresh_alerts() -> void:
 		var row := HBoxContainer.new()
 
 		var label := Label.new()
-		label.text = _compact_text(alert.message, 56) + ("  [ack]" if alert.acknowledged else "")
+		label.text = alert.message + ("  [ack]" if alert.acknowledged else "")
 		label.tooltip_text = alert.message + (" (acknowledged)" if alert.acknowledged else "")
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		label.add_theme_font_size_override("font_size", 11)
@@ -1260,7 +1269,6 @@ func _refresh_alerts() -> void:
 			ack.tooltip_text = "Acknowledge this alert (operator)"
 			ack.visible = _can_operate
 			ack.add_theme_font_size_override("font_size", 10)
-			sidebar._apply_button_style(ack)
 			ack.pressed.connect(_acknowledge.bind(alert.id))
 			row.add_child(ack)
 
@@ -1284,7 +1292,9 @@ func _refresh_feed() -> void:
 		details.append("d%d %02d:%02d %s" % [event.day, event.hour, event.minute, event.message])
 		lines.append("[color=#5c6675]d%d %02d:%02d[/color] [color=%s]%s[/color]" % [
 			event.day, event.hour, event.minute,
-			_severity_colour(event.severity).to_html(false), _compact_text(event.message, 72),
+			_severity_colour(event.severity).to_html(false), event.message.replace("[", "[lb]"),
 		])
-	_feed.text = "\n".join(lines)
+	var text := "\n\n".join(lines) if not lines.is_empty() else "Waiting for server events."
+	if _feed.text != text:
+		_feed.text = text
 	_feed.tooltip_text = "\n".join(details)
