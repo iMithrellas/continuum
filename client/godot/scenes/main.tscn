@@ -2,7 +2,7 @@
 
 [ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
 [ext_resource type="Script" path="res://scripts/colony_map.gd" id="2_map"]
-[ext_resource type="Script" path="res://scripts/sidebar.gd" id="3_sidebar"]
+[ext_resource type="Script" path="res://scripts/workspace_deck.gd" id="3_deck"]
 
 [node name="Main" type="Control"]
 layout_mode = 3
@@ -13,24 +13,15 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_main")
 
-[node name="Layout" type="HBoxContainer" parent="."]
+[node name="Map" type="Control" parent="."]
+layout_mode = 0
+script = ExtResource("2_map")
+
+[node name="Workspace" type="Control" parent="."]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-
-[node name="MapPanel" type="PanelContainer" parent="Layout"]
-layout_mode = 2
-size_flags_horizontal = 3
-size_flags_stretch_ratio = 2.0
-
-[node name="Map" type="Control" parent="Layout/MapPanel"]
-layout_mode = 2
-script = ExtResource("2_map")
-
-[node name="SidePanel" type="PanelContainer" parent="Layout"]
-custom_minimum_size = Vector2(430, 0)
-layout_mode = 2
-script = ExtResource("3_sidebar")
+script = ExtResource("3_deck")

@@ -16,10 +16,11 @@ REVOKED_FILE="/tmp/${NAME}-revoked"
 PUBLISHER_WRAPPER="/tmp/${NAME}-publisher"
 GODOT_WRAPPER="/tmp/${NAME}-godot"
 LAUNCH_ARGS="/tmp/${NAME}-launch-args"
+WORKSPACE_FILE="/tmp/${NAME}-workspace.json"
 NORMAL_PID=""
 cleanup() {
     [[ -z "$NORMAL_PID" ]] || kill "$NORMAL_PID" >/dev/null 2>&1 || true
-    rm -f "$NORMAL_LOG" "$ADMIN_LOG" "$IDENTITY_FILE" "$GRANTED_FILE" "$REVOKE_REQUEST_FILE" "$REVOKED_FILE" "$PUBLISHER_WRAPPER" "$GODOT_WRAPPER" "$LAUNCH_ARGS"
+    rm -f "$NORMAL_LOG" "$ADMIN_LOG" "$IDENTITY_FILE" "$GRANTED_FILE" "$REVOKE_REQUEST_FILE" "$REVOKED_FILE" "$PUBLISHER_WRAPPER" "$GODOT_WRAPPER" "$LAUNCH_ARGS" "$WORKSPACE_FILE" "$WORKSPACE_FILE.tmp"
     docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
     docker volume rm "$DATA" "$CONFIG" >/dev/null 2>&1 || true
 }
@@ -48,7 +49,7 @@ grep -q -- "--stdb-host=$HOST" "$LAUNCH_ARGS"
 grep -q -- "--stdb-db=$DB" "$LAUNCH_ARGS"
 
 timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
-    --stdb-host="$HOST" --stdb-db="$DB" --profile=normal \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=normal --workspace-file="$WORKSPACE_FILE" \
     --identity-file="$IDENTITY_FILE" --operator-granted-file="$GRANTED_FILE" \
     --revoke-request-file="$REVOKE_REQUEST_FILE" --operator-revoked-file="$REVOKED_FILE" >"$NORMAL_LOG" 2>&1 &
 NORMAL_PID=$!
@@ -69,7 +70,7 @@ ADMIN_OUTPUT="$(godot --headless --path "$ROOT/client/godot" --script res://tool
 ADMIN_ID="$(printf '%s\n' "$ADMIN_OUTPUT" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2; exit}')"
 [[ -n "$ADMIN_ID" ]] || { printf '%s\n' "$ADMIN_OUTPUT" >&2; exit 1; }
 if ! timeout 120s godot --headless --path "$ROOT/client/godot" --scene res://tools/sidebar_access_e2e.tscn -- \
-    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --mode=admin >"$ADMIN_LOG" 2>&1; then
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --mode=admin --workspace-file="$WORKSPACE_FILE" >"$ADMIN_LOG" 2>&1; then
     cat "$ADMIN_LOG"
     exit 1
 fi
