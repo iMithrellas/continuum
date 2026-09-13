@@ -236,14 +236,14 @@ change colony state:
 
 ```bash
 DB="${CONTINUUM_DB:-continuum}"
-./scripts/stdb sql "$DB" "SELECT * FROM config"
-./scripts/stdb sql "$DB" "SELECT * FROM colony"
-./scripts/stdb sql "$DB" "SELECT * FROM tile"
-./scripts/stdb sql "$DB" "SELECT * FROM colonist"
-./scripts/stdb sql "$DB" "SELECT * FROM item_stack"
-./scripts/stdb sql "$DB" "SELECT * FROM work_order"
-./scripts/stdb sql "$DB" "SELECT * FROM alert"
-./scripts/stdb sql "$DB" "SELECT * FROM event_log"
+just stdb sql "$DB" "SELECT * FROM config"
+just stdb sql "$DB" "SELECT * FROM colony"
+just stdb sql "$DB" "SELECT * FROM tile"
+just stdb sql "$DB" "SELECT * FROM colonist"
+just stdb sql "$DB" "SELECT * FROM item_stack"
+just stdb sql "$DB" "SELECT * FROM work_order"
+just stdb sql "$DB" "SELECT * FROM alert"
+just stdb sql "$DB" "SELECT * FROM event_log"
 ```
 
 The reducer calls below change state and require the stated role; use only
@@ -252,11 +252,11 @@ read-only and supplies the ID used by the following work-order example:
 
 ```bash
 DB=continuum-worker-cooldown
-./scripts/stdb call "$DB" set_haul_policy '{"dedicatedHaulers":{}}'
-./scripts/stdb call "$DB" set_haul_policy '{"selfHaul":{}}'
-./scripts/stdb sql "$DB" "SELECT id, x, y, kind FROM tile"
-./scripts/stdb call "$DB" set_work_order 412 '{"farming":{}}' 1 true
-./scripts/stdb call "$DB" set_time_scale 0
+just stdb call "$DB" set_haul_policy '{"dedicatedHaulers":{}}'
+just stdb call "$DB" set_haul_policy '{"selfHaul":{}}'
+just stdb sql "$DB" "SELECT id, x, y, kind FROM tile"
+just stdb call "$DB" set_work_order 412 '{"farming":{}}' 1 true
+just stdb call "$DB" set_time_scale 0
 ```
 
 The seed layout makes tile `412` the farm at `(3,17)`; unlike tile `7` in the
@@ -274,8 +274,8 @@ cooldown worker module. For the currently available ready database, use:
 
 ```bash
 DB=continuum-worker-cooldown
-./scripts/stdb sql "$DB" "SELECT * FROM speed_control"
-./scripts/stdb call "$DB" set_speed_change_cooldown 300
+just stdb sql "$DB" "SELECT * FROM speed_control"
+just stdb call "$DB" set_speed_change_cooldown 300
 ```
 
 The command is not available in the baseline `continuum` schema. Its exact
@@ -286,14 +286,14 @@ tooling; do not infer a schema from application tables:
 
 ```bash
 DB="${CONTINUUM_DB:-continuum}"
-./scripts/stdb describe --json "$DB"
-./scripts/generate-bindings
+just stdb describe --json "$DB"
+just bindings
 ```
 
 The pinned Godot generator fetches the same published schema from
 `GET /v1/database/{database}/schema?version=10` before emitting bindings.
 
-`generate-bindings` imports the Godot project, fetches the published schema from
+`just bindings` imports the Godot project, fetches the published schema from
 the running SpacetimeDB instance, and regenerates
 `client/godot/spacetime_bindings/`. It must be rerun after table, reducer, or
 type changes. Generated files are outputs and are not hand-edited.

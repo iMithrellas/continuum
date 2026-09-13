@@ -152,39 +152,56 @@ versioned compatibility promise.
 
 ## Run Locally
 
-Start SpacetimeDB, publish the module, generate Godot bindings, and run the game:
+The repository uses `just` recipes for normal project, client, and backend
+workflows. List the available recipes with:
 
-```bash
-docker compose up -d
-./scripts/publish
-./scripts/generate-bindings
-godot --path client/godot
+```sh
+just --list
 ```
 
-`./scripts/publish` builds on the host and uses the matching SpacetimeDB CLI in
+Start SpacetimeDB, publish the module, generate Godot bindings, and run the game:
+
+```sh
+just setup
+just run
+```
+
+`just publish` builds on the host and uses the matching SpacetimeDB CLI in
 the container. Its login identity is stored in a Docker volume so later publishes
 retain ownership of the database. On first publish, that identity is also recorded
 as Continuum's admin. Because authorization is initialized with the database, use
-`./scripts/publish --fresh` when first upgrading an existing unauthenticated colony.
+`just publish-fresh` when first upgrading an existing unauthenticated colony.
 
-Use `./scripts/publish --fresh` only when a breaking schema change requires
+Use `just publish-fresh` only when a breaking schema change requires
 deleting existing colony data. The jobs/hauling schema adds `item_stack`, policy,
 role, and cargo fields and removes storage-capacity fields; upgrading from the
 previous slice requires a fresh publish and regenerated bindings. A fresh colony
-also requires authorizing client identities again.
+also requires authorizing client identities again. Normal `just publish` and
+`just setup` preserve the persistent database. The private test recipes below use
+their own disposable containers and databases.
+
+### Recipe Catalog
+
+Common recipes are `setup` (publish plus bindings), `publish`,
+`publish-fresh` (destructive database replacement), `bindings`, `run`, `smoke`,
+`watch`, and `stdb`. Backend checks are `check`, `test`, `fmt-check`, `fmt`, and
+`wasm`; local server control is `up`, `down`, and `logs`. Authorization and
+isolated integration gates are `admin-grant`, `admin`, `test-map-ui`,
+`test-access`, `test-sidebar-access`, `test-block-reducers`, and
+`test-access-cleanup`.
 
 ## Development
 
 Run backend tests:
 
 ```bash
-cargo test --manifest-path backend/spacetimedb/Cargo.toml
+just test
 ```
 
 Run the headless Godot end-to-end test:
 
 ```bash
-godot --headless --path client/godot --script res://tools/smoke_test.gd
+just smoke
 ```
 
 The smoke test accepts the same `--stdb-host` and `--stdb-db` user arguments as
@@ -193,19 +210,19 @@ the client.
 Run the reproducible map UI gate, including input/controller coverage:
 
 ```bash
-./scripts/test-map-ui
+just test-map-ui
 ```
 
 Run the isolated real-provider role lifecycle gate:
 
 ```bash
-./scripts/test-access
+just test-access
 ```
 
 Run the private production-main authorization gate:
 
 ```bash
-./scripts/test-sidebar-access
+just test-sidebar-access
 ```
 
 The map UI gate uses a test-only subclass scene to exercise controller layout and
@@ -220,7 +237,7 @@ database.
 Run the isolated rectangular-reducer integration gate:
 
 ```bash
-./scripts/test-block-reducers
+just test-block-reducers
 ```
 
 Both scripts build and publish a disposable private database in a uniquely named
@@ -231,7 +248,7 @@ is required.
 Observe the live colony in a terminal:
 
 ```bash
-godot --headless --path client/godot --script res://tools/watch.gd -- --seconds=120
+just watch -- --seconds=120
 ```
 
 The watcher reports stored totals without capacity denominators, ground totals
@@ -242,14 +259,14 @@ accepts `--stdb-host` and `--stdb-db` like the client.
 Call reducers or query state through the containerized CLI:
 
 ```bash
-./scripts/stdb sql continuum "SELECT * FROM colony"
-./scripts/stdb call continuum set_time_scale 600
-./scripts/stdb call continuum set_zone_enabled '{"recreation":{}}' false
-./scripts/stdb call continuum set_haul_policy '{"dedicatedHaulers":{}}'
-./scripts/stdb call continuum set_haul_policy '{"selfHaul":{}}'
-./scripts/stdb sql continuum "SELECT * FROM item_stack"
-./scripts/stdb sql continuum "SELECT * FROM work_order"
-./scripts/stdb call continuum reset_colony
+just stdb sql continuum "SELECT * FROM colony"
+just stdb call continuum set_time_scale 600
+just stdb call continuum set_zone_enabled '{"recreation":{}}' false
+just stdb call continuum set_haul_policy '{"dedicatedHaulers":{}}'
+just stdb call continuum set_haul_policy '{"selfHaul":{}}'
+just stdb sql continuum "SELECT * FROM item_stack"
+just stdb sql continuum "SELECT * FROM work_order"
+just stdb call continuum reset_colony
 ```
 
 ### Authorization
@@ -271,13 +288,13 @@ To authorize a Godot client:
 2. Using the persistent publishing/admin CLI identity, authorize it:
 
 ```bash
-./scripts/stdb call continuum set_operator '"<CLIENT_IDENTITY>"' true
+just stdb call continuum set_operator '"<CLIENT_IDENTITY>"' true
 ```
 
 Revoke the same client with:
 
 ```bash
-./scripts/stdb call continuum set_operator '"<CLIENT_IDENTITY>"' false
+just stdb call continuum set_operator '"<CLIENT_IDENTITY>"' false
 ```
 
 Keep the `spacetimedb-config` Docker volume: losing its publishing token loses the
@@ -298,40 +315,42 @@ Normal and admin client tokens use separate `user://` profile paths. The normal
 client remains the default:
 
 ```bash
-godot --path client/godot -- --profile=normal
+just run -- --profile=normal
 ```
 
-On a local server, bootstrap and launch the separate admin profile with the
+On a local server, bootstrap the separate admin profile with the
 persistent publishing identity (the command prompts before the grant):
 
 ```bash
-./scripts/run-admin-client --grant
+just admin-grant
 ```
 
-For an already-granted profile, launch it again without granting:
+For an explicitly intended noninteractive local grant, use
+`just admin-grant --yes`. Then launch the already-granted profile with:
 
-```bash
-./scripts/run-admin-client
+```sh
+just admin
 ```
 
 The launcher verifies `Admin` through the authenticated role view before starting
-the main scene. `--grant` and `--profile` alone never grant UI access. Granting
+the main scene. The grant recipe never runs implicitly from `admin`. Granting
 requires the authorized persistent publisher identity; do not copy tokens or paste
 them into the client. After backend changes, publish the module and regenerate
 bindings before using an existing server:
 
-Use `--yes` only for an explicitly intended local grant. It prints the identity, never
-a token, rejects non-local publisher endpoints, and does nothing without `--grant`.
+The pass-through `--` form shown for `run` and `watch` is intended to preserve user
+arguments; confirm exact argument-separator behavior with the implementation recipe
+before relying on additional flags. `--yes` prints the identity, never a token,
+rejects non-local publisher endpoints, and is only for an explicit local grant.
 
 After changing Rust tables, reducers, or types, publish and regenerate bindings:
 
 ```bash
-./scripts/publish
-./scripts/generate-bindings
+just bindings
 ```
 
-The generation script fetches schema v10 from the running SpacetimeDB instance
-and drives the vendored SDK's code generator headlessly. Generated files live in
+The bindings recipe fetches schema v10 from the running SpacetimeDB instance and
+drives the vendored SDK's code generator headlessly. Generated files live in
 `client/godot/spacetime_bindings/schema/` and should not be edited manually.
 
 ## Architecture
@@ -345,9 +364,9 @@ and drives the vendored SDK's code generator headlessly. Generated files live in
 - `backend/spacetimedb/src/sim/work_orders.rs`: standing orders and site selection
 - `backend/spacetimedb/src/sim/tests.rs`: simulation regression tests
 - `client/godot/`: Godot UI, map, SDK, and generated typed bindings
-- `scripts/publish`: test, WASM build, identity bootstrap, and publish workflow
-- `scripts/generate-bindings`: reproducible headless Godot binding generation
-- `scripts/stdb`: matching containerized SpacetimeDB CLI
+- `justfile`: public project, client, backend, and database recipes
+- `scripts/internal/`: private helpers used by recipes; invoke recipes rather than
+  these implementation details
 
 SpacetimeDB is pinned to `2.10.0`. The Godot client vendors
 [Flametime's upstream Godot-SpacetimeDB-SDK](https://github.com/flametime/Godot-SpacetimeDB-SDK)
@@ -361,13 +380,13 @@ operator clients are intentionally rejected by the existing authorization rules.
 ## Persistence And Multiplayer
 
 The `spacetimedb-data` Docker volume stores authoritative colony state. Normal
-container restarts and `docker compose down` preserve it. Do not use
-`docker compose down -v` unless you intend to delete the colony and CLI identity.
+container restarts and `just down` preserve it. Do not remove Compose volumes
+unless you intend to delete the colony and CLI identity.
 
 Every Godot instance connects to the same `continuum` database by default. Run a
 second instance normally, or override the endpoint and database after `--`:
 
 ```bash
-godot --path client/godot -- \
+just run -- \
   --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
 ```

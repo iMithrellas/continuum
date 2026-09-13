@@ -26,11 +26,11 @@ An additive schema update with no `speed_control` row behaves as
 `cooldown_seconds = 0` and `last_changed_at = None` until the first write.
 `init` and `reset_colony` explicitly seed/reset the row to that disabled state.
 
-Use the CLI from the repository root:
+Use the repository recipes from the repository root:
 
 ```sh
-./scripts/stdb call continuum set_speed_change_cooldown 300
-./scripts/stdb call continuum set_time_scale 12
+just stdb call continuum set_speed_change_cooldown 300
+just stdb call continuum set_time_scale 12
 ```
 
 The headless smoke test does not require admin access and accepts a missing row
@@ -39,7 +39,7 @@ an admin to authorize the temporary smoke identity with `set_operator`, then
 run:
 
 ```sh
-godot --headless --path client/godot --script res://tools/smoke_test.gd -- \
+just smoke -- \
   --stdb-db=continuum-worker-cooldown --expected-speed-cooldown=5
 ```
 

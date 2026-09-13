@@ -143,6 +143,7 @@
 - [x] Concise searchable, collapsible, draggable-width sidebar with responsive font, button, spacing, and padding scale
 - [x] Role-aware sidebar controls fail closed from the authenticated sender-scoped role view; operator loss cancels Build immediately
 - [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
+- [x] Just-first project, client, backend, and isolated-test workflow is exposed through documented `just` recipes; helper scripts remain private
 
 ## API
 - [ ] API-first design from the beginning
