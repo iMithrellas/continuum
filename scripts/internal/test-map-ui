@@ -2,7 +2,7 @@
 # Reproducible client UI gate. Owns a disposable private SpacetimeDB container.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="continuum-map-ui-it-${USER:-user}-$$"
 DB="continuum-map-ui-it-$$"
 DATA="${NAME}-data"

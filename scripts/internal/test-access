@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Private authorization integration test. It owns its server, database, and volumes.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="${CONTINUUM_ACCESS_NAME:-continuum-access-it-${USER:-user}-$$}"
 DB="continuum-access-it-$$"
 DATA="${NAME}-data"

@@ -5,7 +5,7 @@
 # and a dynamically assigned host port. It never uses the repository compose stack.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="continuum-blocks-it-${USER:-user}-$$"
 DB="continuum-blocks-it-$$"
 DATA="${NAME}-data"
