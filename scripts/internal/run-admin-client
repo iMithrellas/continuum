@@ -2,11 +2,11 @@
 # Bootstrap a separate admin-profile client identity and optionally grant it admin.
 # The grant is never automatic: pass --grant and confirm with --yes.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 HOST="${CONTINUUM_HOST:-http://127.0.0.1:3000}"
 DB="${CONTINUUM_DB:-continuum}"
 GODOT="${GODOT:-godot}"
-STDB="${CONTINUUM_STDB:-$ROOT/scripts/stdb}"
+STDB="${CONTINUUM_STDB:-}"
 PUBLISHER_HOST="${CONTINUUM_PUBLISHER_HOST:-http://127.0.0.1:3000}"
 GRANT=0
 YES=0
@@ -38,7 +38,11 @@ if [[ "$GRANT" == 1 ]]; then
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { printf 'grant cancelled\n'; exit 0; }
     fi
     printf 'granting admin through the existing publisher CLI...\n'
-    "$STDB" call "$DB" grant_admin "\"$identity\"" >/dev/null
+    if [[ -n "$STDB" ]]; then
+        "$STDB" call "$DB" grant_admin "\"$identity\"" >/dev/null
+    else
+        docker compose exec -T spacetimedb spacetime call "$DB" grant_admin "\"$identity\"" </dev/null >/dev/null
+    fi
 fi
 
 "$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \

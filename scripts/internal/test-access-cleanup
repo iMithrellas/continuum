@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Verifies failure cleanup for one uniquely named private test allocation.
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 NAME="continuum-access-it-cleanup-${USER:-user}-$$"
-if CONTINUUM_ACCESS_NAME="$NAME" CONTINUUM_ACCESS_INJECT_FAILURE=after-start "$ROOT/scripts/test-access" >/tmp/continuum-access-cleanup-$$.log 2>&1; then
+if CONTINUUM_ACCESS_NAME="$NAME" CONTINUUM_ACCESS_INJECT_FAILURE=after-start "$ROOT/scripts/internal/test-access" >/tmp/continuum-access-cleanup-$$.log 2>&1; then
     printf 'FAIL: injected access test unexpectedly passed\n' >&2
     exit 1
 fi
