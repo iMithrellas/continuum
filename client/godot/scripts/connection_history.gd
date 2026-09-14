@@ -145,9 +145,16 @@ static func _valid_scheme(value: String) -> bool:
 	return value == "http" or value == "https" or value == "ws" or value == "wss"
 
 static func _valid_database(value: String) -> bool:
-	if value.length() < 1 or value.length() > 128: return false
-	for character in value.to_lower():
-		if not ((character >= "a" and character <= "z") or (character >= "0" and character <= "9") or character == "-" ): return false
+	var canonical := value.to_lower()
+	if canonical.length() < 1 or canonical.length() > 128: return false
+	if not ((canonical[0] >= "a" and canonical[0] <= "z") or (canonical[0] >= "0" and canonical[0] <= "9")): return false
+	if not ((canonical[-1] >= "a" and canonical[-1] <= "z") or (canonical[-1] >= "0" and canonical[-1] <= "9")): return false
+	var previous_dash := false
+	for character in canonical:
+		var alphanumeric := (character >= "a" and character <= "z") or (character >= "0" and character <= "9")
+		if not alphanumeric and character != "-": return false
+		if character == "-" and previous_dash: return false
+		previous_dash = character == "-"
 	return true
 
 static func _valid_dns_or_ipv4(host: String) -> bool:
@@ -159,18 +166,7 @@ static func _valid_dns_or_ipv4(host: String) -> bool:
 	return true
 
 static func _valid_ipv6(value: String) -> bool:
-	if value.is_empty() or value.find(":") < 0 or value.contains(":::"): return false
-	var halves := value.split("::")
-	var compressed := halves.size() == 2
-	if halves.size() > 2: return false
-	var groups := value.replace("::", ":").split(":")
-	if not compressed and groups.size() != 8: return false
-	if compressed and groups.size() >= 8: return false
-	for group in groups:
-		if group.is_empty() or group.length() > 4: return false
-		for character in group.to_lower():
-			if not ((character >= "a" and character <= "f") or (character >= "0" and character <= "9")): return false
-	return true
+	return value.is_valid_ip_address() and value.contains(":")
 
 static func _port(value: String) -> int:
 	return int(value) if value.is_valid_int() and int(value) > 0 and int(value) <= 65535 else -1

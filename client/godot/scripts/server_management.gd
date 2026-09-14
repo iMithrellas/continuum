@@ -18,6 +18,7 @@ var _world_catalog: Array[Dictionary] = []
 var _search := ""
 var local_management_state: Dictionary = {}
 var _history_list: VBoxContainer
+var _content: Control
 var _metrics := UiMetrics.new()
 
 func _ready() -> void:
@@ -98,12 +99,16 @@ func _on_probe_finished(_key: String, _result: Dictionary) -> void:
 
 func _build_ui() -> void:
 	# The scene is intentionally self-contained; navigation and local ownership stay outside it.
-	for child in get_children(): child.queue_free()
+	if is_instance_valid(_content): _content.queue_free()
+	_content = Control.new()
+	_content.name = "BrowserContent"
+	_content.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(_content)
 	theme = DeckTheme.create(_metrics)
 	var margin := MarginContainer.new(); margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", _metrics.px(24)); margin.add_theme_constant_override("margin_right", _metrics.px(24))
 	margin.add_theme_constant_override("margin_top", _metrics.px(24)); margin.add_theme_constant_override("margin_bottom", _metrics.px(24))
-	add_child(margin)
+	_content.add_child(margin)
 	var column := VBoxContainer.new(); margin.add_child(column)
 	var heading := Label.new(); heading.text = "SERVER MANAGEMENT"; heading.clip_text = true; heading.custom_minimum_size = Vector2(1, _metrics.px(24)); heading.add_theme_font_size_override("font_size", _metrics.font(20)); column.add_child(heading)
 	var search := LineEdit.new(); search.placeholder_text = "Search connections"; search.custom_minimum_size = _metrics.min_size(120, 32); search.text_changed.connect(set_search); column.add_child(search)
@@ -125,10 +130,13 @@ func _refresh_history_list() -> void:
 		var row := VBoxContainer.new(); row.name = str(entry.key)
 		var text := Label.new(); text.size_flags_horizontal = Control.SIZE_EXPAND_FILL; text.custom_minimum_size = Vector2(1, 0); text.clip_text = true
 		var probe_state := probes.state(entry.key) if probes else {"status": "unknown"}
+		var status := str(probe_state.get("status", "unknown"))
+		if status == "online" and not bool(probe_state.get("health_ok", true)) and int(probe_state.get("http_status", -1)) >= 0:
+			status = "HTTP health failed %d" % int(probe_state.http_status)
 		var rtt := str(probe_state.get("rtt_ms", "unavailable")) + " ms HTTP" if probe_state.has("rtt_ms") and int(probe_state.rtt_ms) >= 0 else "HTTP RTT unavailable"
 		var freshness := "stale" if probe_state.get("stale", false) else "current"
 		text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		text.text = ("[favorite] " if entry.get("favorite", false) else "") + str(entry.get("display_name", entry.endpoint)) + " | %s (%s) | last seen %s | sample %s | %s | joinable %s | auth %s | world %s" % [probe_state.get("status", "unknown"), freshness, entry.get("last_seen", "never"), probe_state.get("last_sample", "never"), rtt, probe_state.get("joinable", "unknown"), probe_state.get("auth", "unknown"), entry.get("world", "")]
+		text.text = ("[favorite] " if entry.get("favorite", false) else "") + str(entry.get("display_name", entry.endpoint)) + " | %s (%s) | last seen %s | sample %s | %s | joinable %s | auth %s | world %s" % [status, freshness, entry.get("last_seen", "never"), probe_state.get("last_sample", "never"), rtt, probe_state.get("joinable", "unknown"), probe_state.get("auth", "unknown"), entry.get("world", "")]
 		row.add_child(text)
 		var controls := HFlowContainer.new(); row.add_child(controls)
 		var join := Button.new(); join.text = "Join"; join.custom_minimum_size = _metrics.min_size(64, 32); join.pressed.connect(request_join.bind(entry.key)); controls.add_child(join)

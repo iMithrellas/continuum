@@ -61,6 +61,7 @@ func _test_probes() -> void:
 	var hidden_calls: int = calls[0]
 	probes.refresh(entries, 100.0)
 	_assert(calls[0] == hidden_calls, "hidden browser does not poll")
+	probes.free()
 
 func _test_management_contract() -> void:
 	var manager = Management.new()

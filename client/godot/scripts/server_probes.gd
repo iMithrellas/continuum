@@ -25,9 +25,20 @@ func set_visible(value: bool) -> void:
 	visible = value
 	if not visible:
 		_epoch += 1
-		for request in _requests.values(): request.queue_free()
+		for request in _requests.values():
+			if is_instance_valid(request):
+				request.cancel_request()
+				request.queue_free()
 		_requests.clear()
 		_active.clear()
+
+func _exit_tree() -> void:
+	for request in _requests.values():
+		if is_instance_valid(request):
+			request.cancel_request()
+			request.queue_free()
+	_requests.clear()
+	_active.clear()
 
 ## A visible owner calls this from its process loop; hidden views must not call it.
 func refresh(entries: Array[Dictionary], now := -1.0) -> void:
