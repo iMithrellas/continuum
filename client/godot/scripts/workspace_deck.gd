@@ -14,9 +14,8 @@ var map_only := false
 var _compact_panel := "people"
 var _tabs: HBoxContainer
 var _dock: HBoxContainer
-var _message: Label
-var _hint: Label
 var _ready_layout := false
+var metrics := UiMetrics.new()
 var _save_path := WorkspaceLayout.SAVE_PATH
 var _dialog: AcceptDialog
 var _name_input: LineEdit
@@ -28,10 +27,10 @@ var _map: Control
 var _confirmation: ConfirmationDialog
 
 
-func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void:
+func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
 	_save_path = save_path
+	metrics = ui_metrics
 	_map = map_control
-	theme = DeckTheme.create()
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var stack := VBoxContainer.new()
 	stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -42,11 +41,11 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void
 	stack.add_child(header)
 	var rows := VBoxContainer.new()
 	header.add_child(rows)
-	telemetry = _scroll_row(rows, 38)
-	var workspace_row := _scroll_row(rows, 34)
+	telemetry = _scroll_row(rows, metrics.px(38))
+	var workspace_row := _scroll_row(rows, metrics.px(34))
 	var label := Label.new()
 	label.text = "WORKSPACE"
-	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_font_size_override("font_size", metrics.font(10))
 	label.add_theme_color_override("font_color", DeckTheme.MUTED)
 	workspace_row.add_child(label)
 	_tabs = HBoxContainer.new()
@@ -69,21 +68,9 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void
 	map_control.reparent(area)
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	area.resized.connect(_apply_layout)
-	var footer := PanelContainer.new()
-	stack.add_child(footer)
-	var footer_row := _scroll_row(footer, 32)
-	_button(footer_row, "Map", "Show/hide all panels (Ctrl+\\)", toggle_map_only)
+	_button(workspace_row, "Map", "Show or hide panels (Ctrl+\\)", toggle_map_only)
 	_dock = HBoxContainer.new()
-	footer_row.add_child(_dock)
-	_message = Label.new()
-	_message.add_theme_font_size_override("font_size", 11)
-	_message.add_theme_color_override("font_color", DeckTheme.MUTED)
-	footer_row.add_child(_message)
-	_hint = Label.new()
-	_hint.text = "Drag header to move  /  corner to resize  /  Alt: no snap"
-	_hint.add_theme_font_size_override("font_size", 11)
-	_hint.add_theme_color_override("font_color", DeckTheme.MUTED)
-	footer_row.add_child(_hint)
+	workspace_row.add_child(_dock)
 	_build_dialog()
 
 
@@ -113,6 +100,7 @@ func add_panel(key: String) -> VBoxContainer:
 	var window := WorkspaceWindow.new()
 	window.name = key
 	area.add_child(window)
+	window.metrics = metrics
 	window.setup(WorkspaceLayout.PANEL_NAMES[key])
 	windows[key] = window
 	authorized[key] = true
@@ -122,7 +110,7 @@ func add_panel(key: String) -> VBoxContainer:
 		for other: WorkspaceWindow in windows.values():
 			if other != window and other.visible:
 				others.append(Rect2(other.position, other.size))
-		var snapped := WorkspaceLayout.clamp_rect(rect, area.size) if unsnapped else WorkspaceLayout.snap_rect(rect, area.size, others, resizing)
+		var snapped := WorkspaceLayout.clamp_rect(rect, area.size, metrics) if unsnapped else WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics)
 		window.position = snapped.position
 		window.size = snapped.size)
 	window.interaction_finished.connect(func() -> void:
@@ -140,11 +128,10 @@ func add_panel(key: String) -> VBoxContainer:
 
 
 func finish_setup() -> void:
-	var valid := model.load_from(_save_path)
+	model.load_from(_save_path)
 	_ready_layout = true
 	_rebuild_navigation()
 	_apply_layout()
-	_message.text = "Local layouts" if valid else "Layout file unreadable; defaults loaded"
 
 
 func state(key: String) -> Dictionary:
@@ -247,15 +234,12 @@ func save_layout() -> void:
 	if not _ready_layout:
 		return
 	var error := model.save_to(_save_path)
-	_message.text = "Saved locally" if error == OK else "Save failed (%s)" % error_string(error)
-	_message.tooltip_text = ProjectSettings.globalize_path(_save_path)
 
 
 func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
 	compact = area.size.x < 760 or area.size.y < 400
-	_hint.visible = size.x >= 1600
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
 	if compact and (_compact_panel.is_empty() or not authorized.get(_compact_panel, false) or not state(_compact_panel).open or state(_compact_panel).minimized):
@@ -323,7 +307,7 @@ func _build_dialog() -> void:
 	var note := Label.new()
 	note.text = "Drag panel headers and resize their corners.\nEdges snap together; hold Alt for free placement.\nChanges save on this device, separately from the colony."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_font_size_override("font_size", 11)
+	note.add_theme_font_size_override("font_size", metrics.font(11))
 	note.add_theme_color_override("font_color", DeckTheme.MUTED)
 	body.add_child(note)
 	_dialog.confirmed.connect(_confirm_workspace)
@@ -357,7 +341,6 @@ func _confirm_workspace() -> void:
 			selected.append(key)
 	if _dialog_new:
 		if model.create_workspace(_name_input.text, selected, _copy.button_pressed).is_empty():
-			_message.text = "Use a name; maximum 24 workspaces"
 			return
 	else:
 		if _name_input.editable and not _name_input.text.strip_edges().is_empty():

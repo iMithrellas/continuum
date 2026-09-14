@@ -55,18 +55,18 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"build")
 	_drag(Vector2(130, 130), Vector2(30, 50))
 	_assert(build_releases == 1, "one reversed build drag emits one atomic request")
-	_assert(build_rects[0] == Rect2i(1, 2, 6, 5), "reversed drag payload is exact")
+	_assert(build_rects[0] == Rect2i(1, 0, 6, 5), "reversed drag payload is exact")
 	_assert(not map._dragging, "drag state clears after release")
 
 	_drag(Vector2(70, 70), Vector2(70, 70))
 	_assert(build_releases == 2, "one-cell build drag emits one request")
-	_assert(build_rects[1] == Rect2i(3, 3, 1, 1), "single-cell payload is exact")
+	_assert(build_rects[1] == Rect2i(3, 1, 1, 1), "single-cell payload is exact")
 	_release(Vector2(70, 70))
 	_assert(build_releases == 2, "repeated release cannot submit another build")
 
-	# The drawn grid is 480x480; the remaining 90 pixels are the legend and must cancel.
+	# The map now uses the full viewport; a release outside the viewport cancels.
 	_press(Vector2(10, 10))
-	_release(Vector2(10, 520))
+	_release(Vector2(10, 580))
 	_assert(build_releases == 2, "release in legend cancels instead of building edge cells")
 
 	_press(Vector2(10, 10))
@@ -91,7 +91,7 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"select")
 	_drag(Vector2(210, 210), Vector2(250, 250))
 	_assert(selected_releases == 1, "select mode emits one rectangular selection")
-	_assert(selected_rects[0] == Rect2i(10, 10, 3, 3), "selection payload is exact")
+	_assert(selected_rects[0] == Rect2i(10, 8, 3, 3), "selection payload is exact")
 
 
 func _test_controller_surface() -> void:

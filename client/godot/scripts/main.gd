@@ -101,12 +101,17 @@ var _clock: Label
 var _resource_labels: Dictionary = {}
 var _population: Label
 var _speed_strip: HBoxContainer
+var _settings := ClientSettings.new()
+var _metrics := UiMetrics.new()
 
 
 func _ready() -> void:
+	_settings.load_from()
+	_metrics = UiMetrics.new(_settings.font_size)
 	_history = SessionHistoryModel.new()
-	theme = DeckTheme.create()
-	workspace.setup(map, _cli_option("--workspace-file", WorkspaceLayout.SAVE_PATH))
+	theme = DeckTheme.create(_metrics)
+	map.metrics = _metrics
+	workspace.setup(map, _cli_option("--workspace-file", WorkspaceLayout.SAVE_PATH), _metrics)
 	_build_panels()
 	workspace.finish_setup()
 	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
@@ -573,7 +578,7 @@ func _build_panels() -> void:
 
 	_connection_label = Label.new()
 	_connection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_connection_label.add_theme_font_size_override("font_size", 11)
+	_connection_label.add_theme_font_size_override("font_size", _metrics.font(11))
 	side.add_child(_connection_label)
 
 	section = _sections["policies"]
@@ -582,17 +587,17 @@ func _build_panels() -> void:
 	_haul_button = Button.new()
 	_haul_button.text = "Waiting for hauling policy..."
 	_haul_button.disabled = true
-	_haul_button.add_theme_font_size_override("font_size", 15)
+	_haul_button.add_theme_font_size_override("font_size", _metrics.font(15))
 	_haul_button.tooltip_text = "Toggle hauling assignment. Server state remains authoritative."
 	_haul_button.pressed.connect(_toggle_haul_policy)
 	side.add_child(_haul_button)
 	_haul_description = Label.new()
 	_haul_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_haul_description.add_theme_font_size_override("font_size", 12)
+	_haul_description.add_theme_font_size_override("font_size", _metrics.font(12))
 	side.add_child(_haul_description)
 	_haul_feedback = Label.new()
 	_haul_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_haul_feedback.add_theme_font_size_override("font_size", 11)
+	_haul_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
 	side.add_child(_haul_feedback)
 
 	side.add_child(_heading("Global meal policy"))
@@ -608,11 +613,11 @@ func _build_panels() -> void:
 	side.add_child(meal_buttons)
 	_meal_description = Label.new()
 	_meal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_meal_description.add_theme_font_size_override("font_size", 12)
+	_meal_description.add_theme_font_size_override("font_size", _metrics.font(12))
 	side.add_child(_meal_description)
 	_meal_feedback = Label.new()
 	_meal_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_meal_feedback.add_theme_font_size_override("font_size", 11)
+	_meal_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
 	side.add_child(_meal_feedback)
 
 	section = _sections["overview"]
@@ -630,10 +635,11 @@ func _build_panels() -> void:
 	history_note.text = "MOOD / PRODUCTIVITY\nSince connection; not saved with the colony."
 	history_note.tooltip_text = "This session / since connection. Not saved on the server."
 	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	history_note.add_theme_font_size_override("font_size", 11)
+	history_note.add_theme_font_size_override("font_size", _metrics.font(11))
 	history_note.add_theme_color_override("font_color", Color("7f8b9c"))
 	side.add_child(history_note)
 	_history_chart = HistoryChartControl.new()
+	_history_chart.metrics = _metrics
 	_history_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_history_chart)
 
@@ -677,7 +683,7 @@ func _build_panels() -> void:
 	_build_help.text = "7 types | 20 wood/cell"
 	_build_help.tooltip_text = "Farm, Forestry, Mine, Storage, Dining, Sleep, Recreation. Forestry creates a Forest work zone; natural forest cover is separate terrain."
 	_build_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_build_help.add_theme_font_size_override("font_size", 11)
+	_build_help.add_theme_font_size_override("font_size", _metrics.font(11))
 	side.add_child(_build_help)
 	_block_box = VBoxContainer.new()
 	_block_info = Label.new()
@@ -696,7 +702,7 @@ func _build_panels() -> void:
 		var row := HFlowContainer.new()
 		var label := Label.new()
 		label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
-		label.custom_minimum_size.x = 110
+		label.custom_minimum_size.x = _metrics.px(110)
 		row.add_child(label)
 		var add := Button.new()
 		add.text = "Set"
@@ -734,16 +740,10 @@ func _build_panels() -> void:
 	_orders_help.tooltip_text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
 	_orders_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_orders_help)
-	var map_key := Label.new()
-	map_key.text = "MAP KEY\nBox: ground pile. Attached box: carried cargo.\nDashed arrow: delivery destination.\nTerrain is decorative; fertility and cover do not modify production."
-	map_key.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	map_key.add_theme_font_size_override("font_size", 11)
-	map_key.add_theme_color_override("font_color", DeckTheme.MUTED)
-	side.add_child(map_key)
 	_intent_feedback = Label.new()
-	_intent_feedback.custom_minimum_size.x = 160
+	_intent_feedback.custom_minimum_size.x = _metrics.px(160)
 	_intent_feedback.clip_text = true
-	_intent_feedback.add_theme_font_size_override("font_size", 11)
+	_intent_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
 	workspace.telemetry.add_child(_intent_feedback)
 	_set_mode(&"select")
 
@@ -773,7 +773,7 @@ func _build_panels() -> void:
 	side.add_child(_heading("Server events / latest 40"))
 	_feed = RichTextLabel.new()
 	_feed.bbcode_enabled = true
-	_feed.custom_minimum_size = Vector2(0, 70)
+	_feed.custom_minimum_size = _metrics.min_size(0, 70)
 	_feed.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_feed.scroll_following = true
 	side.add_child(_feed)
@@ -784,12 +784,12 @@ func _build_panels() -> void:
 func _build_telemetry() -> void:
 	var brand := Label.new()
 	brand.text = "CONTINUUM  /"
-	brand.add_theme_font_size_override("font_size", 17)
+	brand.add_theme_font_size_override("font_size", _metrics.font(17))
 	brand.add_theme_color_override("font_color", DeckTheme.ACCENT)
 	workspace.telemetry.add_child(brand)
 	_clock = Label.new()
 	_clock.text = "DAY --  --:--"
-	_clock.custom_minimum_size.x = 140
+	_clock.custom_minimum_size.x = _metrics.px(140)
 	workspace.telemetry.add_child(_clock)
 	for kind: int in ColonyMap.RESOURCE_COLORS:
 		var card := PanelContainer.new()
@@ -797,7 +797,7 @@ func _build_telemetry() -> void:
 		card.tooltip_text = "Stored %s. Ground stacks and carried cargo are separate." % ContinuumResourceKind.parse_enum_name(kind)
 		var label := Label.new()
 		label.text = "%s  --" % ContinuumResourceKind.parse_enum_name(kind).to_upper()
-		label.custom_minimum_size.x = 100
+		label.custom_minimum_size.x = _metrics.px(100)
 		label.add_theme_color_override("font_color", ColonyMap.RESOURCE_COLORS[kind])
 		card.add_child(label)
 		workspace.telemetry.add_child(card)
@@ -832,7 +832,7 @@ func _refresh_permissions() -> void:
 func _heading(text: String) -> Label:
 	var label := Label.new()
 	label.text = text.to_upper()
-	label.add_theme_font_size_override("font_size", 11)
+	label.add_theme_font_size_override("font_size", _metrics.font(11))
 	label.add_theme_color_override("font_color", Color("7f8b9c"))
 	return label
 
@@ -996,7 +996,7 @@ func _refresh_colonists() -> void:
 		header.text = "%s - %s%s" % [
 			colonist.name, ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize(), suffix,
 		]
-		header.add_theme_font_size_override("font_size", 13)
+		header.add_theme_font_size_override("font_size", _metrics.font(13))
 		header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		panel.add_child(header)
 
@@ -1006,13 +1006,13 @@ func _refresh_colonists() -> void:
 		job.text = "%s / %s" % [
 			ContinuumWorkType.parse_enum_name(colonist.work.value).capitalize(), role,
 		]
-		job.add_theme_font_size_override("font_size", 12)
+		job.add_theme_font_size_override("font_size", _metrics.font(12))
 		job.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		job.add_theme_color_override("font_color", DeckTheme.MUTED)
 		panel.add_child(job)
 		var cargo := Label.new()
 		cargo.text = "Cargo: empty hands"
-		cargo.add_theme_font_size_override("font_size", 12)
+		cargo.add_theme_font_size_override("font_size", _metrics.font(12))
 		cargo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		if colonist.carried_amount > 0.0:
 			cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
@@ -1037,8 +1037,8 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 
 	var label := Label.new()
 	label.text = label_text
-	label.custom_minimum_size = Vector2(84, 0)
-	label.add_theme_font_size_override("font_size", 11)
+	label.custom_minimum_size = _metrics.min_size(84, 0)
+	label.add_theme_font_size_override("font_size", _metrics.font(11))
 	row.add_child(label)
 
 	var bar := ProgressBar.new()
@@ -1046,7 +1046,7 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 	bar.max_value = 100.0
 	bar.value = value
 	bar.show_percentage = false
-	bar.custom_minimum_size = Vector2(0, 12)
+	bar.custom_minimum_size = _metrics.min_size(0, 12)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
 	var goodness := 100.0 - value if invert else value
@@ -1062,9 +1062,9 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 
 	var value_label := Label.new()
 	value_label.text = "%3.0f" % value
-	value_label.custom_minimum_size = Vector2(28, 0)
+	value_label.custom_minimum_size = _metrics.min_size(28, 0)
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	value_label.add_theme_font_size_override("font_size", 11)
+	value_label.add_theme_font_size_override("font_size", _metrics.font(11))
 	row.add_child(value_label)
 
 	return row
@@ -1246,7 +1246,7 @@ func _refresh_alerts() -> void:
 	if active.is_empty():
 		var none := Label.new()
 		none.text = "No active alerts."
-		none.add_theme_font_size_override("font_size", 11)
+		none.add_theme_font_size_override("font_size", _metrics.font(11))
 		none.add_theme_color_override("font_color", Color("6fcf7f"))
 		_alert_box.add_child(none)
 		return
@@ -1258,7 +1258,7 @@ func _refresh_alerts() -> void:
 		label.text = alert.message + ("  [ack]" if alert.acknowledged else "")
 		label.tooltip_text = alert.message + (" (acknowledged)" if alert.acknowledged else "")
 		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.add_theme_font_size_override("font_size", 11)
+		label.add_theme_font_size_override("font_size", _metrics.font(11))
 		label.add_theme_color_override("font_color", _severity_colour(alert.severity))
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(label)
@@ -1268,7 +1268,7 @@ func _refresh_alerts() -> void:
 			ack.text = "Ack"
 			ack.tooltip_text = "Acknowledge this alert (operator)"
 			ack.visible = _can_operate
-			ack.add_theme_font_size_override("font_size", 10)
+			ack.add_theme_font_size_override("font_size", _metrics.font(10))
 			ack.pressed.connect(_acknowledge.bind(alert.id))
 			row.add_child(ack)
 

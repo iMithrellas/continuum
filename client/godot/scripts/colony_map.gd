@@ -40,8 +40,7 @@ const COLONIST_WALK_FRAME_SIZE := 32.0
 
 const DISABLED_COLOR := Color("50202a")
 const GRID_LINE_COLOR := Color(1, 1, 1, 0.06)
-const SELECTION_COLOR := Color("ffffff")
-const LEGEND_HEIGHT := 90.0
+const SELECTION_COLOR := Color("e6b887")
 const PRIORITY_NAMES := {1: "High", 2: "Normal", 3: "Low"}
 
 var selected_tile_id: int = -1
@@ -66,9 +65,11 @@ var _stock_pulses: Dictionary[int, float] = {}
 var _walk_frame := 0
 ## Global drag tracking must never treat floating windows as map cells.
 var input_blocked: Callable
+var metrics := UiMetrics.new()
 
 
 func _ready() -> void:
+	metrics = UiMetrics.new()
 	_font = ThemeDB.fallback_font
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	set_process(true)
@@ -190,13 +191,13 @@ func refresh() -> void:
 
 
 func _cell_size() -> float:
-	return minf(size.x / float(_grid.x), maxf(0.0, size.y - LEGEND_HEIGHT) / float(_grid.y))
+	return minf(size.x / float(_grid.x), size.y / float(_grid.y))
 
 
 func _origin() -> Vector2:
 	var cell := _cell_size()
 	var used := Vector2(cell * _grid.x, cell * _grid.y)
-	return ((size - Vector2(0, LEGEND_HEIGHT) - used) * 0.5).floor()
+	return ((size - used) * 0.5).floor()
 
 
 func _draw() -> void:
@@ -209,7 +210,7 @@ func _draw() -> void:
 
 	if not _has_state or SpacetimeDB.Continuum.db == null:
 		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "waiting for colony state...",
-				HORIZONTAL_ALIGNMENT_CENTER, size.x, 14, Color(1, 1, 1, 0.5))
+				HORIZONTAL_ALIGNMENT_CENTER, size.x, metrics.font(14), Color(1, 1, 1, 0.5))
 		return
 
 	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
@@ -254,7 +255,6 @@ func _draw() -> void:
 			Vector2(_selection_rect.size) * cell)
 		draw_rect(selection_rect.grow(-1.0), Color("64d8cb"), false, 2.0)
 	_draw_drag_preview(origin, cell)
-	_draw_legend()
 
 
 func _soil_colour(terrain: Resource) -> Color:
@@ -285,7 +285,7 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 	if not _dragging:
 		return
 	var rect := MapUiModel.normalize_rect(_drag_start, _drag_current)
-	var colour := Color("64d8cb") if interaction_mode == &"select" else Color("f5d76e")
+	var colour := Color("d39a68") if interaction_mode == &"select" else Color("d8b06e")
 	colour.a = 0.22
 	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour)
 	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour.lightened(0.3), false, 2.0)
@@ -302,7 +302,7 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		if colony == null or colony.wood < rect.size.x * rect.size.y * 20.0:
 			text += "  NOT ENOUGH WOOD"
 	draw_string(_font, origin + Vector2(rect.position.x * cell + 4.0, rect.position.y * cell - 5.0),
-			text, HORIZONTAL_ALIGNMENT_LEFT, -1, clampi(int(cell * 0.34), 10, 15), Color("f1f4f8"))
+			text, HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(clampf(cell * 0.34, 10, 15)), Color("f1f4f8"))
 
 
 ## One label per zone, at the zone's top-left tile, so the map reads without a legend.
@@ -324,7 +324,7 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 		draw_string(_font,
 				origin + Vector2(anchor.x * cell + 3.0, anchor.y * cell + font_size + 2.0),
 				ContinuumTileKind.parse_enum_name(kind).capitalize(), HORIZONTAL_ALIGNMENT_LEFT, -1,
-				font_size, Color(1, 1, 1, 0.85))
+				metrics.font(font_size), Color(1, 1, 1, 0.85))
 
 
 func _draw_work_orders(origin: Vector2, cell: float) -> void:
@@ -338,7 +338,7 @@ func _draw_work_orders(origin: Vector2, cell: float) -> void:
 		var text := "%s%d" % [ContinuumWorkType.parse_enum_name(order.work.value).left(1).to_upper(), order.priority]
 		draw_rect(rect, Color("151920"))
 		draw_string(_font, rect.position + Vector2(1, rect.size.y - 1), text,
-			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, clampi(int(cell * 0.27), 8, 11), Color("f5d76e"))
+				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, metrics.font(clampf(cell * 0.27, 8, 11)), Color("f5d76e"))
 
 
 static func format_amount(amount: float) -> String:
@@ -408,7 +408,7 @@ func _draw_storage(origin: Vector2, cell: float) -> void:
 	draw_rect(rect, Color("a38a60") if storage_open else DISABLED_COLOR, false, 1.0)
 	var at := rect.position + Vector2(5, line_height)
 	draw_string(_font, at, "STORED / SHARED" if storage_open else "STORED / CLOSED",
-			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 10, font_size - 1, Color("ddd4c0"))
+			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - metrics.px(10), metrics.font(font_size - 1), Color("ddd4c0"))
 	for kind: int in RESOURCE_COLORS:
 		at.y += line_height
 		var colour: Color = RESOURCE_COLORS[kind]
@@ -419,28 +419,7 @@ func _draw_storage(origin: Vector2, cell: float) -> void:
 			draw_rect(Rect2(Vector2(rect.position.x + 2, at.y - font_size - 2),
 					Vector2(rect.size.x - 4, line_height)), glow)
 		draw_string(_font, at, "%s %s" % [key.capitalize(), format_amount(colony.get(key))],
-				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 10, font_size, colour)
-
-
-func _draw_legend() -> void:
-	var y := size.y - LEGEND_HEIGHT + 19.0
-	var left := _origin().x + 12.0
-	var width := _cell_size() * _grid.x - 24.0
-	var index := 0
-	for kind: int in RESOURCE_COLORS:
-		var x := left + index * width / 4.0
-		var colour: Color = RESOURCE_COLORS[kind]
-		draw_rect(Rect2(Vector2(x, y - 10), Vector2(9, 9)), colour)
-		draw_string(_font, Vector2(x + 14, y),
-				ContinuumResourceKind.parse_enum_name(kind).capitalize(),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, colour)
-		index += 1
-	draw_string(_font, Vector2(left, y + 21), "Box: ground pile   /   Attached box: cargo   /   Dashed line: delivery",
-			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("ccd3df"))
-	draw_string(_font, Vector2(left, y + 39), "Select terrain to inspect. F3 opens the inspector.",
-			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("9aa4b2"))
-	draw_string(_font, Vector2(left, y + 57), "Terrain is decorative; it does not modify production.",
-			HORIZONTAL_ALIGNMENT_LEFT, width, 11, Color("f5d76e"))
+				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - metrics.px(10), metrics.font(font_size), colour)
 
 
 func _draw_colonists(origin: Vector2, cell: float) -> void:
@@ -489,17 +468,17 @@ func _draw_colonists(origin: Vector2, cell: float) -> void:
 				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value).left(1).to_upper(),
 				format_amount(colonist.carried_amount),
 			]
-			draw_string(_font, cargo_rect.position + Vector2(1, cargo_rect.size.y * 0.5 + 3), cargo_text,
-					HORIZONTAL_ALIGNMENT_CENTER, cargo_rect.size.x - 2, clampi(int(cell * 0.3), 8, 12), cargo_colour)
+			draw_string(_font, cargo_rect.position + Vector2(1, cargo_rect.size.y * 0.5 + metrics.px(3)), cargo_text,
+					HORIZONTAL_ALIGNMENT_CENTER, cargo_rect.size.x - metrics.px(2), metrics.font(clampf(cell * 0.3, 8, 12)), cargo_colour)
 
 		var small := int(maxf(8.0, cell * 0.26))
 		var caption := "%s: %s" % [colonist.name,
 			ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize()]
 		var caption_at := centre + Vector2(-cell * 1.1, radius + small + 1.0)
 		draw_string_outline(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_CENTER,
-				cell * 2.2, small, 3, Color("151920"))
+				cell * 2.2, metrics.font(small), metrics.px(3), Color("151920"))
 		draw_string(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_CENTER,
-				cell * 2.2, small, Color("f1f4f8"))
+				cell * 2.2, metrics.font(small), Color("f1f4f8"))
 
 
 func _get_tooltip(at_position: Vector2) -> String:

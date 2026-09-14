@@ -16,6 +16,7 @@ var grip: Label
 var scroll: ScrollContainer
 var pinned := false
 var compact := false
+var metrics := UiMetrics.new()
 var _gesture := ""
 var _start_pointer := Vector2.ZERO
 var _start_rect := Rect2()
@@ -30,10 +31,10 @@ func setup(title: String) -> void:
 	add_theme_stylebox_override("panel", surface)
 	titlebar = HBoxContainer.new()
 	titlebar.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	titlebar.offset_left = 8
-	titlebar.offset_right = -8
-	titlebar.offset_top = 5
-	titlebar.offset_bottom = 39
+	titlebar.offset_left = metrics.px(8)
+	titlebar.offset_right = -metrics.px(8)
+	titlebar.offset_top = metrics.px(5)
+	titlebar.offset_bottom = metrics.px(39)
 	titlebar.mouse_filter = Control.MOUSE_FILTER_STOP
 	titlebar.mouse_default_cursor_shape = Control.CURSOR_MOVE
 	titlebar.gui_input.connect(_title_input)
@@ -52,15 +53,15 @@ func setup(title: String) -> void:
 	line.color = DeckTheme.LINE
 	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	line.offset_top = 44
-	line.offset_bottom = 45
+	line.offset_top = metrics.px(44)
+	line.offset_bottom = metrics.px(45)
 	add_child(line)
 	scroll = ScrollContainer.new()
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scroll.offset_left = 12
-	scroll.offset_right = -12
-	scroll.offset_top = 56
-	scroll.offset_bottom = -18
+	scroll.offset_left = metrics.px(12)
+	scroll.offset_right = -metrics.px(12)
+	scroll.offset_top = metrics.px(56)
+	scroll.offset_bottom = -metrics.px(18)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
 	content = VBoxContainer.new()
@@ -72,10 +73,10 @@ func setup(title: String) -> void:
 	grip.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	grip.add_theme_color_override("font_color", DeckTheme.ACCENT)
 	grip.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT)
-	grip.offset_left = -26
-	grip.offset_top = -24
-	grip.offset_right = -3
-	grip.offset_bottom = -2
+	grip.offset_left = -metrics.px(26)
+	grip.offset_top = -metrics.px(24)
+	grip.offset_right = -metrics.px(3)
+	grip.offset_bottom = -metrics.px(2)
 	grip.mouse_filter = Control.MOUSE_FILTER_STOP
 	grip.mouse_default_cursor_shape = Control.CURSOR_FDIAGSIZE
 	grip.tooltip_text = "Drag to resize. Hold Alt to bypass snapping."
@@ -91,7 +92,7 @@ func _action(text: String, hint: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.tooltip_text = hint
-	button.custom_minimum_size = Vector2(28, 30)
+	button.custom_minimum_size = metrics.min_size(28, 30)
 	button.pressed.connect(callback)
 	titlebar.add_child(button)
 	return button
