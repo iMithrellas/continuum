@@ -14,9 +14,8 @@ var map_only := false
 var _compact_panel := "people"
 var _tabs: HBoxContainer
 var _dock: HBoxContainer
-var _message: Label
-var _hint: Label
 var _ready_layout := false
+var metrics := UiMetrics.new()
 var _save_path := WorkspaceLayout.SAVE_PATH
 var _dialog: AcceptDialog
 var _name_input: LineEdit
@@ -26,12 +25,14 @@ var _dialog_new := false
 var _menu: MenuButton
 var _map: Control
 var _confirmation: ConfirmationDialog
+var _status: Label
+var _rows: Array[ScrollContainer] = []
 
 
-func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void:
+func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
 	_save_path = save_path
+	metrics = ui_metrics
 	_map = map_control
-	theme = DeckTheme.create()
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var stack := VBoxContainer.new()
 	stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -42,11 +43,11 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void
 	stack.add_child(header)
 	var rows := VBoxContainer.new()
 	header.add_child(rows)
-	telemetry = _scroll_row(rows, 38)
-	var workspace_row := _scroll_row(rows, 34)
+	telemetry = _scroll_row(rows, metrics.px(38))
+	var workspace_row := _scroll_row(rows, metrics.px(34))
 	var label := Label.new()
 	label.text = "WORKSPACE"
-	label.add_theme_font_size_override("font_size", 10)
+	label.add_theme_font_size_override("font_size", metrics.font(10))
 	label.add_theme_color_override("font_color", DeckTheme.MUTED)
 	workspace_row.add_child(label)
 	_tabs = HBoxContainer.new()
@@ -54,6 +55,9 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void
 	_button(workspace_row, "+ New", "Create a personal workspace", func() -> void: edit_workspace(true))
 	_button(workspace_row, "Panels", "Choose panels / rename workspace (Ctrl+F)", func() -> void: edit_workspace(false))
 	_button(workspace_row, "Save", "Save this device's layouts", save_layout)
+	_status = Label.new()
+	_status.add_theme_color_override("font_color", DeckTheme.MUTED)
+	workspace_row.add_child(_status)
 	_menu = MenuButton.new()
 	_menu.text = "Layout"
 	workspace_row.add_child(_menu)
@@ -69,22 +73,39 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH) -> void
 	map_control.reparent(area)
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	area.resized.connect(_apply_layout)
-	var footer := PanelContainer.new()
-	stack.add_child(footer)
-	var footer_row := _scroll_row(footer, 32)
-	_button(footer_row, "Map", "Show/hide all panels (Ctrl+\\)", toggle_map_only)
+	_button(workspace_row, "Map", "Show or hide panels (Ctrl+\\)", toggle_map_only)
 	_dock = HBoxContainer.new()
-	footer_row.add_child(_dock)
-	_message = Label.new()
-	_message.add_theme_font_size_override("font_size", 11)
-	_message.add_theme_color_override("font_color", DeckTheme.MUTED)
-	footer_row.add_child(_message)
-	_hint = Label.new()
-	_hint.text = "Drag header to move  /  corner to resize  /  Alt: no snap"
-	_hint.add_theme_font_size_override("font_size", 11)
-	_hint.add_theme_color_override("font_color", DeckTheme.MUTED)
-	footer_row.add_child(_hint)
+	workspace_row.add_child(_dock)
 	_build_dialog()
+
+func apply_metrics(ui_metrics: UiMetrics) -> void:
+	_scale_control_tree(self, ui_metrics)
+	metrics = ui_metrics
+	for window: WorkspaceWindow in windows.values():
+		window.metrics = metrics
+		window.refresh_metrics()
+	if is_instance_valid(_dialog):
+		_dialog.min_size = Vector2i(metrics.px(300), 0)
+	_apply_layout()
+
+func _scale_control_tree(root: Node, target_metrics: UiMetrics) -> void:
+	for child: Node in root.get_children():
+		if child is Control:
+			var control := child as Control
+			if not control.has_meta("ui_font_reference"):
+				var observed_font := control.get_theme_font_size("font_size")
+				var current_font := observed_font if control.has_theme_font_override("font_size") or observed_font > metrics.base_font_size else metrics.base_font_size
+				control.set_meta("ui_font_reference", float(current_font) / metrics.scale)
+			control.add_theme_font_size_override("font_size", target_metrics.font(float(control.get_meta("ui_font_reference"))))
+			if not control.has_meta("ui_minimum_reference"):
+				control.set_meta("ui_minimum_reference", control.custom_minimum_size / metrics.scale)
+			control.custom_minimum_size = control.get_meta("ui_minimum_reference") * target_metrics.scale
+			if control is Container:
+				var container := control as Container
+				if not container.has_meta("ui_separation_reference"):
+					container.set_meta("ui_separation_reference", float(container.get_theme_constant("separation")) / metrics.scale)
+				container.add_theme_constant_override("separation", target_metrics.px(float(container.get_meta("ui_separation_reference"))))
+		_scale_control_tree(child, target_metrics)
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:
@@ -94,6 +115,7 @@ func _scroll_row(parent: Node, height: float) -> HBoxContainer:
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(scroll)
+	_rows.append(scroll)
 	var row := HBoxContainer.new()
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(row)
@@ -113,6 +135,7 @@ func add_panel(key: String) -> VBoxContainer:
 	var window := WorkspaceWindow.new()
 	window.name = key
 	area.add_child(window)
+	window.metrics = metrics
 	window.setup(WorkspaceLayout.PANEL_NAMES[key])
 	windows[key] = window
 	authorized[key] = true
@@ -122,7 +145,7 @@ func add_panel(key: String) -> VBoxContainer:
 		for other: WorkspaceWindow in windows.values():
 			if other != window and other.visible:
 				others.append(Rect2(other.position, other.size))
-		var snapped := WorkspaceLayout.clamp_rect(rect, area.size) if unsnapped else WorkspaceLayout.snap_rect(rect, area.size, others, resizing)
+		var snapped := WorkspaceLayout.clamp_rect(rect, area.size, metrics) if unsnapped else WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics)
 		window.position = snapped.position
 		window.size = snapped.size)
 	window.interaction_finished.connect(func() -> void:
@@ -140,11 +163,12 @@ func add_panel(key: String) -> VBoxContainer:
 
 
 func finish_setup() -> void:
-	var valid := model.load_from(_save_path)
+	model.load_from(_save_path)
 	_ready_layout = true
 	_rebuild_navigation()
 	_apply_layout()
-	_message.text = "Local layouts" if valid else "Layout file unreadable; defaults loaded"
+	_status.text = "Layout defaults" if model.last_load_status != "loaded" else ""
+	_status.tooltip_text = "Saved layout could not be read; defaults loaded (%s)." % model.last_load_status if model.last_load_status != "loaded" else ""
 
 
 func state(key: String) -> Dictionary:
@@ -246,15 +270,14 @@ func save_layout() -> void:
 	if not _ready_layout:
 		return
 	var error := model.save_to(_save_path)
-	_message.text = "Saved locally" if error == OK else "Save failed (%s)" % error_string(error)
-	_message.tooltip_text = ProjectSettings.globalize_path(_save_path)
+	_status.text = "Layout saved" if error == OK else "Layout save failed"
+	_status.tooltip_text = "" if error == OK else "Could not save local layout: %s" % error_string(error)
 
 
 func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
-	compact = area.size.x < 760 or area.size.y < 400
-	_hint.visible = size.x >= 1600
+	compact = area.size.x < metrics.px(760) or area.size.y < metrics.px(400)
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
 	if compact and (_compact_panel.is_empty() or not authorized.get(_compact_panel, false) or not state(_compact_panel).open or state(_compact_panel).minimized):
@@ -267,7 +290,7 @@ func _apply_layout() -> void:
 		var saved := state(key)
 		window.visible = authorized[key] and saved.open and not saved.minimized and not map_only and (not compact or key == _compact_panel)
 		window.apply_state(saved.pinned, compact)
-		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size)
+		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 		window.position = rect.position
 		window.size = rect.size
 		area.move_child(window, -1)
@@ -300,7 +323,7 @@ func _build_dialog() -> void:
 	_dialog = AcceptDialog.new()
 	_dialog.title = "Workspace setup"
 	_dialog.ok_button_text = "Apply"
-	_dialog.min_size = Vector2i(300, 0)
+	_dialog.min_size = Vector2i(metrics.px(300), 0)
 	add_child(_dialog)
 	var body := VBoxContainer.new()
 	_dialog.add_child(body)
@@ -322,7 +345,7 @@ func _build_dialog() -> void:
 	var note := Label.new()
 	note.text = "Drag panel headers and resize their corners.\nEdges snap together; hold Alt for free placement.\nChanges save on this device, separately from the colony."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	note.add_theme_font_size_override("font_size", 11)
+	note.add_theme_font_size_override("font_size", metrics.font(11))
 	note.add_theme_color_override("font_color", DeckTheme.MUTED)
 	body.add_child(note)
 	_dialog.confirmed.connect(_confirm_workspace)
@@ -343,7 +366,7 @@ func edit_workspace(create: bool) -> void:
 	_sync_checks()
 	_dialog.title = "New workspace" if create else "Choose panels"
 	_dialog.get_ok_button().disabled = false
-	_dialog.popup_centered(Vector2i(mini(380, int(size.x) - 20), 0))
+	_dialog.popup_centered(Vector2i(mini(metrics.px(380), int(size.x - metrics.px(20))), 0))
 	_name_input.grab_focus()
 	_name_input.select_all()
 
@@ -355,7 +378,6 @@ func _confirm_workspace() -> void:
 			selected.append(key)
 	if _dialog_new:
 		if model.create_workspace(_name_input.text, selected, _copy.button_pressed).is_empty():
-			_message.text = "Use a name; maximum 24 workspaces"
 			return
 	else:
 		if _name_input.editable and not _name_input.text.strip_edges().is_empty():

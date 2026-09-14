@@ -13,8 +13,12 @@ const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
 const GAP := 8.0
 
+static func minimum_size(metrics := UiMetrics.new()) -> Vector2:
+	return metrics.min_size(MIN_SIZE.x, MIN_SIZE.y)
+
 var workspaces: Dictionary = defaults()
 var active := "daily"
+var last_load_status := "missing"
 
 
 static func panel(rect: Array, opened := true) -> Dictionary:
@@ -45,15 +49,15 @@ static func defaults() -> Dictionary:
 	return result
 
 
-static func clamp_rect(rect: Rect2, area: Vector2) -> Rect2:
+static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
 	var available := area.max(Vector2.ONE)
-	var extent := rect.size.clamp(MIN_SIZE.min(available), available)
+	var extent := rect.size.clamp(minimum_size(metrics).min(available), available)
 	return Rect2(rect.position.clamp(Vector2.ZERO, available - extent), extent)
 
 
-static func to_pixels(values: Array, area: Vector2) -> Rect2:
+static func to_pixels(values: Array, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
 	return clamp_rect(Rect2(Vector2(values[0], values[1]) * area,
-		Vector2(values[2], values[3]) * area), area)
+		Vector2(values[2], values[3]) * area), area, metrics)
 
 
 static func to_normalized(rect: Rect2, area: Vector2) -> Array:
@@ -63,8 +67,8 @@ static func to_normalized(rect: Rect2, area: Vector2) -> Array:
 
 
 ## Align parallel edges and leave a small gutter between adjacent windows.
-static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false) -> Rect2:
-	var result := clamp_rect(rect, area)
+static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new()) -> Rect2:
+	var result := clamp_rect(rect, area, metrics)
 	for axis in 2:
 		var edges: Array[float] = [0.0, area[axis]]
 		for other: Rect2 in others:
@@ -88,7 +92,7 @@ static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing
 				result.size[axis] += shift
 			else:
 				result.position[axis] += shift
-	return clamp_rect(result, area)
+	return clamp_rect(result, area, metrics)
 
 
 func create_workspace(title: String, selected: Array[String], copy_current := true) -> String:
@@ -141,12 +145,15 @@ func save_to(path := SAVE_PATH) -> Error:
 
 func load_from(path := SAVE_PATH) -> bool:
 	if not FileAccess.file_exists(path):
+		last_load_status = "missing"
 		return true
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > 1048576:
+		last_load_status = "unreadable"
 		return false
 	var data: Variant = JSON.parse_string(file.get_as_text())
 	if not data is Dictionary or data.get("version") != 1 or not data.get("workspaces") is Dictionary:
+		last_load_status = "corrupt"
 		return false
 	var loaded := defaults()
 	for id: Variant in data.workspaces:
@@ -181,4 +188,5 @@ func load_from(path := SAVE_PATH) -> bool:
 	active = str(data.get("active", "daily"))
 	if not workspaces.has(active):
 		active = "daily"
+	last_load_status = "loaded"
 	return true

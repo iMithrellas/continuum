@@ -55,18 +55,17 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"build")
 	_drag(Vector2(130, 130), Vector2(30, 50))
 	_assert(build_releases == 1, "one reversed build drag emits one atomic request")
-	_assert(build_rects[0] == Rect2i(1, 2, 6, 5), "reversed drag payload is exact")
+	_assert(build_rects[0] == Rect2i(1, 0, 6, 5), "reversed drag payload is exact")
 	_assert(not map._dragging, "drag state clears after release")
 
 	_drag(Vector2(70, 70), Vector2(70, 70))
 	_assert(build_releases == 2, "one-cell build drag emits one request")
-	_assert(build_rects[1] == Rect2i(3, 3, 1, 1), "single-cell payload is exact")
+	_assert(build_rects[1] == Rect2i(3, 1, 1, 1), "single-cell payload is exact")
 	_release(Vector2(70, 70))
 	_assert(build_releases == 2, "repeated release cannot submit another build")
 
-	# The drawn grid is 480x480; the remaining 90 pixels are the legend and must cancel.
 	_press(Vector2(10, 10))
-	_release(Vector2(10, 520))
+	_release(Vector2(10, 580))
 	_assert(build_releases == 2, "release in legend cancels instead of building edge cells")
 
 	_press(Vector2(10, 10))
@@ -91,7 +90,7 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"select")
 	_drag(Vector2(210, 210), Vector2(250, 250))
 	_assert(selected_releases == 1, "select mode emits one rectangular selection")
-	_assert(selected_rects[0] == Rect2i(10, 10, 3, 3), "selection payload is exact")
+	_assert(selected_rects[0] == Rect2i(10, 8, 3, 3), "selection payload is exact")
 
 
 func _test_controller_surface() -> void:
@@ -99,6 +98,24 @@ func _test_controller_surface() -> void:
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
 	isolated_path = main.fixture_workspace_path
+	main.apply_font_size(10, false)
+	_assert(main._metrics.base_font_size == 10 and main._haul_button.get_theme_font_size("font_size") == 12 and
+			main._build_menu.get_theme_font_size("font_size") == 10,
+		"runtime font can shrink dynamic and inherited controls to the lower bound: haul=%d build=%d" % [main._haul_button.get_theme_font_size("font_size"), main._build_menu.get_theme_font_size("font_size")])
+	main.apply_font_size(24, false)
+	_assert(main._metrics.base_font_size == 24 and main._feed.custom_minimum_size.y > 120 and
+			main._history_chart.custom_minimum_size.y > 300 and main._clock.custom_minimum_size.x > 250 and
+			main.workspace.telemetry.get_parent().custom_minimum_size.y > 60 and
+			main._haul_button.get_theme_font_size("font_size") == 28 and
+			main._connection_label.get_theme_font_size("font_size") == 24,
+		"runtime max scale updates fonts, feed, chart, clock, and telemetry minima: haul=%d connection=%d" % [main._haul_button.get_theme_font_size("font_size"), main._connection_label.get_theme_font_size("font_size")])
+	main.apply_font_size(13, false)
+	_assert(main._haul_button.get_theme_font_size("font_size") == 15, "runtime reference size restores exactly")
+	main.apply_font_size(10, false)
+	_assert(main._metrics.base_font_size == 10 and main._feed.custom_minimum_size.y < 70 and
+			main._haul_button.get_theme_font_size("font_size") == 12,
+		"runtime scaling returns to small metrics without compounding")
+	main.apply_font_size(13, false)
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
 	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
