@@ -85,7 +85,14 @@ func snapshot(now_usec: int) -> Dictionary:
 			timeout_count += 1
 			graph_values.append(null)
 	rtts.sort()
-	return {"rtt_ms": _last_rtt_ms if fresh else null, "rtt_stale": _last_success_tick >= 0 and not fresh,
+	var smoothed: Variant = null
+	if fresh and not rtts.is_empty():
+		var total := 0.0
+		for value in rtts:
+			total += value
+		smoothed = total / rtts.size()
+	return {"rtt_ms": _last_rtt_ms if fresh else null, "rtt_smoothed_ms": smoothed,
+		"rtt_stale": _last_success_tick >= 0 and not fresh,
 		"rtt_samples_ms": graph_values, "successful": success_count, "timed_out": timeout_count,
 		"probe_timeout_ratio": float(timeout_count) / (success_count + timeout_count) if success_count + timeout_count > 0 else null,
 		"packet_loss": null, "inflight": not _inflight.is_empty()}

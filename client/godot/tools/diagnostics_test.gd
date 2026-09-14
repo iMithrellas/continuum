@@ -23,6 +23,15 @@ func _init() -> void:
 		bounded.observe_tick(tick)
 	var bounded_snapshot := bounded.refresh(40_000, true)
 	assert(bounded_snapshot.count == 2 and is_equal_approx(bounded_snapshot.window_age_sec, 0.01), "count and age bounds are enforced")
+	var aging := Stats.new(10, 100, 1, 1_000, 2_000_000)
+	for tick in [0, 10, 20]:
+		aging.observe_tick(tick)
+	aging.refresh(20, true)
+	assert(aging.refresh(500).count == 0, "refresh trims aged samples before refresh interval")
+	aging.observe_tick(600)
+	assert(aging.refresh(600, true).count == 1, "long pause reanchors without stale cache")
+	aging.observe_tick(550)
+	assert(aging.refresh(550, true).count == 0, "backward ticks reset history and do not bridge rewind")
 
 	var sent: Array[int] = []
 	var session := Session.new()
@@ -49,7 +58,12 @@ func _init() -> void:
 	assert(not overlay.visible and not overlay.processing_enabled and overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE, "disabled overlay does no work and passes input")
 	overlay.configure(true, true)
 	overlay.apply_metrics(UiMetrics.new(24))
+	overlay.size = Vector2(360, 240)
+	var lanes := overlay.graph_lane_rects()
+	assert(lanes[0].position.y < lanes[1].position.y and lanes[1].end.y <= overlay.size.y, "graph uses separate bounded lanes")
 	overlay.apply_metrics(UiMetrics.new(10))
 	assert(overlay.show_graph and overlay.metrics.base_font_size == 10, "graph and repeated font scaling follow configuration")
+	assert(overlay.panel_rect().end.x <= overlay.size.x and overlay.panel_rect().end.y <= overlay.size.y, "small viewport safe-area clamp")
+	overlay.free()
 	print("DIAGNOSTICS_PASS deterministic stats RTT overlay")
 	quit(0)
