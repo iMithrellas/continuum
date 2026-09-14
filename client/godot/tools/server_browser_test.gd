@@ -52,6 +52,10 @@ func _test_persistence_boundaries() -> void:
 	_assert(named.record_successful_subscription("http://token-server.example", "named-db", "default-world", "Named home", 7) == OK, "named entry records")
 	var named_loaded := History.new(); named_loaded.load_from(named_base + ".history", named_base + ".favorites")
 	_assert(named_loaded.entries()[0].get("display_name", "") == "Named home", "named entry survives reload")
+	var legacy := History.new(); legacy.legacy_import_marker_path = named_base + ".legacy"
+	legacy.load_from(named_base + ".legacy-history", named_base + ".legacy-favorites")
+	_assert(legacy.import_legacy_entry_once("http://legacy.example", "continuum") == OK, "legacy last server adopts explicit default world")
+	_assert(legacy.import_legacy_entry_once("http://other.example", "continuum") == OK and legacy.entries().size() == 1, "legacy adoption is one-time")
 	_assert(named_loaded.set_favorite(named_key, true) == OK, "token-containing canonical key can be favorited")
 	var favorite_loaded := History.new(); favorite_loaded.load_from(named_base + ".history", named_base + ".favorites")
 	_assert(favorite_loaded.entries()[0].favorite, "token-containing canonical key favorite survives reload")

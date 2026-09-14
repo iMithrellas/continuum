@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+"$GODOT" --headless --path "$ROOT/client/godot" --editor --quit
+"$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/diagnostics_test.gd
+"$GODOT" --headless --path "$ROOT/client/godot" --scene res://tools/diagnostics_integration_test.tscn

@@ -3,6 +3,7 @@ extends Control
 
 signal join_requested(host: String, database: String)
 signal local_server_requested
+signal server_management_requested
 signal settings_changed(settings: ClientSettings)
 signal exit_requested
 
@@ -23,6 +24,8 @@ var _local_button: Button
 var _cancel_local_button: Button
 var _settings_panel: VBoxContainer
 var _font_size: SpinBox
+var _diagnostics_toggle: CheckButton
+var _graph_toggle: CheckButton
 var _error: Label
 var _runner_epoch := 0
 
@@ -87,6 +90,8 @@ func _build() -> void:
 
 	var settings_button := _button("Settings", _toggle_settings)
 	column.add_child(settings_button)
+	var servers_button := _button("Servers", _open_server_management)
+	column.add_child(servers_button)
 	var exit_button := _button("Exit", func() -> void: exit_requested.emit())
 	column.add_child(exit_button)
 
@@ -107,6 +112,17 @@ func _build() -> void:
 	_font_size.value = settings.font_size
 	_font_size.value_changed.connect(_font_size_changed)
 	_settings_panel.add_child(_font_size)
+	_diagnostics_toggle = CheckButton.new()
+	_diagnostics_toggle.text = "Show diagnostics"
+	_diagnostics_toggle.button_pressed = settings.diagnostics_enabled
+	_diagnostics_toggle.toggled.connect(_diagnostics_changed)
+	_settings_panel.add_child(_diagnostics_toggle)
+	_graph_toggle = CheckButton.new()
+	_graph_toggle.text = "Show frame/RTT graph"
+	_graph_toggle.button_pressed = settings.diagnostics_graph_enabled
+	_graph_toggle.disabled = not settings.diagnostics_enabled
+	_graph_toggle.toggled.connect(_graph_changed)
+	_settings_panel.add_child(_graph_toggle)
 
 func set_status(message: String, warning := false) -> void:
 	_status.text = message
@@ -198,8 +214,28 @@ func join_failed(message: String) -> void:
 func _toggle_settings() -> void:
 	_settings_panel.visible = not _settings_panel.visible
 
+func _open_server_management() -> void:
+	server_management_requested.emit()
+
 func _font_size_changed(value: float) -> void:
 	settings.font_size = clampi(roundi(value), ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE)
+	if main != null and main.has_method("apply_settings"):
+		main.apply_settings(settings)
+	settings_changed.emit(settings)
+
+func _diagnostics_changed(value: bool) -> void:
+	settings.diagnostics_enabled = value
+	_graph_toggle.disabled = not value
+	if not value:
+		settings.diagnostics_graph_enabled = false
+		_graph_toggle.button_pressed = false
+	_apply_settings()
+
+func _graph_changed(value: bool) -> void:
+	settings.diagnostics_graph_enabled = value if settings.diagnostics_enabled else false
+	_apply_settings()
+
+func _apply_settings() -> void:
 	if main != null and main.has_method("apply_settings"):
 		main.apply_settings(settings)
 	settings_changed.emit(settings)

@@ -14,6 +14,9 @@ const HistoryChartControl = preload("res://scripts/history_chart.gd")
 const DiagnosticsStatsControl = preload("res://scripts/diagnostics_stats.gd")
 const SessionDiagnosticsControl = preload("res://scripts/session_diagnostics.gd")
 const DiagnosticsOverlayControl = preload("res://scripts/diagnostics_overlay.gd")
+const ConnectionHistoryModel = preload("res://scripts/connection_history.gd")
+const ServerProbesControl = preload("res://scripts/server_probes.gd")
+const ServerManagementControl = preload("res://scripts/server_management.gd")
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
@@ -122,10 +125,28 @@ var _diagnostics_overlay: DiagnosticsOverlay
 var _diagnostics_focus_paused := false
 var _diagnostics_last_tick := -1
 var _diagnostics_last_refresh := -1
+var _server_history: ContinuumConnectionHistory
+var _server_probes: ContinuumServerProbes
+var _server_management: ContinuumServerManagement
 
 
 func _ready() -> void:
-	_settings_warning = _settings.load_from(_cli_option("--settings-file", ClientSettings.path_from_args()))
+	var settings_path := _cli_option("--settings-file", ClientSettings.path_from_args())
+	_settings_warning = _settings.load_from(settings_path)
+	_server_history = ConnectionHistoryModel.new()
+	var history_path := ClientSettings.companion_path_from_settings(settings_path, ".history.json", ClientSettings.HISTORY_PATH)
+	var favorites_path := ClientSettings.companion_path_from_settings(settings_path, ".favorites.json", ClientSettings.FAVORITES_PATH)
+	_server_history.legacy_import_marker_path = history_path + ".legacy-imported"
+	_server_history.load_from(history_path, favorites_path)
+	_server_history.import_legacy_entry_once(_settings.server_host, _settings.database)
+	_server_probes = ServerProbesControl.new()
+	_server_management = ServerManagementControl.new()
+	_server_management.set_history_store(_server_history)
+	_server_management.set_probe_service(_server_probes)
+	_server_management.set_local_management_state({"can_start": false, "can_stop": false, "can_force_stop": false,
+		"message": "Native process management pending"})
+	_server_management.visible = false
+	add_child(_server_management)
 	_metrics = UiMetrics.new(_settings.font_size)
 	_diagnostics_stats = DiagnosticsStatsControl.new()
 	_session_diagnostics = SessionDiagnosticsControl.new()
@@ -142,6 +163,9 @@ func _ready() -> void:
 	add_child(_menu)
 	_menu.setup(self, _settings, _metrics)
 	_menu.join_requested.connect(_on_menu_join_requested)
+	_menu.server_management_requested.connect(_show_server_management)
+	_server_management.join_requested.connect(_on_server_management_join_requested)
+	_server_management.back_requested.connect(_hide_server_management)
 	_menu.exit_requested.connect(func() -> void: get_tree().quit())
 	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
 	map.input_blocked = workspace.blocks_map_input
@@ -176,6 +200,8 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	_configure_diagnostics_overlay()
 	if _menu != null:
 		_menu.apply_metrics(_metrics)
+	if _server_management != null:
+		_server_management.apply_metrics(_metrics)
 	map.queue_redraw()
 	_history_chart.queue_redraw()
 	if persist:
@@ -293,11 +319,33 @@ func leave_session() -> void:
 	map.visible = true
 	workspace.visible = true
 	_menu.show_menu()
+	_hide_server_management()
 	session_left.emit()
 
 
 func _on_menu_join_requested(host: String, database: String) -> void:
 	configure_connection(host, database, ContinuumClientProfile.NORMAL, false)
+
+func _show_server_management() -> void:
+	_menu.visible = false
+	_server_management.visible = true
+	_server_management.set_browser_visible(true)
+
+func _hide_server_management() -> void:
+	if _server_management == null:
+		return
+	_server_management.set_browser_visible(false)
+	_server_management.visible = false
+	if _menu != null:
+		_menu.visible = true
+
+func _on_server_management_join_requested(target: Dictionary) -> void:
+	# World selection is deliberately not routed into the SDK database argument yet.
+	var host := str(target.get("endpoint", ""))
+	var database := str(target.get("database", ""))
+	if not host.is_empty() and not database.is_empty():
+		_hide_server_management()
+		configure_connection(host, database, ContinuumClientProfile.NORMAL, false)
 
 
 func _has_cli_connection() -> bool:
@@ -472,6 +520,7 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 	_dirty = true
 	_map_dirty = true
 	_settings.remember_server(_host, _database)
+	_server_history.record_successful_subscription(_host, _database, ConnectionHistoryModel.DEFAULT_WORLD)
 	_menu.set_status("Connected to %s / %s" % [_host, _database])
 	_menu.visible = false
 	map.visible = true

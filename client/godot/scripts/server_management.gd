@@ -121,6 +121,11 @@ func _build_ui() -> void:
 	var stop := Button.new(); stop.text = "Stop local"; stop.disabled = not bool(local_management_state.get("can_stop", false)); stop.pressed.connect(request_local_stop); local.add_child(stop)
 	var force := Button.new(); force.text = "Force stop"; force.disabled = not bool(local_management_state.get("can_force_stop", false)); force.pressed.connect(request_local_force_stop); local.add_child(force)
 	column.add_child(local)
+	var native_note := Label.new()
+	native_note.text = str(local_management_state.get("message", "Native process management pending"))
+	native_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	native_note.add_theme_color_override("font_color", DeckTheme.MUTED)
+	column.add_child(native_note)
 	var back := Button.new(); back.text = "Return"; back.pressed.connect(func() -> void: back_requested.emit()); column.add_child(back)
 
 func _refresh_history_list() -> void:
