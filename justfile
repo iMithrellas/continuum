@@ -120,3 +120,11 @@ test-access-cleanup:
 # Exercise local-server runner lifecycle with fake child processes.
 test-local-server-runner:
     scripts/internal/test-local-server-runner
+
+# Exercise the offline launch menu and its fake runner/session guards.
+test-main-menu:
+    scripts/internal/test-main-menu
+
+# Verify endpoint/profile changes replace the cached-auth client instance.
+test-session-switch:
+    scripts/internal/test-session-switch
