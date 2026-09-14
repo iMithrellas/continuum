@@ -29,12 +29,16 @@ done
 
 finish() {
     local status=$?
-    if [[ -n "$STATUS_FILE" ]]; then
-        printf '%s\n' "$status" > "$STATUS_FILE"
+    if [[ -n "$STATUS_FILE" && "$STATUS_PUBLISHED" == 0 ]]; then
+        STATUS_PUBLISHED=1
+        local temporary="${STATUS_FILE}.$$"
+        printf '%s\n' "$status" > "$temporary"
+        mv -f "$temporary" "$STATUS_FILE"
     fi
     exit "$status"
 }
 trap finish EXIT
+STATUS_PUBLISHED=0
 CHILD_PID=""
 stop_child() {
     if [[ -n "$CHILD_PID" ]]; then
@@ -71,7 +75,4 @@ if ((STATUS == 0)); then
     STATUS=$?
 fi
 set -e
-if [[ -n "$STATUS_FILE" ]]; then
-    printf '%s\n' "$STATUS" > "$STATUS_FILE"
-fi
 exit "$STATUS"

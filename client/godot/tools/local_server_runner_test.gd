@@ -6,8 +6,9 @@ var failures := 0
 
 func _initialize() -> void:
 	await _test_success()
-	await _test_failure()
-	await _test_repeated_start_and_cancel()
+	await _test_unexpected_exit()
+	await _test_invalid_status()
+	await _test_cancel_cleans_descendants_and_blocks_restart()
 	if failures == 0:
 		print("LOCAL_SERVER_RUNNER_PASS")
 		quit(0)
@@ -16,12 +17,17 @@ func _initialize() -> void:
 		quit(1)
 
 
-func _test_success() -> void:
+func _runner(status_name: String) -> ContinuumLocalServerRunner:
 	var runner: ContinuumLocalServerRunner = load(RUNNER_SCRIPT).new()
 	runner.helper_command = "/bin/sh"
-	runner.status_file = "/tmp/continuum-runner-success.status"
-	runner.helper_arguments = PackedStringArray(["-c", "sleep 0.05; printf '0\\n' > '%s'" % ProjectSettings.globalize_path(runner.status_file)])
+	runner.status_file = "/tmp/continuum-runner-%s.status" % status_name
+	return runner
+
+
+func _test_success() -> void:
+	var runner := _runner("success")
 	var completed := [false]
+	runner.helper_arguments = PackedStringArray(["-c", _write_status_command(runner, "0")])
 	runner.ready.connect(func(_host: String, database: String) -> void:
 		completed[0] = database == "continuum")
 	_assert(runner.start(), "successful setup starts")
@@ -29,37 +35,65 @@ func _test_success() -> void:
 	_assert(completed[0], "successful setup emits ready")
 
 
-func _test_failure() -> void:
-	var runner: ContinuumLocalServerRunner = load(RUNNER_SCRIPT).new()
-	runner.helper_command = "/bin/sh"
-	runner.status_file = "/tmp/continuum-runner-failure.status"
-	runner.helper_arguments = PackedStringArray(["-c", "printf '7\\n' > '%s'; exit 7" % ProjectSettings.globalize_path(runner.status_file)])
+func _test_unexpected_exit() -> void:
+	var runner := _runner("unexpected")
 	var message := [""]
-	runner.failed.connect(func(value: String) -> void:
-		message[0] = value)
-	_assert(runner.start(), "failing setup starts")
+	var child_file := "/tmp/continuum-runner-unexpected-child.pid"
+	DirAccess.remove_absolute(child_file)
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 30 & child=$!; printf '%s\\n' $child > '%s'; exit 23" % [child_file, child_file]])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "unexpected exit setup starts")
+	await _wait_until(func() -> bool: return FileAccess.file_exists(child_file))
 	await _wait_until(func() -> bool: return not runner.is_running())
-	_assert(message[0].contains("exit code 7"), "failure reports helper exit code")
+	_assert(message[0].contains("without a status"), "unexpected exit fails instead of hanging")
+	var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
+	await _wait_until(func() -> bool: return not _live_process(child_pid))
 
 
-func _test_repeated_start_and_cancel() -> void:
-	var runner: ContinuumLocalServerRunner = load(RUNNER_SCRIPT).new()
-	runner.helper_command = "/bin/sh"
-	runner.status_file = "/tmp/continuum-runner-cancel.status"
-	var status_path := ProjectSettings.globalize_path(runner.status_file)
-	runner.helper_arguments = PackedStringArray(["-c", "trap \"printf '143\\n' > '%s'; exit 143\" TERM; sleep 5" % status_path])
+func _test_invalid_status() -> void:
+	var runner := _runner("invalid")
+	var message := [""]
+	runner.helper_arguments = PackedStringArray(["-c", _write_status_command(runner, "")])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "invalid status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0].contains("invalid status"), "empty status is rejected")
+
+
+func _test_cancel_cleans_descendants_and_blocks_restart() -> void:
+	var runner := _runner("cancel")
+	var child_file := "/tmp/continuum-runner-child.pid"
+	DirAccess.remove_absolute(child_file)
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 30 & child=$!; printf '%s\\n' $child > '%s'; wait $child" % [child_file, child_file]])
 	_assert(runner.start(), "cancellable setup starts")
-	_assert(not runner.start(), "repeated start does not spawn another process")
+	await _wait_until(func() -> bool: return FileAccess.file_exists(child_file))
+	var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
+	runner.cancel()
+	_assert(not runner.start(), "restart is blocked while process group cleans up")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	await _wait_until(func() -> bool: return not _live_process(child_pid))
+	_assert(not _live_process(child_pid),
+			"cancellation terminates descendant process")
+	_assert(runner.start(), "restart works after process group cleanup")
 	runner.cancel()
 	await _wait_until(func() -> bool: return not runner.is_running())
-	_assert(not runner.start() or runner.is_running(), "runner remains usable after cancellation")
-	if runner.is_running():
-		runner.cancel()
-	await _wait_until(func() -> bool: return not runner.is_running())
+
+
+func _write_status_command(runner: ContinuumLocalServerRunner, value: String) -> String:
+	var path := ProjectSettings.globalize_path(runner.status_file)
+	return "printf '%s\\n' > '%s'" % [value, path]
+
+
+func _live_process(process_id: int) -> bool:
+	var output: Array = []
+	var command := "ps -o stat= -p %d | grep -qv '^Z'" % process_id
+	return OS.execute("sh", ["-c", command], output, true) == 0
 
 
 func _wait_until(condition: Callable) -> void:
-	var deadline := Time.get_ticks_msec() + 3000
+	var deadline := Time.get_ticks_msec() + 5000
 	while not condition.call() and Time.get_ticks_msec() < deadline:
 		await process_frame
 	_assert(condition.call(), "async operation completes")
