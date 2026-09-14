@@ -18,6 +18,7 @@ var _inflight: Dictionary = {}
 var _settled: Array[Dictionary] = []
 var _last_success_tick := -1
 var _last_rtt_ms: Variant = null
+var _stale_gap_tick := -1
 
 func configure_probe(send_authenticated_echo: Callable, timeout := DEFAULT_TIMEOUT_USEC,
 		freshness := DEFAULT_FRESHNESS_USEC) -> void:
@@ -36,6 +37,7 @@ func reset() -> void:
 	_settled.clear()
 	_last_success_tick = -1
 	_last_rtt_ms = null
+	_stale_gap_tick = -1
 
 func pump(now_usec: int) -> bool:
 	_expire(now_usec)
@@ -62,6 +64,7 @@ func respond(request_id: int, response_tick_usec: int, response_epoch := -1) -> 
 	_record(response_tick_usec, rtt_usec, true)
 	_last_success_tick = response_tick_usec
 	_last_rtt_ms = float(rtt_usec) / 1000.0
+	_stale_gap_tick = -1
 	return true
 
 func advance(now_usec: int) -> void:
@@ -74,6 +77,7 @@ func snapshot(now_usec: int) -> Dictionary:
 	var success_count := 0
 	var rtts: Array[float] = []
 	var graph_values: Array = []
+	var graph_points: Array = []
 	for sample in _settled:
 		if sample.tick < now_usec - max_age_usec:
 			continue
@@ -81,10 +85,17 @@ func snapshot(now_usec: int) -> Dictionary:
 			success_count += 1
 			rtts.append(sample.rtt_ms)
 			graph_values.append(sample.rtt_ms)
+			graph_points.append({"tick": sample.tick, "value": sample.rtt_ms})
 		else:
 			timeout_count += 1
 			graph_values.append(null)
+			graph_points.append({"tick": sample.tick, "value": null})
 	rtts.sort()
+	if _last_success_tick >= 0 and not fresh:
+		if _stale_gap_tick < 0:
+			_stale_gap_tick = now_usec
+		graph_values.append(null)
+		graph_points.append({"tick": _stale_gap_tick, "value": null})
 	var smoothed: Variant = null
 	if fresh and not rtts.is_empty():
 		var total := 0.0
@@ -94,6 +105,7 @@ func snapshot(now_usec: int) -> Dictionary:
 	return {"rtt_ms": _last_rtt_ms if fresh else null, "rtt_smoothed_ms": smoothed,
 		"rtt_stale": _last_success_tick >= 0 and not fresh,
 		"rtt_samples_ms": graph_values, "successful": success_count, "timed_out": timeout_count,
+		"rtt_graph": graph_points,
 		"probe_timeout_ratio": float(timeout_count) / (success_count + timeout_count) if success_count + timeout_count > 0 else null,
 		"packet_loss": null, "inflight": not _inflight.is_empty()}
 
