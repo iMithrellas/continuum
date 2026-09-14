@@ -6,7 +6,7 @@ const AXIS_COLOR := Color("5c6675")
 const GRID_COLOR := Color("29313b")
 const MOOD_COLOR := Color("6fcf7f")
 const PRODUCTIVITY_COLOR := Color("ffb74d")
-const PADDING := Vector2(42, 18)
+var metrics := UiMetrics.new()
 
 var _points: Array[Dictionary] = []
 
@@ -17,24 +17,25 @@ func set_points(points: Array[Dictionary]) -> void:
 
 
 func _ready() -> void:
-	custom_minimum_size = Vector2(0, 190)
+	custom_minimum_size = metrics.min_size(0, 190)
 
 
 func _draw() -> void:
 	var font := ThemeDB.fallback_font
-	var plot := Rect2(PADDING.x, PADDING.y, size.x - PADDING.x - 8.0,
-			size.y - PADDING.y - 30.0)
+	var padding := Vector2(metrics.px(42), metrics.px(18))
+	var plot := Rect2(padding.x, padding.y, size.x - padding.x - metrics.px(8.0),
+			size.y - padding.y - metrics.px(30.0))
 	if plot.size.x <= 20.0 or plot.size.y <= 20.0:
 		return
 	for value: int in [0, 50, 100]:
 		var y := plot.position.y + plot.size.y * (1.0 - value / 100.0)
 		draw_line(Vector2(plot.position.x, y), Vector2(plot.end.x, y), GRID_COLOR)
-		draw_string(font, Vector2(4, y + 4), "%d%%" % value, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, AXIS_COLOR)
+		draw_string(font, Vector2(metrics.px(4), y + metrics.px(4)), "%d%%" % value, HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(10), AXIS_COLOR)
 	draw_line(plot.position, Vector2(plot.position.x, plot.end.y), AXIS_COLOR)
 	draw_line(Vector2(plot.position.x, plot.end.y), plot.end, AXIS_COLOR)
 	if _points.is_empty():
-		draw_string(font, Vector2(plot.position.x + 8, plot.position.y + plot.size.y / 2.0),
-			"Waiting for replicated colony clock...", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, AXIS_COLOR)
+		draw_string(font, Vector2(plot.position.x + metrics.px(8), plot.position.y + plot.size.y / 2.0),
+			"Waiting for replicated colony clock...", HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(12), AXIS_COLOR)
 		return
 
 	var first_seconds: float = _points[0]["seconds"]
@@ -54,7 +55,7 @@ func _draw() -> void:
 		draw_circle(mood_line[0], 3.0, MOOD_COLOR)
 		draw_circle(productivity_line[0], 3.0, PRODUCTIVITY_COLOR)
 	var span_minutes := (last_seconds - first_seconds) / 60.0
-	draw_string(font, Vector2(plot.position.x, size.y - 8), "0m", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, AXIS_COLOR)
-	draw_string(font, Vector2(plot.end.x - 42, size.y - 8), "%.0fm" % span_minutes, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, AXIS_COLOR)
-	draw_string(font, Vector2(plot.position.x + 8, plot.position.y - 4), "mood", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, MOOD_COLOR)
-	draw_string(font, Vector2(plot.position.x + 48, plot.position.y - 4), "productivity", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, PRODUCTIVITY_COLOR)
+	draw_string(font, Vector2(plot.position.x, size.y - metrics.px(8)), "0m", HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(10), AXIS_COLOR)
+	draw_string(font, Vector2(plot.end.x - metrics.px(42), size.y - metrics.px(8)), "%.0fm" % span_minutes, HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(10), AXIS_COLOR)
+	draw_string(font, Vector2(plot.position.x + metrics.px(8), plot.position.y - metrics.px(4)), "mood", HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(10), MOOD_COLOR)
+	draw_string(font, Vector2(plot.position.x + metrics.px(48), plot.position.y - metrics.px(4)), "productivity", HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(10), PRODUCTIVITY_COLOR)
