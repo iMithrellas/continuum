@@ -14,7 +14,6 @@ const PROCESS_GROUP_LAUNCHER := "/usr/bin/setsid"
 const CLEANUP_GRACE_SECONDS := 1.0
 const STATUS_GRACE_SECONDS := 0.25
 const GROUP_HANDSHAKE_SECONDS := 1.0
-const UNPUBLISHED_CLEANUP_PASSES := 4
 
 @export var host := DEFAULT_HOST
 @export var database := DEFAULT_DATABASE
@@ -32,7 +31,6 @@ var _wrapper_process_id := -1
 var _cancel_requested := false
 var _cleanup_deadline := 0
 var _startup_deadline := 0
-var _cleanup_escalated := false
 
 
 func is_running() -> bool:
@@ -68,10 +66,12 @@ func start() -> bool:
 	var group_path := status_path + ".pgid"
 	var wrapper_path := status_path + ".pid"
 	var cancel_path := status_path + ".cancel"
+	var ack_path := status_path + ".ack"
 	DirAccess.remove_absolute(status_path)
 	DirAccess.remove_absolute(group_path)
 	DirAccess.remove_absolute(wrapper_path)
 	DirAccess.remove_absolute(cancel_path)
+	DirAccess.remove_absolute(ack_path)
 	arguments.append_array(["--status-file", status_path])
 	if not FileAccess.file_exists(command):
 		_fail("Local server setup helper is missing: %s" % command)
@@ -82,7 +82,6 @@ func start() -> bool:
 	_process_group_id = -1
 	_wrapper_process_id = -1
 	_startup_deadline = Time.get_ticks_msec() + int(GROUP_HANDSHAKE_SECONDS * 1000.0)
-	_cleanup_escalated = false
 	progress.emit("Starting local SpacetimeDB infrastructure...")
 	# setsid may fork before exec, so its returned PID is not a reliable PGID. The
 	# shell records its actual PID/PGID before execing the helper.
@@ -91,9 +90,12 @@ func start() -> bool:
 		group_publication = ":"
 	var launch_arguments := PackedStringArray(["-f", "/bin/sh", "-c",
 		"printf '%s\\n' \"$$\" > \"$1\"; if [ -e \"$3\" ]; then exit 130; fi; " +
-		group_publication + "; if [ -e \"$3\" ]; then exit 130; fi; " +
-		"shift 3; exec \"$@\"",
-		"continuum-process-group", wrapper_path, group_path, cancel_path, command])
+		group_publication + "; " +
+		"wait_ticks=0; while [ ! -e \"$4\" ] && [ ! -e \"$3\" ] && [ $wait_ticks -lt 100 ]; do " +
+		"sleep 0.01; wait_ticks=$((wait_ticks + 1)); done; " +
+		"if [ -e \"$3\" ] || [ ! -e \"$4\" ]; then exit 124; fi; " +
+		"shift 4; exec \"$@\"",
+		"continuum-process-group", wrapper_path, group_path, cancel_path, ack_path, command])
 	launch_arguments.append_array(arguments)
 	_process_id = OS.create_process(PROCESS_GROUP_LAUNCHER, launch_arguments, false)
 	if _process_id < 0:
@@ -116,8 +118,6 @@ func cancel() -> void:
 	cancel_file.store_string("cancelled\n")
 	cancel_file.close()
 	_kill_process_group("TERM")
-	if _process_group_id < 0:
-		_kill_unpublished_tree("TERM")
 	_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
 
 
@@ -126,12 +126,14 @@ func _watch_process() -> void:
 	var group_path := status_path + ".pgid"
 	var wrapper_path := status_path + ".pid"
 	var cancel_path := status_path + ".cancel"
+	var ack_path := status_path + ".ack"
 	var leader_reaped := false
 	var unexpected_exit := false
 	var status_deadline := 0
 	while is_running():
 		_refresh_process_group_id(group_path)
 		_refresh_wrapper_process_id(wrapper_path)
+		_acknowledge_process_group(ack_path)
 		if _process_group_id < 0:
 			if _cancel_requested or Time.get_ticks_msec() >= _startup_deadline:
 				if not _cancel_requested:
@@ -140,15 +142,8 @@ func _watch_process() -> void:
 					var timeout_file := FileAccess.open(cancel_path, FileAccess.WRITE)
 					timeout_file.store_string("timeout\n")
 					timeout_file.close()
-				if _cleanup_deadline == 0:
-					_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
-					_kill_unpublished_tree("TERM")
-				elif Time.get_ticks_msec() >= _cleanup_deadline:
-					_kill_unpublished_tree("KILL")
-					if _cleanup_escalated:
-						break
-					_cleanup_escalated = true
-					_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
+			if OS.get_process_exit_code(_process_id) != -1:
+				break
 			await Engine.get_main_loop().process_frame
 			continue
 		if not _group_exists(_process_group_id):
@@ -182,6 +177,7 @@ func _watch_process() -> void:
 		DirAccess.remove_absolute(group_path)
 		DirAccess.remove_absolute(wrapper_path)
 		DirAccess.remove_absolute(cancel_path)
+		DirAccess.remove_absolute(ack_path)
 		if unexpected_exit:
 			_fail("Local server setup ended without a status report. Check Docker and the setup output.")
 			return
@@ -195,6 +191,7 @@ func _watch_process() -> void:
 	DirAccess.remove_absolute(group_path)
 	DirAccess.remove_absolute(wrapper_path)
 	DirAccess.remove_absolute(cancel_path)
+	DirAccess.remove_absolute(ack_path)
 	if not status_text.is_valid_int() or status_text != str(int(status_text)):
 		_fail("Local server setup wrote an invalid status report.")
 		return
@@ -222,7 +219,6 @@ func _kill_process_group(signal_name: String) -> void:
 	if not is_running():
 		return
 	if _process_group_id < 0:
-		_kill_unpublished_tree(signal_name)
 		return
 	var output: Array = []
 	OS.execute("kill", ["-%s" % signal_name, "--", "-%d" % _process_group_id], output, true)
@@ -250,47 +246,11 @@ func _refresh_wrapper_process_id(wrapper_path: String) -> void:
 		_wrapper_process_id = int(value)
 
 
-func _kill_unpublished_tree(signal_name: String) -> void:
-	var target := _wrapper_process_id if _wrapper_process_id >= 0 else _process_id
-	if target < 0:
+func _acknowledge_process_group(ack_path: String) -> void:
+	if _cancel_requested or _process_group_id < 0 or FileAccess.file_exists(ack_path):
 		return
-	# A helper can fork more descendants while cleanup is in progress. Re-scan a
-	# bounded number of times so grandchildren are covered without ever matching
-	# processes outside the recorded target ancestry.
-	for _pass in UNPUBLISHED_CLEANUP_PASSES:
-		var descendants: Array = _descendant_pids(target)
-		for process_id in descendants:
-			var kill_output: Array = []
-			OS.execute("kill", ["-%s" % signal_name, str(process_id)], kill_output, true)
-		var kill_output: Array = []
-		OS.execute("kill", ["-%s" % signal_name, str(target)], kill_output, true)
-
-
-func _descendant_pids(root_pid: int) -> Array:
-	var ps_output: Array = []
-	if OS.execute("ps", ["-eo", "pid=,ppid="], ps_output, true) != 0:
-		return []
-	var children := {}
-	for line in str(ps_output[0]).split("\n"):
-		var fields := line.strip_edges().split(" ", false)
-		if fields.size() != 2 or not fields[0].is_valid_int() or not fields[1].is_valid_int():
-			continue
-		var process_id := int(fields[0])
-		var parent_id := int(fields[1])
-		if process_id <= 0 or parent_id <= 0:
-			continue
-		if not children.has(parent_id):
-			children[parent_id] = []
-		children[parent_id].append(process_id)
-
-	var pending: Array[int] = []
-	if children.has(root_pid):
-		pending.append_array(children[root_pid])
-	var descendants: Array = []
-	while not pending.is_empty():
-		var process_id: int = pending.pop_back()
-		descendants.append(process_id)
-		if children.has(process_id):
-			pending.append_array(children[process_id])
-	descendants.reverse()
-	return descendants
+	if not _group_exists(_process_group_id):
+		return
+	var ack_file := FileAccess.open(ack_path, FileAccess.WRITE)
+	ack_file.store_string("acknowledged\n")
+	ack_file.close()
