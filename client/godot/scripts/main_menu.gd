@@ -33,6 +33,12 @@ func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetric
 	_refresh_last_button()
 
 func _build() -> void:
+	mouse_filter = Control.MOUSE_FILTER_STOP
+	var background := ColorRect.new()
+	background.color = Color("17191b")
+	background.mouse_filter = Control.MOUSE_FILTER_STOP
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(background)
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	margin.add_theme_constant_override("margin_left", metrics.px(48))
@@ -110,6 +116,13 @@ func set_busy(busy: bool) -> void:
 	_local_button.disabled = busy
 	_cancel_local_button.visible = busy and _runner != null and _runner.is_running()
 
+func _process(_delta: float) -> void:
+	# The runner reports cancellation as progress and intentionally has no extra
+	# completion signal. Poll its authoritative lifecycle so the menu cannot stay
+	# disabled after the child process has cleaned up.
+	if _runner != null and _cancel_local_button.visible and not _runner.is_running():
+		set_busy(false)
+
 func show_menu() -> void:
 	visible = true
 	set_busy(false)
@@ -144,11 +157,16 @@ func _start_local_server() -> void:
 	set_busy(true)
 	if not _runner.start():
 		set_busy(false)
+	else:
+		# start() publishes the running state synchronously; expose cancellation now.
+		set_busy(true)
 
 func _cancel_local_server() -> void:
 	if _runner != null:
 		_runner.cancel()
 		set_status("Cancelling local server setup...", true)
+		if not _runner.is_running():
+			set_busy(false)
 
 func _on_local_ready(host: String, database: String) -> void:
 	_join_host.text = host
@@ -208,11 +226,49 @@ static func validate_endpoint(host: String, database: String) -> String:
 	if not (host.begins_with("http://") or host.begins_with("https://")):
 		return "Host must begin with http:// or https://."
 	var authority := host.substr(7) if host.begins_with("http://") else host.substr(8)
-	if authority.strip_edges().is_empty() or authority.contains(" "):
-		return "Host is required."
+	if authority.is_empty() or authority.contains(" ") or authority.contains("/") or authority.contains("?") or authority.contains("#"):
+		return "Host must contain only a hostname and optional port."
+	if authority.contains("@"):
+		return "Host credentials are not supported."
+	if not _valid_authority(authority):
+		return "Host must be a valid hostname, IPv4 address, or bracketed IPv6 address."
 	if database.is_empty() or database.length() > 128 or not database.is_valid_identifier():
 		return "Database must be a non-empty identifier."
 	return ""
+
+static func _valid_authority(authority: String) -> bool:
+	if authority.begins_with("["):
+		var close := authority.find("]")
+		if close < 0 or close == 1:
+			return false
+		var address := authority.substr(1, close - 1)
+		var ipv6 := RegEx.new()
+		ipv6.compile("^[0-9A-Fa-f:.]+$")
+		if not ipv6.search(address) or not address.contains(":"):
+			return false
+		var suffix := authority.substr(close + 1)
+		return suffix.is_empty() or _valid_port(suffix.trim_prefix(":"))
+	if authority.count(":") > 1:
+		return false
+	var host_part := authority
+	if authority.contains(":"):
+		var colon := authority.find(":")
+		host_part = authority.substr(0, colon)
+		if not _valid_port(authority.substr(colon + 1)):
+			return false
+	if host_part.is_empty() or host_part.begins_with(".") or host_part.ends_with("."):
+		return false
+	for label: String in host_part.split("."):
+		if label.is_empty() or label.begins_with("-") or label.ends_with("-"):
+			return false
+	var hostname := RegEx.new()
+	hostname.compile("^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
+	return hostname.search(host_part) != null
+
+static func _valid_port(value: String) -> bool:
+	if value.is_empty() or not value.is_valid_int() or value != str(int(value)):
+		return false
+	return int(value) >= 1 and int(value) <= 65535
 
 func _exit_tree() -> void:
 	if _runner != null:

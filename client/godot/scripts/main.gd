@@ -112,6 +112,7 @@ var _menu: ContinuumMainMenu
 var _session_requested := false
 var _direct_launch := false
 var _session_generation := 0
+var _has_configured_client := false
 
 
 func _ready() -> void:
@@ -123,8 +124,9 @@ func _ready() -> void:
 	workspace.setup(map, _cli_option("--workspace-file", WorkspaceLayout.SAVE_PATH), _metrics)
 	_build_panels()
 	workspace.finish_setup()
-	map.visible = false
-	workspace.visible = false
+	# Keep the game layer laid out behind the opaque menu for responsive sizing.
+	map.visible = true
+	workspace.visible = true
 	_menu = preload("res://scenes/main_menu.tscn").instantiate()
 	add_child(_menu)
 	_menu.setup(self, _settings, _metrics)
@@ -137,18 +139,7 @@ func _ready() -> void:
 	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
-	client.connected.connect(_on_connected)
-	client.disconnected.connect(_on_disconnected)
-	client.connection_error.connect(_on_connection_error)
-	# Upstream currently gates its global transaction-completed signal behind
-	# table-specific listeners. Row signals are always emitted, so coalesce them
-	# into the existing refresh interval instead.
-	client.row_inserted.connect(func(table_name: String, _row: Resource) -> void:
-		_on_table_changed(table_name))
-	client.row_updated.connect(func(table_name: String, _old: Resource, _new: Resource) -> void:
-		_on_table_changed(table_name))
-	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
-		_on_table_changed(table_name))
+	_bind_client(client)
 	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
 	if _has_cli_connection():
 		_direct_launch = true
@@ -184,9 +175,36 @@ func configure_connection(host: String, database: String, profile := ContinuumCl
 	_direct_launch = direct_launch
 	_session_requested = true
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
-	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
 	if _access != null:
 		_access.stop()
+	if _has_configured_client:
+		_replace_client_and_connect.call_deferred(_session_generation)
+		return
+	_has_configured_client = true
+	_start_configured_client(client, _session_generation)
+
+
+func _replace_client_and_connect(generation: int) -> void:
+	var old_client: ContinuumModuleClient = SpacetimeDB.Continuum
+	if old_client.is_connected_db():
+		old_client.disconnect_db()
+	# Removing the client also closes a connecting socket, which disconnect_db()
+	# deliberately does not do for the SDK's not-yet-open state.
+	old_client.queue_free()
+	await get_tree().process_frame
+	if generation != _session_generation or not _session_requested:
+		return
+	var fresh_client: ContinuumModuleClient = preload("res://spacetime_bindings/schema/module_continuum_client.gd").new()
+	SpacetimeDB.Continuum = fresh_client
+	SpacetimeDB.add_child(fresh_client)
+	_bind_client(fresh_client)
+	_start_configured_client(fresh_client, generation)
+
+
+func _start_configured_client(client: ContinuumModuleClient, generation: int) -> void:
+	if generation != _session_generation or not _session_requested:
+		return
+	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
 	_access = _create_access(client)
 	_access.changed.connect(_set_permissions)
 	_access.start()
@@ -202,6 +220,18 @@ func configure_connection(host: String, database: String, profile := ContinuumCl
 		client.connect_db(_host, _database, options)
 
 
+func _bind_client(client: ContinuumModuleClient) -> void:
+	client.connected.connect(_on_connected)
+	client.disconnected.connect(_on_disconnected)
+	client.connection_error.connect(_on_connection_error)
+	client.row_inserted.connect(func(table_name: String, _row: Resource) -> void:
+		_on_table_changed(table_name))
+	client.row_updated.connect(func(table_name: String, _old: Resource, _new: Resource) -> void:
+		_on_table_changed(table_name))
+	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
+		_on_table_changed(table_name))
+
+
 func leave_session() -> void:
 	_session_generation += 1
 	_session_requested = false
@@ -213,8 +243,8 @@ func leave_session() -> void:
 	if SpacetimeDB.Continuum.is_connected_db():
 		SpacetimeDB.Continuum.disconnect_db()
 	_state_ready = false
-	map.visible = false
-	workspace.visible = false
+	map.visible = true
+	workspace.visible = true
 	_menu.show_menu()
 	session_left.emit()
 
@@ -405,8 +435,8 @@ func _on_disconnected() -> void:
 		_schedule_reconnect()
 	elif _session_requested:
 		_menu.join_failed("Disconnected before the server subscription was ready.")
-		map.visible = false
-		workspace.visible = false
+		map.visible = true
+		workspace.visible = true
 		_menu.show_menu()
 		session_failed.emit("Disconnected before the server subscription was ready.")
 
@@ -418,8 +448,8 @@ func _on_connection_error(code: int, reason: String) -> void:
 		_schedule_reconnect()
 	elif _session_requested:
 		_menu.join_failed("Connection error %d: %s" % [code, reason])
-		map.visible = false
-		workspace.visible = false
+		map.visible = true
+		workspace.visible = true
 		_menu.show_menu()
 		session_failed.emit("Connection error %d: %s" % [code, reason])
 

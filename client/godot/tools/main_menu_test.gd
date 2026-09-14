@@ -29,8 +29,12 @@ class FakeRunner extends RefCounted:
 
 func _ready() -> void:
 	_assert(Menu.validate_endpoint("http://127.0.0.1:3000", "continuum").is_empty(), "valid endpoint accepted")
+	_assert(Menu.validate_endpoint("https://[2001:db8::1]:443", "continuum").is_empty(), "bracketed IPv6 endpoint accepted")
 	_assert(not Menu.validate_endpoint("127.0.0.1:3000", "continuum").is_empty(), "host scheme is required")
 	_assert(not Menu.validate_endpoint("http://", "continuum").is_empty(), "empty host rejected")
+	_assert(not Menu.validate_endpoint("http://?", "continuum").is_empty(), "query-only host rejected")
+	_assert(not Menu.validate_endpoint("http://:3000", "continuum").is_empty(), "port-only host rejected")
+	_assert(not Menu.validate_endpoint("http://localhost:0", "continuum").is_empty(), "zero port rejected")
 	_assert(not Menu.validate_endpoint("http://localhost", "bad name").is_empty(), "invalid database rejected")
 
 	var settings := ClientSettings.new()
@@ -71,6 +75,9 @@ func _ready() -> void:
 	_assert(fake.started == 1, "repeated local clicks do not start another runner")
 	menu._cancel_local_server()
 	_assert(fake.cancelled == 1, "local setup is cancellable")
+	await get_tree().process_frame
+	_assert(not menu._join_button.disabled, "menu returns from cancellation after runner cleanup: join")
+	_assert(not menu._cancel_local_button.visible, "menu returns from cancellation after runner cleanup: cancel")
 	menu.queue_free()
 
 	if failed:
