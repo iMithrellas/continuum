@@ -2,31 +2,31 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["tile", "work_order", "event_log", "item_stack", "config", "world_seed", "colony", "colonist", "speed_control", "terrain", "alert", "my_role"]
+const table_names : Array[String] = ["colony", "colonist", "work_order", "speed_control", "event_log", "config", "terrain", "item_stack", "tile", "world_seed", "alert", "my_role"]
 
-var tile: ContinuumTileTable
-var work_order: ContinuumWorkOrderTable
-var event_log: ContinuumEventLogTable
-var item_stack: ContinuumItemStackTable
-var config: ContinuumConfigTable
-var world_seed: ContinuumWorldSeedTable
 var colony: ContinuumColonyTable
 var colonist: ContinuumColonistTable
+var work_order: ContinuumWorkOrderTable
 var speed_control: ContinuumSpeedControlTable
+var event_log: ContinuumEventLogTable
+var config: ContinuumConfigTable
 var terrain: ContinuumTerrainTable
+var item_stack: ContinuumItemStackTable
+var tile: ContinuumTileTable
+var world_seed: ContinuumWorldSeedTable
 var alert: ContinuumAlertTable
 var my_role: ContinuumMyRoleTable
 
 func _init(p_local_db: LocalDatabase) -> void:
-	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
-	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
-	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
-	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
-	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
-	world_seed = preload('res://spacetime_bindings/schema/tables/continuum_world_seed_table.gd').create(p_local_db)
 	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
 	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
+	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
 	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
+	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
+	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
 	terrain = preload('res://spacetime_bindings/schema/tables/continuum_terrain_table.gd').create(p_local_db)
+	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
+	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
+	world_seed = preload('res://spacetime_bindings/schema/tables/continuum_world_seed_table.gd').create(p_local_db)
 	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
 	my_role = preload('res://spacetime_bindings/schema/tables/continuum_my_role_table.gd').create(p_local_db)
