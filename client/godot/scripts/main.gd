@@ -5,6 +5,10 @@
 ## predicted or mutated locally, so what you see is always what the server believes.
 extends Control
 
+signal session_ready
+signal session_failed(message: String)
+signal session_left
+
 const SessionHistoryModel = preload("res://scripts/session_history.gd")
 const HistoryChartControl = preload("res://scripts/history_chart.gd")
 
@@ -80,8 +84,8 @@ var _block_info: Label
 var _block_controls: Dictionary = {}
 ## Test harnesses may record the final intent without pretending a reducer succeeded.
 var map_intent_override: Callable
-var _dirty: bool = true
-var _map_dirty: bool = true
+var _dirty: bool = false
+var _map_dirty: bool = false
 var _refresh_timer: float = 0.0
 var _host := ""
 var _database := ""
@@ -104,6 +108,10 @@ var _speed_strip: HBoxContainer
 var _settings := ClientSettings.new()
 var _metrics := UiMetrics.new()
 var _settings_warning := ""
+var _menu: ContinuumMainMenu
+var _session_requested := false
+var _direct_launch := false
+var _session_generation := 0
 
 
 func _ready() -> void:
@@ -115,6 +123,13 @@ func _ready() -> void:
 	workspace.setup(map, _cli_option("--workspace-file", WorkspaceLayout.SAVE_PATH), _metrics)
 	_build_panels()
 	workspace.finish_setup()
+	map.visible = false
+	workspace.visible = false
+	_menu = preload("res://scenes/main_menu.tscn").instantiate()
+	add_child(_menu)
+	_menu.setup(self, _settings, _metrics)
+	_menu.join_requested.connect(_on_menu_join_requested)
+	_menu.exit_requested.connect(func() -> void: get_tree().quit())
 	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
 	map.input_blocked = workspace.blocks_map_input
 	map.tile_selected.connect(_on_tile_selected)
@@ -135,25 +150,10 @@ func _ready() -> void:
 	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
 		_on_table_changed(table_name))
 	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
-	_access = _create_access(client)
-	_access.changed.connect(_set_permissions)
-	_access.start()
-
-	var options := SpacetimeDBConnectionOptions.new()
-	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
-	options.debug_mode = false
-	options.one_time_token = false
-	options.save_token = true
-
-	# Host/database can be overridden on the command line, which makes running two
-	# clients against one colony (or against a remote one) trivial:
-	#   godot -- --stdb-host=http://127.0.0.1:3000 --stdb-db=continuum
-	_host = _cli_option("--stdb-host", "http://127.0.0.1:3000")
-	_database = _cli_option("--stdb-db", "continuum")
-	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
-
-	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
-	client.connect_db(_host, _database, options)
+	if _has_cli_connection():
+		_direct_launch = true
+		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3000"),
+			_cli_option("--stdb-db", "continuum"), _profile, true)
 
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
@@ -165,11 +165,69 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	map.metrics = _metrics
 	_history_chart.metrics = _metrics
 	workspace.apply_metrics(_metrics)
+	if _menu != null:
+		_menu.apply_metrics(_metrics)
 	map.queue_redraw()
 	_history_chart.queue_redraw()
 	if persist:
 		return _settings.save_to()
 	return OK
+
+
+func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
+		direct_launch := false) -> void:
+	_session_generation += 1
+	_cancel_reconnect()
+	_host = host.strip_edges()
+	_database = database.strip_edges()
+	_profile = profile
+	_direct_launch = direct_launch
+	_session_requested = true
+	var client: ContinuumModuleClient = SpacetimeDB.Continuum
+	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
+	if _access != null:
+		_access.stop()
+	_access = _create_access(client)
+	_access.changed.connect(_set_permissions)
+	_access.start()
+	var options := SpacetimeDBConnectionOptions.new()
+	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
+	options.debug_mode = false
+	options.one_time_token = false
+	options.save_token = true
+	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
+	if client.is_connected_db():
+		_on_connected(client.get_local_identity(), str(client.get_token()))
+	else:
+		client.connect_db(_host, _database, options)
+
+
+func leave_session() -> void:
+	_session_generation += 1
+	_session_requested = false
+	_cancel_reconnect()
+	_release_main_subscription()
+	if _access != null:
+		_access.stop()
+		_access = null
+	if SpacetimeDB.Continuum.is_connected_db():
+		SpacetimeDB.Continuum.disconnect_db()
+	_state_ready = false
+	map.visible = false
+	workspace.visible = false
+	_menu.show_menu()
+	session_left.emit()
+
+
+func _on_menu_join_requested(host: String, database: String) -> void:
+	configure_connection(host, database, ContinuumClientProfile.NORMAL, false)
+
+
+func _has_cli_connection() -> bool:
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--stdb-host=") or argument.begins_with("--stdb-db="):
+			return true
+	return _profile == ContinuumClientProfile.ADMIN
 
 func apply_font_size(value: int, persist := true) -> Error:
 	var settings := ClientSettings.new()
@@ -293,7 +351,9 @@ func _exit_tree() -> void:
 
 
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
-	_reconnect_timer = null
+	if not _session_requested:
+		return
+	_cancel_reconnect()
 	print("Continuum identity: %s" % identity.hex_encode())
 	_set_connection_text("connected as %s..." % identity.hex_encode().substr(0, 12),
 			Color("6fcf7f"))
@@ -303,8 +363,11 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_subscription = SpacetimeDB.Continuum.subscribe(SUBSCRIPTION_QUERIES)
 	if _subscription.error != OK:
 		_set_connection_text("subscription failed (%d)" % _subscription.error, Color("ff5c6c"))
+		if not _direct_launch:
+			_menu.join_failed("Subscription failed (%d)." % _subscription.error)
+			_menu.show_menu()
 		return
-	_subscription.applied.connect(_on_subscription_applied.bind(_subscription))
+	_subscription.applied.connect(_on_subscription_applied.bind(_subscription, _session_generation))
 
 
 func _release_main_subscription() -> void:
@@ -317,12 +380,18 @@ func _release_main_subscription() -> void:
 	SpacetimeDB.Continuum.discard_subscription(subscription)
 
 
-func _on_subscription_applied(subscription: SpacetimeDBSubscription) -> void:
-	if _subscription != subscription:
+func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation: int) -> void:
+	if _subscription != subscription or generation != _session_generation or not _session_requested:
 		return
 	_state_ready = true
 	_dirty = true
 	_map_dirty = true
+	_settings.remember_server(_host, _database)
+	_menu.set_status("Connected to %s / %s" % [_host, _database])
+	_menu.visible = false
+	map.visible = true
+	workspace.visible = true
+	session_ready.emit()
 
 
 func _on_disconnected() -> void:
@@ -332,13 +401,27 @@ func _on_disconnected() -> void:
 	_history_chart.set_points([])
 	_set_connection_text("disconnected - the colony keeps running without us",
 			Color("ff5c6c"))
-	_schedule_reconnect()
+	if _session_requested and _direct_launch:
+		_schedule_reconnect()
+	elif _session_requested:
+		_menu.join_failed("Disconnected before the server subscription was ready.")
+		map.visible = false
+		workspace.visible = false
+		_menu.show_menu()
+		session_failed.emit("Disconnected before the server subscription was ready.")
 
 
 func _on_connection_error(code: int, reason: String) -> void:
 	_release_main_subscription()
 	_set_connection_text("connection error %d: %s" % [code, reason], Color("ff5c6c"))
-	_schedule_reconnect()
+	if _session_requested and _direct_launch:
+		_schedule_reconnect()
+	elif _session_requested:
+		_menu.join_failed("Connection error %d: %s" % [code, reason])
+		map.visible = false
+		workspace.visible = false
+		_menu.show_menu()
+		session_failed.emit("Connection error %d: %s" % [code, reason])
 
 
 func _schedule_reconnect() -> void:
@@ -362,9 +445,14 @@ func _schedule_reconnect() -> void:
 	_reconnect_timer.timeout.connect(_retry_connection.bind(_reconnect_timer))
 
 
+func _cancel_reconnect() -> void:
+	# SceneTreeTimer cannot be cancelled; clearing the handle makes its callback stale.
+	_reconnect_timer = null
+
+
 func _retry_connection(timer: SceneTreeTimer) -> void:
 	# A late timeout from an earlier attempt must not reconnect an active client.
-	if timer != _reconnect_timer or SpacetimeDB.Continuum.is_connected_db():
+	if timer != _reconnect_timer or not _session_requested or not _direct_launch or SpacetimeDB.Continuum.is_connected_db():
 		return
 	_reconnect_timer = null
 	var options := SpacetimeDBConnectionOptions.new()
@@ -851,6 +939,11 @@ func _build_telemetry() -> void:
 	_population = Label.new()
 	_population.text = "CREW --"
 	workspace.telemetry.add_child(_population)
+	var menu_button := Button.new()
+	menu_button.text = "Menu"
+	menu_button.tooltip_text = "Leave this session and return to the launch menu."
+	menu_button.pressed.connect(leave_session)
+	workspace.telemetry.add_child(menu_button)
 
 
 func _refresh_permissions() -> void:
