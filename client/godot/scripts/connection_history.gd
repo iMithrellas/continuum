@@ -18,7 +18,9 @@ func load_from(history_file := "", favorites_file := "") -> Error:
 	if not favorites_file.is_empty(): favorites_path = favorites_file
 	_entries = _read_map(history_path)
 	_favorites = _read_favorites(favorites_path)
+	var before_trim := _entries.size()
 	_trim_map(_entries)
+	if _entries.size() != before_trim: return _write_map(history_path, _entries)
 	return OK
 
 ## This is the only method that creates history records: callers must report a successful subscription.
@@ -196,7 +198,10 @@ func _read_map(path: String) -> Dictionary:
 		if key is String and parsed[key] is Dictionary and parsed[key].has("key") and parsed[key]["key"] == key:
 			var entry: Dictionary = parsed[key]
 			var valid_types := entry.get("endpoint", null) is String and entry.get("database", null) is String and entry.get("world", null) is String and entry.get("last_seen", null) is int and entry.get("last_sample", null) is int
-			if valid_types and canonical_key(entry.endpoint, entry.database, entry.world) == key:
+			var allowed := true
+			for field in entry.keys():
+				if field not in ["key", "endpoint", "database", "database_canonical", "world", "status", "last_seen", "last_sample"]: allowed = false
+			if valid_types and allowed and entry.get("status", "unknown") in ["unknown", "checking", "online", "unreachable"] and canonical_key(entry.endpoint, entry.database, entry.world) == key:
 				valid[key] = entry
 	return valid
 
@@ -206,7 +211,7 @@ func _read_favorites(path: String) -> Dictionary:
 	if not parsed is Dictionary: return {}
 	var valid := {}
 	for key in parsed:
-		if key is String and key.length() <= 320 and parsed[key] is bool and parsed[key]: valid[key] = true
+		if key is String and key.length() <= 320 and not key.to_lower().contains("token") and parsed[key] is bool and parsed[key]: valid[key] = true
 	return valid
 
 func _write_map(path: String, value: Dictionary) -> Error:

@@ -10,6 +10,8 @@ func _init() -> void:
 	_test_persistence_boundaries()
 	_test_management_contract()
 	await _test_probes()
+	await _test_http_adapter()
+	await _test_rendered_browser()
 	if failures == 0: print("SERVER_BROWSER_PASS")
 	else: print("SERVER_BROWSER_FAIL (%d failures)" % failures)
 	quit(0 if failures == 0 else 1)
@@ -78,6 +80,67 @@ func _test_management_contract() -> void:
 	manager.set_search("not found")
 	_assert(manager.selected_key == selected, "selection identifier survives filtering")
 	manager.free()
+
+func _test_http_adapter() -> void:
+	var server := TCPServer.new()
+	_assert(server.listen(0, "127.0.0.1") == OK, "sandbox HTTP fixture listens")
+	var probes = Probes.new(); get_root().add_child(probes); probes.set_visible(true)
+	var result := [{}]
+	var peers: Array[StreamPeerTCP] = []
+	probes.probe_finished.connect(func(_key: String, value: Dictionary) -> void: result[0] = value)
+	var port := server.get_local_port()
+	await process_frame
+	probes.refresh([{"key": "http", "endpoint": "http://127.0.0.1:%d" % port}], 0.0)
+	for _frame in 120:
+		for peer in peers: peer.poll()
+		if server.is_connection_available():
+			var peer := server.take_connection()
+			peers.append(peer)
+			peer.poll()
+			peer.put_data("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_utf8_buffer())
+		await process_frame
+		if result[0].has("rtt_ms"): break
+	_assert(result[0].get("status", "") == "online", "owned HTTP health adapter reports online")
+	if result[0].get("status", "") != "online": print("HTTP RESULT ", result[0], " PORT ", port)
+	_assert(float(result[0].get("rtt_ms", -1)) >= 0.0, "HTTP RTT is measured separately")
+	_assert(result[0].get("joinable", "missing") == null, "health does not claim database joinability")
+	probes.queue_free(); server.stop(); await process_frame
+
+func _test_rendered_browser() -> void:
+	var store = History.new(); store.load_from("/tmp/continuum-render.history", "/tmp/continuum-render.favorites")
+	store.clear_history()
+	store.record_successful_subscription("http://example.com", "Continuum", "default-world", "Home", 9)
+	var manager = Management.new(); manager.apply_metrics(UiMetrics.new(24)); manager.set_history_store(store); get_root().add_child(manager); manager.set_anchors_preset(Control.PRESET_TOP_LEFT); manager.set_size(Vector2(360, 480))
+	await process_frame
+	var rows := _nodes_named(manager, "Home")
+	_assert(rows.size() == 1, "browser renders one stable history row")
+	var label: Label = rows[0] if rows[0] is Label else rows[0].get_child(0)
+	_assert(label.text.contains("unknown") and label.text.contains("Home") and label.text.contains("default-world") and label.text.contains("HTTP RTT unavailable"), "row renders status address world and HTTP RTT")
+	_assert(_all_controls_fit(manager, 360), "font 24 browser controls fit narrow viewport")
+	manager.set_local_management_state({"can_stop": true})
+	await process_frame
+	var stop_buttons := _nodes_named(manager, "Stop local")
+	_assert(stop_buttons.size() == 1 and not (stop_buttons[0] as Button).disabled, "capability update refreshes local controls")
+	var key := History.canonical_key("http://example.com", "Continuum")
+	manager.request_favorite(key, true); await process_frame
+	_assert(manager.visible_entries()[0].get("favorite", false), "favorite mutation refreshes labels")
+	manager.request_join(key); manager.set_search("missing"); await process_frame
+	_assert(manager.selected_key == key, "selection identifier survives search filtering")
+	manager.set_search(""); manager.request_history_removal(key); await process_frame
+	_assert(manager.visible_entries().is_empty(), "history removal refreshes rendered list")
+	manager.queue_free(); await process_frame
+
+func _nodes_named(root: Node, target: String) -> Array[Node]:
+	var result: Array[Node] = []
+	if target.is_empty() or root.name == target or (root is Button and root.text == target) or (root is Label and root.text.contains(target)): result.append(root)
+	for child in root.get_children(): result.append_array(_nodes_named(child, target))
+	return result
+
+func _all_controls_fit(root: Node, width: float) -> bool:
+	for node in _nodes_named(root, ""):
+		if node is Control and node.get_global_rect().end.x > width + 0.5:
+			return false
+	return true
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition: failures += 1; printerr("FAIL: %s" % message)

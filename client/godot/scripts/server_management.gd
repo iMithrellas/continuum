@@ -24,6 +24,8 @@ func _ready() -> void:
 	if history == null:
 		history = ContinuumConnectionHistory.new(); history.load_from()
 	if probes == null: probes = ContinuumServerProbes.new()
+	if probes.get_parent() == null: add_child(probes)
+	if not probes.probe_finished.is_connected(_on_probe_finished): probes.probe_finished.connect(_on_probe_finished)
 	_build_ui()
 
 func set_history_store(store: ContinuumConnectionHistory) -> void:
@@ -31,7 +33,8 @@ func set_history_store(store: ContinuumConnectionHistory) -> void:
 
 func set_probe_service(service: ContinuumServerProbes) -> void:
 	probes = service
-	probes.probe_finished.connect(func(_key: String, _result: Dictionary) -> void: _refresh_history_list())
+	if is_inside_tree() and probes.get_parent() == null: add_child(probes)
+	if not probes.probe_finished.is_connected(_on_probe_finished): probes.probe_finished.connect(_on_probe_finished)
 
 func apply_metrics(value: UiMetrics) -> void:
 	_metrics = value
@@ -45,6 +48,7 @@ func set_world_catalog(worlds: Array[Dictionary]) -> void:
 func set_local_management_state(state: Dictionary) -> void:
 	# The host application supplies capability/status; this component never assumes Docker.
 	local_management_state = state.duplicate(true)
+	if is_inside_tree(): _build_ui()
 
 func select_world(world_id: String, world_slug: String) -> void:
 	world_selected.emit(world_id, world_slug)
@@ -67,12 +71,14 @@ func set_browser_visible(value: bool) -> void:
 
 func request_favorite(key: String, favorite: bool) -> bool:
 	var accepted := history != null and history.set_favorite(key, favorite) == OK
-	if accepted: favorite_requested.emit(key, favorite)
+	if accepted:
+		favorite_requested.emit(key, favorite); _refresh_history_list()
 	return accepted
 
 func request_history_removal(key: String) -> bool:
 	var accepted := history != null and history.remove_history(key) == OK
-	if accepted: history_remove_requested.emit(key)
+	if accepted:
+		history_remove_requested.emit(key); _refresh_history_list()
 	return accepted
 
 func request_local_start() -> void:
@@ -87,6 +93,9 @@ func _process(_delta: float) -> void:
 		probes.refresh(visible_entries())
 		probes.process()
 
+func _on_probe_finished(_key: String, _result: Dictionary) -> void:
+	_refresh_history_list()
+
 func _build_ui() -> void:
 	# The scene is intentionally self-contained; navigation and local ownership stay outside it.
 	for child in get_children(): child.queue_free()
@@ -96,12 +105,13 @@ func _build_ui() -> void:
 	margin.add_theme_constant_override("margin_top", _metrics.px(24)); margin.add_theme_constant_override("margin_bottom", _metrics.px(24))
 	add_child(margin)
 	var column := VBoxContainer.new(); margin.add_child(column)
-	var heading := Label.new(); heading.text = "SERVER MANAGEMENT"; heading.add_theme_font_size_override("font_size", _metrics.font(20)); column.add_child(heading)
-	var search := LineEdit.new(); search.placeholder_text = "Search connections"; search.custom_minimum_size = _metrics.min_size(240, 32); search.text_changed.connect(set_search); column.add_child(search)
-	var list := VBoxContainer.new(); list.name = "ConnectionHistory"; list.size_flags_vertical = Control.SIZE_EXPAND_FILL; column.add_child(list)
+	var heading := Label.new(); heading.text = "SERVER MANAGEMENT"; heading.clip_text = true; heading.custom_minimum_size = Vector2(1, _metrics.px(24)); heading.add_theme_font_size_override("font_size", _metrics.font(20)); column.add_child(heading)
+	var search := LineEdit.new(); search.placeholder_text = "Search connections"; search.custom_minimum_size = _metrics.min_size(120, 32); search.text_changed.connect(set_search); column.add_child(search)
+	var scroll := ScrollContainer.new(); scroll.name = "ConnectionHistoryScroll"; scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; scroll.custom_minimum_size = _metrics.min_size(0, 120); column.add_child(scroll)
+	var list := VBoxContainer.new(); list.name = "ConnectionHistory"; list.size_flags_horizontal = Control.SIZE_EXPAND_FILL; scroll.add_child(list)
 	_history_list = list
 	_refresh_history_list()
-	var local := HBoxContainer.new()
+	var local := HFlowContainer.new()
 	var start := Button.new(); start.text = "Start local"; start.disabled = not bool(local_management_state.get("can_start", false)); start.pressed.connect(request_local_start); local.add_child(start)
 	var stop := Button.new(); stop.text = "Stop local"; stop.disabled = not bool(local_management_state.get("can_stop", false)); stop.pressed.connect(request_local_stop); local.add_child(stop)
 	var force := Button.new(); force.text = "Force stop"; force.disabled = not bool(local_management_state.get("can_force_stop", false)); force.pressed.connect(request_local_force_stop); local.add_child(force)
@@ -112,13 +122,16 @@ func _refresh_history_list() -> void:
 	if not is_instance_valid(_history_list): return
 	for child in _history_list.get_children(): child.queue_free()
 	for entry in visible_entries():
-		var row := HBoxContainer.new(); row.name = str(entry.key)
-		var text := Label.new(); text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var row := VBoxContainer.new(); row.name = str(entry.key)
+		var text := Label.new(); text.size_flags_horizontal = Control.SIZE_EXPAND_FILL; text.custom_minimum_size = Vector2(1, 0); text.clip_text = true
 		var probe_state := probes.state(entry.key) if probes else {"status": "unknown"}
 		var rtt := str(probe_state.get("rtt_ms", "unavailable")) + " ms HTTP" if probe_state.has("rtt_ms") and int(probe_state.rtt_ms) >= 0 else "HTTP RTT unavailable"
 		var freshness := "stale" if probe_state.get("stale", false) else "current"
+		text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		text.text = ("[favorite] " if entry.get("favorite", false) else "") + str(entry.get("display_name", entry.endpoint)) + " | %s (%s) | last seen %s | sample %s | %s | joinable %s | auth %s | world %s" % [probe_state.get("status", "unknown"), freshness, entry.get("last_seen", "never"), probe_state.get("last_sample", "never"), rtt, probe_state.get("joinable", "unknown"), probe_state.get("auth", "unknown"), entry.get("world", "")]
 		row.add_child(text)
-		var join := Button.new(); join.text = "Join"; join.custom_minimum_size = _metrics.min_size(64, 32); join.pressed.connect(request_join.bind(entry.key)); row.add_child(join)
-		var favorite := Button.new(); favorite.text = "Unfavorite" if entry.get("favorite", false) else "Favorite"; favorite.custom_minimum_size = _metrics.min_size(86, 32); favorite.pressed.connect(request_favorite.bind(entry.key, not entry.get("favorite", false))); row.add_child(favorite)
-		var remove := Button.new(); remove.text = "Remove history"; remove.custom_minimum_size = _metrics.min_size(120, 32); remove.pressed.connect(request_history_removal.bind(entry.key)); row.add_child(remove)
+		var controls := HFlowContainer.new(); row.add_child(controls)
+		var join := Button.new(); join.text = "Join"; join.custom_minimum_size = _metrics.min_size(64, 32); join.pressed.connect(request_join.bind(entry.key)); controls.add_child(join)
+		var favorite := Button.new(); favorite.text = "Unfavorite" if entry.get("favorite", false) else "Favorite"; favorite.custom_minimum_size = _metrics.min_size(86, 32); favorite.pressed.connect(request_favorite.bind(entry.key, not entry.get("favorite", false))); controls.add_child(favorite)
+		var remove := Button.new(); remove.text = "Remove history"; remove.custom_minimum_size = _metrics.min_size(120, 32); remove.pressed.connect(request_history_removal.bind(entry.key)); controls.add_child(remove)
 		_history_list.add_child(row)
