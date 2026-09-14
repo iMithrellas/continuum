@@ -188,16 +188,19 @@ func _replace_client_and_connect(generation: int) -> void:
 	var old_client: ContinuumModuleClient = SpacetimeDB.Continuum
 	if old_client.is_connected_db():
 		old_client.disconnect_db()
+	_unbind_client(old_client)
 	# Removing the client also closes a connecting socket, which disconnect_db()
 	# deliberately does not do for the SDK's not-yet-open state.
+	if old_client.get_parent() != null:
+		old_client.get_parent().remove_child(old_client)
 	old_client.queue_free()
-	await get_tree().process_frame
-	if generation != _session_generation or not _session_requested:
-		return
 	var fresh_client: ContinuumModuleClient = preload("res://spacetime_bindings/schema/module_continuum_client.gd").new()
 	SpacetimeDB.Continuum = fresh_client
 	SpacetimeDB.add_child(fresh_client)
 	_bind_client(fresh_client)
+	await get_tree().process_frame
+	if generation != _session_generation or not _session_requested:
+		return
 	_start_configured_client(fresh_client, generation)
 
 
@@ -230,6 +233,15 @@ func _bind_client(client: ContinuumModuleClient) -> void:
 		_on_table_changed(table_name))
 	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
 		_on_table_changed(table_name))
+
+
+func _unbind_client(client: ContinuumModuleClient) -> void:
+	if client.connected.is_connected(_on_connected):
+		client.connected.disconnect(_on_connected)
+	if client.disconnected.is_connected(_on_disconnected):
+		client.disconnected.disconnect(_on_disconnected)
+	if client.connection_error.is_connected(_on_connection_error):
+		client.connection_error.disconnect(_on_connection_error)
 
 
 func leave_session() -> void:
@@ -434,11 +446,7 @@ func _on_disconnected() -> void:
 	if _session_requested and _direct_launch:
 		_schedule_reconnect()
 	elif _session_requested:
-		_menu.join_failed("Disconnected before the server subscription was ready.")
-		map.visible = true
-		workspace.visible = true
-		_menu.show_menu()
-		session_failed.emit("Disconnected before the server subscription was ready.")
+		_fail_manual_session("Disconnected before the server subscription was ready.")
 
 
 func _on_connection_error(code: int, reason: String) -> void:
@@ -447,11 +455,39 @@ func _on_connection_error(code: int, reason: String) -> void:
 	if _session_requested and _direct_launch:
 		_schedule_reconnect()
 	elif _session_requested:
-		_menu.join_failed("Connection error %d: %s" % [code, reason])
-		map.visible = true
-		workspace.visible = true
-		_menu.show_menu()
-		session_failed.emit("Connection error %d: %s" % [code, reason])
+		_fail_manual_session("Connection error %d: %s" % [code, reason])
+
+
+func _fail_manual_session(message: String) -> void:
+	if not _session_requested or _direct_launch:
+		return
+	# Invalidate before releasing subscriptions or closing the socket. Both SDK
+	# failure signals can arrive for one abnormal close, and late callbacks from
+	# the old epoch must not be allowed to restore gameplay.
+	_session_requested = false
+	_session_generation += 1
+	var failed_generation := _session_generation
+	var failed_client: ContinuumModuleClient = SpacetimeDB.Continuum
+	_cancel_reconnect()
+	_state_ready = false
+	_release_main_subscription()
+	if _access != null:
+		_access.stop()
+		_access = null
+	map.visible = true
+	workspace.visible = true
+	_menu.join_failed(message)
+	_menu.show_menu()
+	session_failed.emit(message)
+	# Do not close synchronously from inside the SDK callback. If a new join was
+	# started before this deferred cleanup runs, the epoch guard leaves it alone.
+	call_deferred("_close_failed_client", failed_client, failed_generation)
+
+
+func _close_failed_client(client: ContinuumModuleClient, generation: int) -> void:
+	if generation == _session_generation and not _session_requested and client == SpacetimeDB.Continuum:
+		if client.is_connected_db():
+			client.disconnect_db()
 
 
 func _schedule_reconnect() -> void:

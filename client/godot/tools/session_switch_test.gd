@@ -36,8 +36,24 @@ func _ready() -> void:
 		"endpoint switch selects a fresh endpoint identity file")
 	_assert(SpacetimeDB.Continuum.get_token().is_empty(),
 		"endpoint switch does not retain the previous cached token")
-	DirAccess.remove_absolute(ProjectSettings.globalize_path(admin_path))
 	main.leave_session()
+	var failures := [0]
+	var ready_count := [0]
+	main.session_failed.connect(func(_message: String) -> void: failures[0] += 1)
+	main.session_ready.connect(func() -> void: ready_count[0] += 1)
+	main._session_requested = true
+	main._direct_launch = false
+	var old_generation: int = main._session_generation
+	var old_subscription := SpacetimeDBSubscription.new()
+	main._subscription = old_subscription
+	main._on_connection_error(1006, "abnormal close")
+	main._on_disconnected()
+	main._on_connected(PackedByteArray(), "late-token")
+	main._on_subscription_applied(old_subscription, old_generation)
+	_assert(failures[0] == 1, "connection error and disconnected emit one terminal failure (%d)" % failures[0])
+	_assert(ready_count[0] == 0 and not main._session_requested,
+		"late connected and subscription callbacks cannot restore a failed session")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(admin_path))
 	main.queue_free()
 	if failed:
 		get_tree().quit(1)

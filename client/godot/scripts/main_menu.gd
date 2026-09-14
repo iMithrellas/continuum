@@ -23,6 +23,7 @@ var _cancel_local_button: Button
 var _settings_panel: VBoxContainer
 var _font_size: SpinBox
 var _error: Label
+var _runner_epoch := 0
 
 func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetrics) -> void:
 	main = owner
@@ -151,9 +152,11 @@ func _start_local_server() -> void:
 	if _runner != null and _runner.is_running():
 		return
 	_runner = runner_factory.call() if runner_factory.is_valid() else ContinuumLocalServerRunner.new()
-	_runner.progress.connect(func(message: String) -> void: set_status(message))
-	_runner.ready.connect(_on_local_ready)
-	_runner.failed.connect(_on_local_failed)
+	_runner_epoch += 1
+	var epoch := _runner_epoch
+	_runner.progress.connect(_on_runner_progress.bind(epoch))
+	_runner.ready.connect(_on_local_ready.bind(epoch))
+	_runner.failed.connect(_on_local_failed.bind(epoch))
 	set_busy(true)
 	if not _runner.start():
 		set_busy(false)
@@ -163,18 +166,27 @@ func _start_local_server() -> void:
 
 func _cancel_local_server() -> void:
 	if _runner != null:
+		_runner_epoch += 1
 		_runner.cancel()
 		set_status("Cancelling local server setup...", true)
 		if not _runner.is_running():
 			set_busy(false)
 
-func _on_local_ready(host: String, database: String) -> void:
+func _on_runner_progress(message: String, epoch: int) -> void:
+	if epoch == _runner_epoch:
+		set_status(message)
+
+func _on_local_ready(host: String, database: String, epoch: int) -> void:
+	if epoch != _runner_epoch:
+		return
 	_join_host.text = host
 	_join_database.text = database
 	set_status("Local server ready. Joining...")
 	join_requested.emit(host, database)
 
-func _on_local_failed(message: String) -> void:
+func _on_local_failed(message: String, epoch: int) -> void:
+	if epoch != _runner_epoch:
+		return
 	set_busy(false)
 	set_status(message, true)
 

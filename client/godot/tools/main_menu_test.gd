@@ -68,6 +68,8 @@ func _ready() -> void:
 	_assert(menu._status.text.begins_with("Connecting"), "join status is visible")
 
 	var fake := FakeRunner.new()
+	var local_joins := 0
+	menu.join_requested.connect(func(_host: String, _database: String) -> void: local_joins += 1)
 	menu.runner_factory = func() -> RefCounted: return fake
 	menu.set_busy(false)
 	menu._start_local_server()
@@ -78,6 +80,8 @@ func _ready() -> void:
 	await get_tree().process_frame
 	_assert(not menu._join_button.disabled, "menu returns from cancellation after runner cleanup: join")
 	_assert(not menu._cancel_local_button.visible, "menu returns from cancellation after runner cleanup: cancel")
+	fake.ready.emit("http://127.0.0.1:3000", "continuum")
+	_assert(local_joins == 0, "cancelled runner cannot late-join")
 	menu.queue_free()
 
 	if failed:
