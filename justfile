@@ -56,9 +56,14 @@ bindings: publish
 # Start SpacetimeDB, publish the Rust module, and generate client bindings.
 setup: bindings
 
-# Run the Godot client against the local SpacetimeDB server.
-run *args: up
+# Run the Godot client. The client does not implicitly start Docker; the future
+# launch menu (or `just local-server`) owns local provisioning.
+run *args:
     {{ quote(godot) }} --path client/godot -- "$@"
+
+# Start the persistent local server and publish the current module.
+local-server:
+    scripts/internal/start-local-server
 
 # Run the headless Godot smoke test after publishing the current module.
 smoke *args: setup
@@ -111,3 +116,7 @@ test-block-reducers:
 
 test-access-cleanup:
     scripts/internal/test-access-cleanup
+
+# Exercise local-server runner lifecycle with fake child processes.
+test-local-server-runner:
+    scripts/internal/test-local-server-runner

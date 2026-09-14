@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# Provision the persistent local server used by the source checkout.
+# This deliberately does not run `down` or `publish --fresh`: normal launch must
+# preserve the existing colony and must not take ownership of client identity.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+DATABASE="${CONTINUUM_DB:-continuum}"
+STATUS_FILE=""
+while (($#)); do
+    case "$1" in
+        --database=*) DATABASE="${1#*=}" ;;
+        --database)
+            (($# >= 2)) || { printf 'missing value for --database\n' >&2; exit 2; }
+            DATABASE="$2"
+            shift
+            ;;
+        --status-file=*) STATUS_FILE="${1#*=}" ;;
+        --status-file)
+            (($# >= 2)) || { printf 'missing value for --status-file\n' >&2; exit 2; }
+            STATUS_FILE="$2"
+            shift
+            ;;
+        *) printf 'unknown option: %s\n' "$1" >&2; exit 2 ;;
+    esac
+    shift
+done
+
+finish() {
+    local status=$?
+    if [[ -n "$STATUS_FILE" ]]; then
+        printf '%s\n' "$status" > "$STATUS_FILE"
+    fi
+    exit "$status"
+}
+trap finish EXIT
+CHILD_PID=""
+stop_child() {
+    if [[ -n "$CHILD_PID" ]]; then
+        kill "$CHILD_PID" 2>/dev/null || true
+        wait "$CHILD_PID" 2>/dev/null || true
+    fi
+    exit 130
+}
+trap stop_child TERM INT
+
+run_step() {
+    "$@" &
+    CHILD_PID=$!
+    wait "$CHILD_PID"
+    local status=$?
+    CHILD_PID=""
+    return "$status"
+}
+
+if ! command -v docker >/dev/null 2>&1; then
+    printf 'Docker is required for local server setup. Install/start Docker and try again.\n' >&2
+    exit 127
+fi
+if ! docker compose version >/dev/null 2>&1; then
+    printf 'Docker Compose is required for local server setup.\n' >&2
+    exit 127
+fi
+
+set +e
+run_step docker compose up -d --wait spacetimedb
+STATUS=$?
+if ((STATUS == 0)); then
+    run_step env CONTINUUM_DB="$DATABASE" scripts/internal/publish
+    STATUS=$?
+fi
+set -e
+if [[ -n "$STATUS_FILE" ]]; then
+    printf '%s\n' "$STATUS" > "$STATUS_FILE"
+fi
+exit "$STATUS"
