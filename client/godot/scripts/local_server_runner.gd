@@ -14,6 +14,7 @@ const PROCESS_GROUP_LAUNCHER := "/usr/bin/setsid"
 const CLEANUP_GRACE_SECONDS := 1.0
 const STATUS_GRACE_SECONDS := 0.25
 const GROUP_HANDSHAKE_SECONDS := 1.0
+const UNPUBLISHED_CLEANUP_PASSES := 4
 
 @export var host := DEFAULT_HOST
 @export var database := DEFAULT_DATABASE
@@ -253,6 +254,43 @@ func _kill_unpublished_tree(signal_name: String) -> void:
 	var target := _wrapper_process_id if _wrapper_process_id >= 0 else _process_id
 	if target < 0:
 		return
-	var output: Array = []
-	OS.execute("pkill", ["-%s" % signal_name, "-P", str(target)], output, true)
-	OS.execute("kill", ["-%s" % signal_name, str(target)], output, true)
+	# A helper can fork more descendants while cleanup is in progress. Re-scan a
+	# bounded number of times so grandchildren are covered without ever matching
+	# processes outside the recorded target ancestry.
+	for _pass in UNPUBLISHED_CLEANUP_PASSES:
+		var descendants: Array = _descendant_pids(target)
+		for process_id in descendants:
+			var kill_output: Array = []
+			OS.execute("kill", ["-%s" % signal_name, str(process_id)], kill_output, true)
+		var kill_output: Array = []
+		OS.execute("kill", ["-%s" % signal_name, str(target)], kill_output, true)
+
+
+func _descendant_pids(root_pid: int) -> Array:
+	var ps_output: Array = []
+	if OS.execute("ps", ["-eo", "pid=,ppid="], ps_output, true) != 0:
+		return []
+	var children := {}
+	for line in str(ps_output[0]).split("\n"):
+		var fields := line.strip_edges().split(" ", false)
+		if fields.size() != 2 or not fields[0].is_valid_int() or not fields[1].is_valid_int():
+			continue
+		var process_id := int(fields[0])
+		var parent_id := int(fields[1])
+		if process_id <= 0 or parent_id <= 0:
+			continue
+		if not children.has(parent_id):
+			children[parent_id] = []
+		children[parent_id].append(process_id)
+
+	var pending: Array[int] = []
+	if children.has(root_pid):
+		pending.append_array(children[root_pid])
+	var descendants: Array = []
+	while not pending.is_empty():
+		var process_id: int = pending.pop_back()
+		descendants.append(process_id)
+		if children.has(process_id):
+			pending.append_array(children[process_id])
+	descendants.reverse()
+	return descendants

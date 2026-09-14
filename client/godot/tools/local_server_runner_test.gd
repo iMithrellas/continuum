@@ -11,6 +11,8 @@ func _initialize() -> void:
 	await _test_cancel_cleans_descendants_and_blocks_restart()
 	await _test_missing_group_handshake()
 	await _test_cancel_before_group_handshake()
+	await _test_grandchild_cancel_before_group_handshake()
+	await _test_grandchild_timeout_before_group_handshake()
 	if failures == 0:
 		print("LOCAL_SERVER_RUNNER_PASS")
 		quit(0)
@@ -126,6 +128,51 @@ func _test_cancel_before_group_handshake() -> void:
 		var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
 		_assert(child_pid > 0, "early-cancel descendant PID is numeric")
 		await _wait_until(func() -> bool: return not _live_process(child_pid))
+
+
+func _test_grandchild_cancel_before_group_handshake() -> void:
+	var runner := _runner("early-grandchild-cancel")
+	var pid_file := "/tmp/continuum-runner-early-grandchild-pids"
+	DirAccess.remove_absolute(pid_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c", _grandchild_command(pid_file)])
+	_assert(runner.start(), "early-grandchild setup starts")
+	await _wait_until(func() -> bool: return FileAccess.file_exists(pid_file))
+	var pids := _read_pids(pid_file)
+	_assert(pids.size() == 2, "early-grandchild hierarchy writes numeric PIDs")
+	runner.cancel()
+	await _wait_until(func() -> bool: return not runner.is_running())
+	for process_id in pids:
+		await _wait_until(func() -> bool: return not _live_process(process_id))
+		_assert(not _live_process(process_id), "early cancellation leaves no grandchild descendants")
+
+
+func _test_grandchild_timeout_before_group_handshake() -> void:
+	var runner := _runner("timeout-grandchild")
+	var pid_file := "/tmp/continuum-runner-timeout-grandchild-pids"
+	DirAccess.remove_absolute(pid_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c", _grandchild_command(pid_file)])
+	_assert(runner.start(), "timeout-grandchild setup starts")
+	await _wait_until(func() -> bool: return FileAccess.file_exists(pid_file))
+	var pids := _read_pids(pid_file)
+	_assert(pids.size() == 2, "timeout-grandchild hierarchy writes numeric PIDs")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	for process_id in pids:
+		await _wait_until(func() -> bool: return not _live_process(process_id))
+		_assert(not _live_process(process_id), "timeout cleanup leaves no grandchild descendants")
+
+
+func _grandchild_command(pid_file: String) -> String:
+	return "sh -c 'sleep 30 & grand=$!; printf \"%%s\\n\" \"$$ $grand\" > \"%s\"; wait $grand' & child=$!; wait $child" % pid_file
+
+
+func _read_pids(pid_file: String) -> Array[int]:
+	var values: Array[int] = []
+	for value in FileAccess.get_file_as_string(pid_file).strip_edges().split(" ", false):
+		if value.is_valid_int() and int(value) > 0:
+			values.append(int(value))
+	return values
 
 
 func _write_status_command(runner: ContinuumLocalServerRunner, value: String) -> String:
