@@ -73,10 +73,12 @@ deliveries, but does not delete stored goods or cargo.
 The custom-drawn map uses labeled resource-colored boxes for ground piles and
 attached boxes for cargo. Dashed arrows point to active delivery destinations;
 they are guides, not predicted paths. A shared-stock display sits over storage
-and briefly highlights replicated stock increases. The resource legend matches
-the stored totals and roster cargo colors. Hover or select a pile's tile for its
-amounts; compact storage and cargo amounts may be rounded. The roster shows each
-worker's job, hauling role, activity, and cargo alongside their needs.
+and briefly highlights replicated stock increases. There is no separate bottom
+resource legend/footer: read stored totals from the storage stock overlay and
+resource identity from the map labels and colored pile/cargo boxes. Hover or
+select a pile's tile for its amounts; compact storage and cargo amounts may be
+rounded. The roster shows each worker's job, hauling role, activity, and cargo
+alongside their needs.
 
 ## Terrain And Block Operations
 
@@ -219,13 +221,18 @@ hostname/IP (including bracketed IPv6) and an optional port from 1 through
 The settings file is local to this device and stores the last successful
 host/database and display preference, not replicated colony state. Auth tokens
 are separate for normal and admin profiles and keyed by host/database.
+Use `--settings-file=PATH` to select an alternate settings file for a test or
+disposable run; the default is `user://continuum_settings.cfg`.
 
 `Start local server` is source-checkout-only. It runs
-`scripts/internal/start-local-server`, requiring Docker and Docker Compose,
-starts the Compose `spacetimedb` service, and publishes without removing
+`scripts/internal/start-local-server`, requiring Docker and Docker Compose. The
+runner is POSIX/Linux-oriented: it currently depends on `/usr/bin/setsid`,
+`/bin/sh`, and process-group `kill` behavior in addition to the source checkout.
+It starts the Compose `spacetimedb` service and publishes without removing
 volumes or using a fresh/destructive publish. It can be cancelled and cleans up
-its setup process group. Exported builds cannot use it; packaged server
-provisioning is planned and is not implemented.
+its setup process group. It does not regenerate Godot bindings; after schema or
+generated-type changes, run `just bindings`. Exported builds cannot use it;
+packaged server provisioning is planned and is not implemented.
 
 `Settings` exposes a base font size from 10 through 24, default 13. It drives
 the shared panel/UI metric scale and is persisted locally. The UI uses a muted
