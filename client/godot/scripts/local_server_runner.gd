@@ -13,6 +13,7 @@ const DEFAULT_DATABASE := "continuum"
 const PROCESS_GROUP_LAUNCHER := "/usr/bin/setsid"
 const CLEANUP_GRACE_SECONDS := 1.0
 const STATUS_GRACE_SECONDS := 0.25
+const GROUP_HANDSHAKE_SECONDS := 1.0
 
 @export var host := DEFAULT_HOST
 @export var database := DEFAULT_DATABASE
@@ -22,11 +23,15 @@ const STATUS_GRACE_SECONDS := 0.25
 @export var helper_command := ""
 @export var helper_arguments: PackedStringArray = []
 @export var status_file := ""
+@export var test_skip_process_group_publication := false
 
 var _process_id := -1
 var _process_group_id := -1
+var _wrapper_process_id := -1
 var _cancel_requested := false
 var _cleanup_deadline := 0
+var _startup_deadline := 0
+var _cleanup_escalated := false
 
 
 func is_running() -> bool:
@@ -60,8 +65,12 @@ func start() -> bool:
 		status_file = "user://continuum_local_server_%s.status" % Time.get_ticks_usec()
 	var status_path := ProjectSettings.globalize_path(status_file)
 	var group_path := status_path + ".pgid"
+	var wrapper_path := status_path + ".pid"
+	var cancel_path := status_path + ".cancel"
 	DirAccess.remove_absolute(status_path)
 	DirAccess.remove_absolute(group_path)
+	DirAccess.remove_absolute(wrapper_path)
+	DirAccess.remove_absolute(cancel_path)
 	arguments.append_array(["--status-file", status_path])
 	if not FileAccess.file_exists(command):
 		_fail("Local server setup helper is missing: %s" % command)
@@ -70,12 +79,20 @@ func start() -> bool:
 	_cancel_requested = false
 	_cleanup_deadline = 0
 	_process_group_id = -1
+	_wrapper_process_id = -1
+	_startup_deadline = Time.get_ticks_msec() + int(GROUP_HANDSHAKE_SECONDS * 1000.0)
+	_cleanup_escalated = false
 	progress.emit("Starting local SpacetimeDB infrastructure...")
 	# setsid may fork before exec, so its returned PID is not a reliable PGID. The
 	# shell records its actual PID/PGID before execing the helper.
+	var group_publication := "printf '%s\\n' \"$$\" > \"$2\""
+	if test_skip_process_group_publication:
+		group_publication = ":"
 	var launch_arguments := PackedStringArray(["-f", "/bin/sh", "-c",
-		"printf '%s\\n' \"$$\" > \"$1\"; shift; exec \"$@\"",
-		"continuum-process-group", group_path, command])
+		"printf '%s\\n' \"$$\" > \"$1\"; if [ -e \"$3\" ]; then exit 130; fi; " +
+		group_publication + "; if [ -e \"$3\" ]; then exit 130; fi; " +
+		"shift 3; exec \"$@\"",
+		"continuum-process-group", wrapper_path, group_path, cancel_path, command])
 	launch_arguments.append_array(arguments)
 	_process_id = OS.create_process(PROCESS_GROUP_LAUNCHER, launch_arguments, false)
 	if _process_id < 0:
@@ -93,19 +110,44 @@ func cancel() -> void:
 		return
 	_cancel_requested = true
 	progress.emit("Cancelling local server setup...")
+	var cancel_path := ProjectSettings.globalize_path(status_file) + ".cancel"
+	var cancel_file := FileAccess.open(cancel_path, FileAccess.WRITE)
+	cancel_file.store_string("cancelled\n")
+	cancel_file.close()
 	_kill_process_group("TERM")
+	if _process_group_id < 0:
+		_kill_unpublished_tree("TERM")
 	_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
 
 
 func _watch_process() -> void:
 	var status_path := ProjectSettings.globalize_path(status_file)
 	var group_path := status_path + ".pgid"
+	var wrapper_path := status_path + ".pid"
+	var cancel_path := status_path + ".cancel"
 	var leader_reaped := false
 	var unexpected_exit := false
 	var status_deadline := 0
 	while is_running():
 		_refresh_process_group_id(group_path)
+		_refresh_wrapper_process_id(wrapper_path)
 		if _process_group_id < 0:
+			if _cancel_requested or Time.get_ticks_msec() >= _startup_deadline:
+				if not _cancel_requested:
+					unexpected_exit = true
+					_cancel_requested = true
+					var timeout_file := FileAccess.open(cancel_path, FileAccess.WRITE)
+					timeout_file.store_string("timeout\n")
+					timeout_file.close()
+				if _cleanup_deadline == 0:
+					_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
+					_kill_unpublished_tree("TERM")
+				elif Time.get_ticks_msec() >= _cleanup_deadline:
+					_kill_unpublished_tree("KILL")
+					if _cleanup_escalated:
+						break
+					_cleanup_escalated = true
+					_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
 			await Engine.get_main_loop().process_frame
 			continue
 		if not _group_exists(_process_group_id):
@@ -131,11 +173,14 @@ func _watch_process() -> void:
 
 	_process_id = -1
 	_process_group_id = -1
+	_wrapper_process_id = -1
 	if _cancel_requested:
 		_cancel_requested = false
 		_cleanup_deadline = 0
 		DirAccess.remove_absolute(status_path)
 		DirAccess.remove_absolute(group_path)
+		DirAccess.remove_absolute(wrapper_path)
+		DirAccess.remove_absolute(cancel_path)
 		if unexpected_exit:
 			_fail("Local server setup ended without a status report. Check Docker and the setup output.")
 			return
@@ -147,6 +192,8 @@ func _watch_process() -> void:
 	var status_text := FileAccess.get_file_as_string(status_path).strip_edges()
 	DirAccess.remove_absolute(status_path)
 	DirAccess.remove_absolute(group_path)
+	DirAccess.remove_absolute(wrapper_path)
+	DirAccess.remove_absolute(cancel_path)
 	if not status_text.is_valid_int() or status_text != str(int(status_text)):
 		_fail("Local server setup wrote an invalid status report.")
 		return
@@ -174,6 +221,7 @@ func _kill_process_group(signal_name: String) -> void:
 	if not is_running():
 		return
 	if _process_group_id < 0:
+		_kill_unpublished_tree(signal_name)
 		return
 	var output: Array = []
 	OS.execute("kill", ["-%s" % signal_name, "--", "-%d" % _process_group_id], output, true)
@@ -191,3 +239,20 @@ func _refresh_process_group_id(group_path: String) -> void:
 	var value := FileAccess.get_file_as_string(group_path).strip_edges()
 	if value.is_valid_int() and value == str(int(value)) and int(value) > 0:
 		_process_group_id = int(value)
+
+
+func _refresh_wrapper_process_id(wrapper_path: String) -> void:
+	if _wrapper_process_id >= 0 or not FileAccess.file_exists(wrapper_path):
+		return
+	var value := FileAccess.get_file_as_string(wrapper_path).strip_edges()
+	if value.is_valid_int() and value == str(int(value)) and int(value) > 0:
+		_wrapper_process_id = int(value)
+
+
+func _kill_unpublished_tree(signal_name: String) -> void:
+	var target := _wrapper_process_id if _wrapper_process_id >= 0 else _process_id
+	if target < 0:
+		return
+	var output: Array = []
+	OS.execute("pkill", ["-%s" % signal_name, "-P", str(target)], output, true)
+	OS.execute("kill", ["-%s" % signal_name, str(target)], output, true)

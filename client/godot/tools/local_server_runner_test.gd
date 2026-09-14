@@ -9,6 +9,8 @@ func _initialize() -> void:
 	await _test_unexpected_exit()
 	await _test_invalid_status()
 	await _test_cancel_cleans_descendants_and_blocks_restart()
+	await _test_missing_group_handshake()
+	await _test_cancel_before_group_handshake()
 	if failures == 0:
 		print("LOCAL_SERVER_RUNNER_PASS")
 		quit(0)
@@ -80,17 +82,50 @@ func _test_cancel_cleans_descendants_and_blocks_restart() -> void:
 	await _wait_until(func() -> bool: return FileAccess.file_exists(child_file))
 	var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
 	_assert(child_pid > 0, "descendant PID file contains a numeric PID")
-	_assert(child_pid > 0, "descendant PID file contains a numeric PID")
 	runner.cancel()
 	_assert(not runner.start(), "restart is blocked while process group cleans up")
 	await _wait_until(func() -> bool: return not runner.is_running())
 	await _wait_until(func() -> bool: return not _live_process(child_pid))
-	_assert(not _live_process(child_pid),
-			"cancellation terminates descendant process")
+	_assert(not _live_process(child_pid), "cancellation terminates descendant process")
 	_assert(not _live_group(cancel_group_id), "cancellation leaves no live group descendants")
 	_assert(runner.start(), "restart works after process group cleanup")
 	runner.cancel()
 	await _wait_until(func() -> bool: return not runner.is_running())
+
+
+func _test_missing_group_handshake() -> void:
+	var runner := _runner("missing-group")
+	var message := [""]
+	var child_file := "/tmp/continuum-runner-missing-child.pid"
+	DirAccess.remove_absolute(child_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 30 & child=$!; printf '%%s\\n' $child > '%s'; wait $child" % child_file])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "missing-PGID setup starts")
+	await _wait_until(func() -> bool: return FileAccess.file_exists(child_file))
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0] != "", "missing PGID fails within the handshake timeout")
+	var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
+	_assert(child_pid > 0, "missing-PGID descendant PID is numeric")
+	await _wait_until(func() -> bool: return not _live_process(child_pid))
+
+
+func _test_cancel_before_group_handshake() -> void:
+	var runner := _runner("early-cancel")
+	var child_file := "/tmp/continuum-runner-early-child.pid"
+	DirAccess.remove_absolute(child_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 30 & child=$!; printf '%%s\\n' $child > '%s'; wait $child" % child_file])
+	_assert(runner.start(), "early-cancellable setup starts")
+	runner.cancel()
+	_assert(not runner.start(), "early cancellation blocks immediate restart")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	if FileAccess.file_exists(child_file):
+		var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
+		_assert(child_pid > 0, "early-cancel descendant PID is numeric")
+		await _wait_until(func() -> bool: return not _live_process(child_pid))
 
 
 func _write_status_command(runner: ContinuumLocalServerRunner, value: String) -> String:
