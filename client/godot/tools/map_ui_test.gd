@@ -99,6 +99,17 @@ func _test_controller_surface() -> void:
 	get_tree().root.add_child.call_deferred(main)
 	await get_tree().process_frame
 	isolated_path = main.fixture_workspace_path
+	main.apply_font_size(10, false)
+	_assert(main._metrics.base_font_size == 10, "runtime font can shrink to the lower bound")
+	main.apply_font_size(24, false)
+	_assert(main._metrics.base_font_size == 24 and main._feed.custom_minimum_size.y > 120 and
+			main._history_chart.custom_minimum_size.y > 300 and main._clock.custom_minimum_size.x > 250 and
+			main.workspace.telemetry.get_parent().custom_minimum_size.y > 60,
+		"runtime max scale updates feed, chart, clock, and telemetry minima")
+	main.apply_font_size(10, false)
+	_assert(main._metrics.base_font_size == 10 and main._feed.custom_minimum_size.y < 70,
+		"runtime scaling returns to small metrics without compounding")
+	main.apply_font_size(13, false)
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
 	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")

@@ -790,14 +790,14 @@ func _build_panels() -> void:
 	side = section
 	side.add_child(_heading("Needs / assignments / cargo"))
 	_colonist_box = VBoxContainer.new()
-	_colonist_box.add_theme_constant_override("separation", 8)
+	_colonist_box.add_theme_constant_override("separation", _metrics.px(8))
 	side.add_child(_colonist_box)
 
 	section = _sections["alerts"]
 	side = section
 	side.add_child(_heading("Colony attention"))
 	_alert_box = VBoxContainer.new()
-	_alert_box.add_theme_constant_override("separation", 4)
+	_alert_box.add_theme_constant_override("separation", _metrics.px(4))
 	side.add_child(_alert_box)
 
 	section = _sections["activity"]
@@ -825,7 +825,7 @@ func _build_telemetry() -> void:
 	workspace.telemetry.add_child(_clock)
 	for kind: int in ColonyMap.RESOURCE_COLORS:
 		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("152530"), DeckTheme.LINE, 5))
+		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("3b3730"), DeckTheme.LINE, _metrics.px(5)))
 		card.tooltip_text = "Stored %s. Ground stacks and carried cargo are separate." % ContinuumResourceKind.parse_enum_name(kind)
 		var label := Label.new()
 		label.text = "%s  --" % ContinuumResourceKind.parse_enum_name(kind).to_upper()
@@ -1018,9 +1018,9 @@ func _refresh_colonists() -> void:
 
 	for colonist: ContinuumColonist in colonists:
 		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("192c37"), DeckTheme.LINE, 10))
+		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("403a32"), DeckTheme.LINE, _metrics.px(10)))
 		var panel := VBoxContainer.new()
-		panel.add_theme_constant_override("separation", 4)
+		panel.add_theme_constant_override("separation", _metrics.px(4))
 		card.add_child(panel)
 
 		var header := Label.new()

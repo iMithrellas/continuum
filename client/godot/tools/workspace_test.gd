@@ -106,7 +106,9 @@ func _test_manager() -> void:
 	_assert(deck.metrics.base_font_size == 24 and deck.windows["people"].metrics.base_font_size == 24,
 		"runtime metric application reaches the deck and every window")
 	_assert(deck._dialog.min_size.x >= 550, "workspace dialog minimum scales with runtime metrics")
+	_assert(deck._rows[0].custom_minimum_size.y >= 70, "telemetry header row scales at runtime")
 	deck.apply_metrics(UiMetrics.new(13))
+	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 38), "header row returns without compounding")
 	map.input_blocked = deck.blocks_map_input
 	_assert(deck.windows.size() == 8 and deck.authorized.size() == 8, "manager creates all actual game panels")
 	var active := deck.model.active

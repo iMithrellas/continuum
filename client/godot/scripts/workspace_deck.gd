@@ -26,6 +26,7 @@ var _menu: MenuButton
 var _map: Control
 var _confirmation: ConfirmationDialog
 var _status: Label
+var _rows: Array[ScrollContainer] = []
 
 
 func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
@@ -78,6 +79,8 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_build_dialog()
 
 func apply_metrics(ui_metrics: UiMetrics) -> void:
+	var ratio := ui_metrics.scale / metrics.scale
+	_scale_control_tree(self, ratio)
 	metrics = ui_metrics
 	for window: WorkspaceWindow in windows.values():
 		window.metrics = metrics
@@ -85,6 +88,17 @@ func apply_metrics(ui_metrics: UiMetrics) -> void:
 	if is_instance_valid(_dialog):
 		_dialog.min_size = Vector2i(metrics.px(300), 0)
 	_apply_layout()
+
+func _scale_control_tree(root: Node, ratio: float) -> void:
+	for child: Node in root.get_children():
+		if child is Control:
+			var control := child as Control
+			control.custom_minimum_size *= ratio
+			control.add_theme_font_size_override("font_size", maxi(1, roundi(control.get_theme_font_size("font_size") * ratio)))
+			if control is Container:
+				var container := control as Container
+				container.add_theme_constant_override("separation", container.get_theme_constant("separation") * ratio)
+		_scale_control_tree(child, ratio)
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:
@@ -94,6 +108,7 @@ func _scroll_row(parent: Node, height: float) -> HBoxContainer:
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(scroll)
+	_rows.append(scroll)
 	var row := HBoxContainer.new()
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(row)
@@ -249,6 +264,8 @@ func save_layout() -> void:
 	if not _ready_layout:
 		return
 	var error := model.save_to(_save_path)
+	_status.text = "Layout saved" if error == OK else "Layout save failed"
+	_status.tooltip_text = "" if error == OK else "Could not save local layout: %s" % error_string(error)
 
 
 func _apply_layout() -> void:
