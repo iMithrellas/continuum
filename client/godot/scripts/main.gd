@@ -179,11 +179,25 @@ func apply_font_size(value: int, persist := true) -> Error:
 	return apply_settings(settings, persist)
 
 func _apply_control_metrics(root: Node, old_metrics: UiMetrics, new_metrics: UiMetrics) -> void:
-	var ratio := new_metrics.scale / old_metrics.scale
 	for child: Node in root.get_children():
+		# WorkspaceDeck owns its complete subtree, including panel metrics.
+		if child == workspace:
+			continue
 		if child is Control:
 			var control := child as Control
-			control.add_theme_font_size_override("font_size", maxi(1, roundi(control.get_theme_font_size("font_size") * ratio)))
+			if not control.has_meta("ui_font_reference"):
+				var observed_font := control.get_theme_font_size("font_size")
+				var current_font := observed_font if control.has_theme_font_override("font_size") or observed_font > old_metrics.base_font_size else old_metrics.base_font_size
+				control.set_meta("ui_font_reference", float(current_font) / old_metrics.scale)
+			control.add_theme_font_size_override("font_size", new_metrics.font(float(control.get_meta("ui_font_reference"))))
+			if not control.has_meta("ui_minimum_reference"):
+				control.set_meta("ui_minimum_reference", control.custom_minimum_size / old_metrics.scale)
+			control.custom_minimum_size = control.get_meta("ui_minimum_reference") * new_metrics.scale
+			if control is Container:
+				var container := control as Container
+				if not container.has_meta("ui_separation_reference"):
+					container.set_meta("ui_separation_reference", float(container.get_theme_constant("separation")) / old_metrics.scale)
+				container.add_theme_constant_override("separation", new_metrics.px(float(container.get_meta("ui_separation_reference"))))
 		_apply_control_metrics(child, old_metrics, new_metrics)
 
 

@@ -79,8 +79,7 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_build_dialog()
 
 func apply_metrics(ui_metrics: UiMetrics) -> void:
-	var ratio := ui_metrics.scale / metrics.scale
-	_scale_control_tree(self, ratio)
+	_scale_control_tree(self, ui_metrics)
 	metrics = ui_metrics
 	for window: WorkspaceWindow in windows.values():
 		window.metrics = metrics
@@ -89,16 +88,24 @@ func apply_metrics(ui_metrics: UiMetrics) -> void:
 		_dialog.min_size = Vector2i(metrics.px(300), 0)
 	_apply_layout()
 
-func _scale_control_tree(root: Node, ratio: float) -> void:
+func _scale_control_tree(root: Node, target_metrics: UiMetrics) -> void:
 	for child: Node in root.get_children():
 		if child is Control:
 			var control := child as Control
-			control.custom_minimum_size *= ratio
-			control.add_theme_font_size_override("font_size", maxi(1, roundi(control.get_theme_font_size("font_size") * ratio)))
+			if not control.has_meta("ui_font_reference"):
+				var observed_font := control.get_theme_font_size("font_size")
+				var current_font := observed_font if control.has_theme_font_override("font_size") or observed_font > metrics.base_font_size else metrics.base_font_size
+				control.set_meta("ui_font_reference", float(current_font) / metrics.scale)
+			control.add_theme_font_size_override("font_size", target_metrics.font(float(control.get_meta("ui_font_reference"))))
+			if not control.has_meta("ui_minimum_reference"):
+				control.set_meta("ui_minimum_reference", control.custom_minimum_size / metrics.scale)
+			control.custom_minimum_size = control.get_meta("ui_minimum_reference") * target_metrics.scale
 			if control is Container:
 				var container := control as Container
-				container.add_theme_constant_override("separation", container.get_theme_constant("separation") * ratio)
-		_scale_control_tree(child, ratio)
+				if not container.has_meta("ui_separation_reference"):
+					container.set_meta("ui_separation_reference", float(container.get_theme_constant("separation")) / metrics.scale)
+				container.add_theme_constant_override("separation", target_metrics.px(float(container.get_meta("ui_separation_reference"))))
+		_scale_control_tree(child, target_metrics)
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:

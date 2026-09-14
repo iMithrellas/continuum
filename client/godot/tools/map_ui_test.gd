@@ -100,14 +100,21 @@ func _test_controller_surface() -> void:
 	await get_tree().process_frame
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 10, "runtime font can shrink to the lower bound")
+	_assert(main._metrics.base_font_size == 10 and main._haul_button.get_theme_font_size("font_size") == 12 and
+			main._build_menu.get_theme_font_size("font_size") == 10,
+		"runtime font can shrink dynamic and inherited controls to the lower bound: haul=%d build=%d" % [main._haul_button.get_theme_font_size("font_size"), main._build_menu.get_theme_font_size("font_size")])
 	main.apply_font_size(24, false)
 	_assert(main._metrics.base_font_size == 24 and main._feed.custom_minimum_size.y > 120 and
 			main._history_chart.custom_minimum_size.y > 300 and main._clock.custom_minimum_size.x > 250 and
-			main.workspace.telemetry.get_parent().custom_minimum_size.y > 60,
-		"runtime max scale updates feed, chart, clock, and telemetry minima")
+			main.workspace.telemetry.get_parent().custom_minimum_size.y > 60 and
+			main._haul_button.get_theme_font_size("font_size") == 28 and
+			main._connection_label.get_theme_font_size("font_size") == 24,
+		"runtime max scale updates fonts, feed, chart, clock, and telemetry minima: haul=%d connection=%d" % [main._haul_button.get_theme_font_size("font_size"), main._connection_label.get_theme_font_size("font_size")])
+	main.apply_font_size(13, false)
+	_assert(main._haul_button.get_theme_font_size("font_size") == 15, "runtime reference size restores exactly")
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 10 and main._feed.custom_minimum_size.y < 70,
+	_assert(main._metrics.base_font_size == 10 and main._feed.custom_minimum_size.y < 70 and
+			main._haul_button.get_theme_font_size("font_size") == 12,
 		"runtime scaling returns to small metrics without compounding")
 	main.apply_font_size(13, false)
 	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
