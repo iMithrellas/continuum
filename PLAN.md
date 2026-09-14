@@ -162,7 +162,7 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [x] Concise searchable, collapsible, draggable-width sidebar with responsive font, button, spacing, and padding scale
 - [x] Role-aware sidebar controls fail closed from the authenticated sender-scoped role view; operator loss cancels Build immediately
 - [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
-- [x] Offline launch menu with Join last server, Join server, Start local server, Settings, and Exit actions
+- [x] Offline launch menu with Join last server, Join server, Start local server, Settings, Servers, and Exit actions
 - [x] Menu endpoint validation, successful-last-server persistence, cancellation, stale-callback guards, and session replacement across endpoint/profile changes
 - [x] Local source-checkout server runner with Docker/Compose and POSIX/Linux process-group prerequisites, non-destructive publish path, cancellation, and process-group cleanup; binding regeneration and exported/package provisioning are not implemented
 - [x] Shared base-font setting from 10..24 (default 13), persisted metric scaling, alternate `--settings-file=PATH` support, and muted menu/workspace presentation
@@ -201,6 +201,13 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Phase 3: add graceful stop/timeout handling, restart discovery, post-login autostart registration, conflict handling, and clear unsupported-platform UX
 - [ ] Phase 4: add history, favorites, status/last-seen/latency presentation, bounded probes, and reachable-versus-joinable/auth diagnostics
 - [ ] Phase 5: document upgrades, migrations, operational paths, and dedicated Docker/manual service guidance
+
+#### Current handoff
+
+- [x] Client-side browser, history/favorites, bounded HTTP probes, and menu/settings integration are complete and backend-free.
+- [ ] Native Linux process-management prototype remains unmerged; runtime validation is blocked and Windows support is not implemented. The client keeps the legacy Docker action and does not enable managed start/stop/autostart.
+- [ ] Multiworld backend contract is approved in task/world-backend `e421d5f`, but client binding selection/adoption is not integrated; the current browser and SDK remain single-world.
+- [ ] Session diagnostics sampler and frame overlay are complete, with persisted settings and an optional graph. Active-session RTT echo and packet-loss support remain pending and display `N/A`.
 
 #### Hosting and connection tests
 
@@ -256,17 +263,17 @@ rules, not a claim that the current slice already supports them.
 
 #### Server Management menu
 
-- [ ] Add a separate **Server Management** menu, distinct from the existing offline launch actions and from in-game colony panels; provide an explicit launch entry and a clear return path to the game/menu
-- [ ] Show successful connection history in a searchable list, pin favorites above unpinned history, and preserve successful-last-server behavior
+- [x] Add a separate **Server Management** menu, distinct from the existing offline launch actions and from in-game colony panels; provide an explicit launch entry and a clear return path to the game/menu
+- [x] Show successful connection history in a searchable list, pin favorites above unpinned history, and preserve successful-last-server behavior
 - [ ] Define a new history-only canonical key from the endpoint scheme/host/port and database identity: lowercase the scheme, DNS host, and database component to match the current `spacetimedb_client.gd` provider behavior, require brackets around IPv6 literals without address rewriting, remove a port only when it is the explicitly known default for that scheme, and preserve unknown or non-default ports; retain the original database spelling separately for display, do not reuse or rewrite the existing raw profile credential key, and do not migrate credentials or move tokens
 - [ ] Keep history removal, favorite removal, and local-world/server-data removal as separate explicit actions; never remove credentials or world data as a side effect of clearing history
-- [ ] Include local managed-server discovery, status, start, graceful stop, timeout/force offer, and ownership-conflict details in this view; remote entries remain connection-only and cannot invoke local management controls
-- [ ] Preserve the last successful action and selection when returning to the menu, while clearly distinguishing `unknown`, `checking`, `online`, `unreachable`, and stale samples
-- [ ] Keep search and list operations local and bounded; plan background checks at an initial maximum of 4 concurrent probes, a 3-second per-probe timeout, a 10-second visible-list refresh interval, and exponential retry backoff capped at 60 seconds (initial values remain tunable); do not poll while the view is hidden and do not create subscriptions or reconnect sessions for probes
+- [ ] Include local managed-server discovery, status, start, graceful stop, timeout/force offer, and ownership-conflict details in this view; native process actions remain disabled with `Native process management pending` until the incomplete native branch is validated
+- [x] Preserve the last successful action and selection when returning to the menu, while clearly distinguishing `unknown`, `checking`, `online`, `unreachable`, and stale samples
+- [x] Keep search and list operations local and bounded; background checks use a maximum of 4 concurrent probes, a 3-second timeout, a 10-second visible-list refresh interval, and capped retry backoff; hidden views do not poll or create subscriptions
 
 ## Client diagnostics
 
-- [ ] Add persisted Settings toggles for in-game diagnostics and, independently, a small diagnostics graph; the graph is subordinate to the main diagnostics toggle and both settings follow the existing per-device settings persistence and font scaling
+- [x] Add persisted Settings toggles for in-game diagnostics and, independently, a small diagnostics graph; the graph is subordinate to the main diagnostics toggle and both settings follow the existing per-device settings persistence and font scaling
 - [ ] Render diagnostics as a compact, neutral technical badge/overlay rather than gameplay UI: subdued border, restrained contrast, monospace metric values where useful, no neon, safe-area placement, input pass-through when collapsed, and accessible global font scaling
 - [ ] Keep the overlay unobtrusive and visually distinct from colony panels; it may show frame-time and RTT graphs with separate units and visible gaps for missing/stale data, but never imply that an absent sample is zero
 
@@ -282,9 +289,9 @@ rules, not a claim that the current slice already supports them.
 
 ### Network diagnostics contract
 
-- [ ] Display application-level round-trip time only: plan a permission-independent application echo/heartbeat over the currently authenticated SpacetimeDB session, timestamp send/response with the same monotonic clock, and keep rolling actual samples with their timestamps; the probe must not require operator permission or mutate simulation state
+- [ ] Display application-level round-trip time only: an authenticated session echo remains pending because the current SDK has no response path; active-session RTT is therefore `N/A`
 - [ ] Confirm before implementation that the pinned SpacetimeDB/Flametime SDK currently has no application echo/heartbeat response for the active WebSocket path; `/v1/ping` is not an active-session RTT measurement. Validate the smallest backend/provider addition needed for the session echo, and show session RTT as `N/A` until it exists
-- [ ] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
+- [x] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
 - [ ] Mark RTT unavailable when disconnected and stale after the freshness timeout; do not reuse the last value as current, and keep missing intervals visible in any graph
 - [ ] Do not call WebSocket/TCP transport reliable delivery “packet loss”: generic Godot `WebSocketPeer`/TCP APIs do not expose actual IP packet-loss counters, and the current SDK protocol does not provide them
 - [ ] Show `N/A` for packet loss unless verified transport counters become available; if probes are implemented, show a separately named `probe timeouts` ratio with denominator = settled attempts in the observation window (`successful + timed out`), exclude in-flight/cancelled attempts, define timeout and session-reset semantics, and never relabel it as packet loss
@@ -294,8 +301,8 @@ rules, not a claim that the current slice already supports them.
 - [ ] Unit-test deterministic interval samples for mean FPS, nearest-rank p50/p95/p99 frame times, sample/window bounds, low-frequency refresh, minimum sample warmup, and correctly labelled percentile FPS equivalents
 - [ ] Test stalls, pause/resume, minimize/unfocus transitions, long gaps, engine time-scale changes, session reset, and invalid/missing samples without contaminating the active timing window
 - [ ] Test permission-independent session-echo RTT success, timeout, stale expiry, disconnect/reconnect reset, rolling timestamps, settled-attempt denominator/reset behavior, optional separately labelled HTTP health RTT, and honest `N/A` packet-loss presentation
-- [ ] Test diagnostics setting persistence, graph dependency on the main toggle, safe-area/input pass-through behavior, accessibility scaling, separate frame-time/RTT units, and missing-data gaps
-- [ ] Test Server Management launch/return navigation, searchable history, favorites pinned first, last-successful selection/action persistence, local management controls, remote-control isolation, new history-key canonicalization including IPv6, and history/favorite/data deletion boundaries
+- [x] Test diagnostics setting persistence, graph dependency on the main toggle, safe-area/input pass-through behavior, accessibility scaling, separate frame-time/RTT units, and missing-data gaps
+- [x] Test Server Management launch/return navigation, searchable history, favorites pinned first, last-successful selection/action persistence, local management controls, remote-control isolation, new history-key canonicalization including IPv6, and history/favorite/data deletion boundaries
 
 ### Diagnostics research references
 

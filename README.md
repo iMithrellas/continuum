@@ -210,10 +210,17 @@ Run the client through its offline launch menu with:
 just run
 ```
 
-The menu has exactly five actions: `Join last server`, `Join server`, `Start
-local server`, `Settings`, and `Exit`. It starts offline; `Join last server` is
+The menu has six actions: `Join last server`, `Join server`, `Start local server`,
+`Settings`, `Servers`, and `Exit`. It starts offline; `Join last server` is
 disabled until a server join succeeds, and failed validation, connection,
 subscription, or local provisioning attempts are not remembered.
+
+`Servers` opens a separate searchable Server Management view. It lists successful
+connections only, pins favorites first, preserves history in companion local
+files, and performs bounded visible-only HTTP health probes. Rows label the result
+as HTTP status/RTT; this is not active-session RTT. Return hides probes and restores
+the menu. World selection is not exposed yet, and selecting a row joins the current
+single-world SDK target (`host/database`).
 
 `Join server` requires an `http://` or `https://` host containing only a
 hostname/IP (including bracketed IPv6) and an optional port from 1 through
@@ -240,6 +247,9 @@ the shared panel/UI metric scale and is persisted locally. The UI uses a muted
 dark palette. The former bottom legend/footer strip has been removed; use map
 labels, tile inspection, the panel chooser (`Ctrl+F`), function-key panels, and
 the workspace dock for those access paths.
+Settings also exposes `Show diagnostics` and a subordinate `Show frame/RTT graph`
+toggle. Active-session RTT and packet loss remain `N/A` until the SDK/backend echo
+path exists; the graph never substitutes HTTP health RTT for it.
 
 To prepare SpacetimeDB, publish the module, regenerate Godot bindings, and then
 run the game explicitly:
@@ -272,7 +282,7 @@ and `stdb`. Backend checks are `check`, `test`, `fmt-check`, `fmt`, and `wasm`;
 local server control is `up`, `down`, and `logs`. Authorization and isolated
 integration gates are `admin-grant`, `admin`, `test-map-ui`,
 `test-access`, `test-sidebar-access`, `test-block-reducers`, and
-`test-access-cleanup`.
+`test-access-cleanup`, `test-server-browser`, and `test-diagnostics`.
 
 ## Development
 

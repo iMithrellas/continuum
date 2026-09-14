@@ -57,11 +57,28 @@ func _ready() -> void:
 	var menu: ContinuumMainMenu = preload("res://scenes/main_menu.tscn").instantiate()
 	add_child(menu)
 	menu.setup(null, ClientSettings.new(), UiMetrics.new())
+	var server_menu_opened := [0]
+	menu.server_management_requested.connect(func() -> void: server_menu_opened[0] += 1)
+	menu._open_server_management()
+	_assert(server_menu_opened[0] == 1, "Servers entry emits standalone browser navigation")
 	_assert(menu._last_button.disabled, "join last is disabled without a successful endpoint")
 	_assert(menu._font_size.min_value == ClientSettings.MIN_FONT_SIZE and
 			menu._font_size.max_value == ClientSettings.MAX_FONT_SIZE, "settings enforce font bounds")
 	menu._toggle_settings()
 	_assert(menu._settings_panel.visible, "settings are reachable from the menu")
+	_assert(not menu._diagnostics_toggle.button_pressed and menu._graph_toggle.disabled, "diagnostics graph is subordinate by default")
+	menu._diagnostics_toggle.button_pressed = true
+	menu._diagnostics_changed(true)
+	_assert(menu.settings.diagnostics_enabled and not menu._graph_toggle.disabled, "diagnostics toggle enables graph control")
+	menu._graph_toggle.button_pressed = true
+	menu._graph_changed(true)
+	_assert(menu.settings.diagnostics_graph_enabled, "graph toggle persists independently")
+	menu._diagnostics_toggle.button_pressed = false
+	menu._diagnostics_changed(false)
+	_assert(not menu.settings.diagnostics_enabled and not menu.settings.diagnostics_graph_enabled and menu._graph_toggle.disabled, "disabling diagnostics clears subordinate graph")
+	menu._font_size_changed(24)
+	menu._font_size_changed(10)
+	_assert(menu._font_size.min_value == 10 and menu._font_size.max_value == 24, "repeated font changes preserve bounded control")
 	menu._toggle_settings()
 	menu._join_host.text = "http://localhost:3000"
 	menu._join_database.text = "continuum"

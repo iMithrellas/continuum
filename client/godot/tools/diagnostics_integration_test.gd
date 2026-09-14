@@ -28,11 +28,27 @@ func _run() -> void:
 	main.diagnostics_settings_path = settings_path
 	get_tree().root.add_child(main)
 	await get_tree().process_frame
+	main.set_size(Vector2(360, 480))
+	await get_tree().process_frame
+	var servers_button := _button_named(main._menu, "Servers")
+	_assert(servers_button != null and servers_button.get_global_rect().size.x > 0.0 and
+			servers_button.get_global_rect().size.y > 0.0, "production menu Servers button has usable geometry")
+	servers_button.pressed.emit()
+	await get_tree().process_frame
+	_assert(main._server_management.visible and main._server_management.get_global_rect().size == Vector2(360, 480),
+		"Servers opens a full-viewport production browser")
+	var return_button := _button_named(main._server_management, "Return")
+	_assert(return_button != null and return_button.get_global_rect().size.x > 0.0 and
+			return_button.get_global_rect().size.y > 0.0, "production browser Return button is reachable")
+	return_button.pressed.emit()
+	await get_tree().process_frame
+	_assert(main._menu.visible and not main._server_management.visible, "browser Return restores the menu")
 	_assert(main._menu.settings == main._settings, "main menu keeps the shared settings object")
 	_assert(main._diagnostics_overlay.visible and not main._diagnostics_overlay.show_graph,
 		"enabled diagnostics show without enabling the subordinate graph")
 	_assert(main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		"diagnostics overlay never consumes game input")
+	main._diagnostics_stats.reset()
 	main._diagnostics_stats.observe_tick(1_000_000)
 	main._diagnostics_stats.observe_tick(1_016_000)
 	_assert(main._diagnostics_stats.refresh(1_016_000, true).count == 1,
@@ -82,3 +98,12 @@ func _assert(condition: bool, message: String) -> void:
 	if not condition:
 		failed = true
 		push_error(message)
+
+func _button_named(root: Node, text: String) -> Button:
+	if root is Button and (root as Button).text == text:
+		return root
+	for child in root.get_children():
+		var result := _button_named(child, text)
+		if result != null:
+			return result
+	return null
