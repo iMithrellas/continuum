@@ -13,6 +13,7 @@ var content: VBoxContainer
 var titlebar: HBoxContainer
 var pin_button: Button
 var grip: Label
+var divider: ColorRect
 var scroll: ScrollContainer
 var pinned := false
 var compact := false
@@ -49,13 +50,13 @@ func setup(title: String) -> void:
 	pin_button.toggle_mode = true
 	_action("_", "Minimize to dock", func() -> void: minimize_requested.emit())
 	_action("x", "Remove panel from workspace (reopen with Panels)", func() -> void: close_requested.emit())
-	var line := ColorRect.new()
-	line.color = DeckTheme.LINE
-	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	line.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
-	line.offset_top = metrics.px(44)
-	line.offset_bottom = metrics.px(45)
-	add_child(line)
+	divider = ColorRect.new()
+	divider.color = DeckTheme.LINE
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	divider.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	divider.offset_top = metrics.px(44)
+	divider.offset_bottom = metrics.px(45)
+	add_child(divider)
 	scroll = ScrollContainer.new()
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	scroll.offset_left = metrics.px(12)
@@ -102,6 +103,27 @@ func set_focused(value: bool) -> void:
 	var surface := get_theme_stylebox("panel").duplicate() as StyleBoxFlat
 	surface.border_color = DeckTheme.ACCENT if value else DeckTheme.LINE
 	add_theme_stylebox_override("panel", surface)
+
+func refresh_metrics() -> void:
+	if not is_instance_valid(titlebar):
+		return
+	titlebar.offset_left = metrics.px(8)
+	titlebar.offset_right = -metrics.px(8)
+	titlebar.offset_top = metrics.px(5)
+	titlebar.offset_bottom = metrics.px(39)
+	divider.offset_top = metrics.px(44)
+	divider.offset_bottom = metrics.px(45)
+	scroll.offset_left = metrics.px(12)
+	scroll.offset_right = -metrics.px(12)
+	scroll.offset_top = metrics.px(56)
+	scroll.offset_bottom = -metrics.px(18)
+	grip.offset_left = -metrics.px(26)
+	grip.offset_top = -metrics.px(24)
+	grip.offset_right = -metrics.px(3)
+	grip.offset_bottom = -metrics.px(2)
+	for child: Node in titlebar.get_children():
+		if child is Button:
+			child.custom_minimum_size = metrics.min_size(28, 30)
 
 
 func apply_state(is_pinned: bool, is_compact: bool) -> void:

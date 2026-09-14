@@ -18,6 +18,7 @@ static func minimum_size(metrics := UiMetrics.new()) -> Vector2:
 
 var workspaces: Dictionary = defaults()
 var active := "daily"
+var last_load_status := "missing"
 
 
 static func panel(rect: Array, opened := true) -> Dictionary:
@@ -54,9 +55,9 @@ static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new()) -
 	return Rect2(rect.position.clamp(Vector2.ZERO, available - extent), extent)
 
 
-static func to_pixels(values: Array, area: Vector2) -> Rect2:
+static func to_pixels(values: Array, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
 	return clamp_rect(Rect2(Vector2(values[0], values[1]) * area,
-		Vector2(values[2], values[3]) * area), area)
+		Vector2(values[2], values[3]) * area), area, metrics)
 
 
 static func to_normalized(rect: Rect2, area: Vector2) -> Array:
@@ -145,12 +146,15 @@ func save_to(path := SAVE_PATH) -> Error:
 
 func load_from(path := SAVE_PATH) -> bool:
 	if not FileAccess.file_exists(path):
+		last_load_status = "missing"
 		return true
 	var file := FileAccess.open(path, FileAccess.READ)
 	if file == null or file.get_length() > 1048576:
+		last_load_status = "unreadable"
 		return false
 	var data: Variant = JSON.parse_string(file.get_as_text())
 	if not data is Dictionary or data.get("version") != 1 or not data.get("workspaces") is Dictionary:
+		last_load_status = "corrupt"
 		return false
 	var loaded := defaults()
 	for id: Variant in data.workspaces:
@@ -185,4 +189,5 @@ func load_from(path := SAVE_PATH) -> bool:
 	active = str(data.get("active", "daily"))
 	if not workspaces.has(active):
 		active = "daily"
+	last_load_status = "loaded"
 	return true

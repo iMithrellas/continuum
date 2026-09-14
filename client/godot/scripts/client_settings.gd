@@ -10,6 +10,7 @@ const SAVE_PATH := "user://continuum_settings.cfg"
 var font_size := DEFAULT_FONT_SIZE
 var server_host := ""
 var database := ""
+var last_load_status := "missing"
 
 static func path_from_args(fallback := SAVE_PATH) -> String:
 	for argument: String in OS.get_cmdline_user_args():
@@ -17,14 +18,20 @@ static func path_from_args(fallback := SAVE_PATH) -> String:
 			return argument.substr("--settings-file=".length())
 	return fallback
 
-func load_from(path := path_from_args()) -> bool:
+func load_from(path := path_from_args()) -> String:
 	var config := ConfigFile.new()
-	if config.load(path) != OK:
-		return true
+	var error := config.load(path)
+	if error == ERR_FILE_NOT_FOUND:
+		last_load_status = "missing"
+		return last_load_status
+	if error != OK:
+		last_load_status = "unreadable"
+		return last_load_status
 	font_size = clampi(int(config.get_value("ui", "font_size", DEFAULT_FONT_SIZE)), MIN_FONT_SIZE, MAX_FONT_SIZE)
 	server_host = _safe_string(config.get_value("server", "host", ""))
 	database = _safe_string(config.get_value("server", "database", ""))
-	return true
+	last_load_status = "loaded"
+	return last_load_status
 
 func save_to(path := path_from_args()) -> Error:
 	var config := ConfigFile.new()

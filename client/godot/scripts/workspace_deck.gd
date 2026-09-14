@@ -25,6 +25,7 @@ var _dialog_new := false
 var _menu: MenuButton
 var _map: Control
 var _confirmation: ConfirmationDialog
+var _status: Label
 
 
 func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
@@ -53,6 +54,9 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_button(workspace_row, "+ New", "Create a personal workspace", func() -> void: edit_workspace(true))
 	_button(workspace_row, "Panels", "Choose panels / rename workspace (Ctrl+F)", func() -> void: edit_workspace(false))
 	_button(workspace_row, "Save", "Save this device's layouts", save_layout)
+	_status = Label.new()
+	_status.add_theme_color_override("font_color", DeckTheme.MUTED)
+	workspace_row.add_child(_status)
 	_menu = MenuButton.new()
 	_menu.text = "Layout"
 	workspace_row.add_child(_menu)
@@ -72,6 +76,15 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_dock = HBoxContainer.new()
 	workspace_row.add_child(_dock)
 	_build_dialog()
+
+func apply_metrics(ui_metrics: UiMetrics) -> void:
+	metrics = ui_metrics
+	for window: WorkspaceWindow in windows.values():
+		window.metrics = metrics
+		window.refresh_metrics()
+	if is_instance_valid(_dialog):
+		_dialog.min_size = Vector2i(metrics.px(300), 0)
+	_apply_layout()
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:
@@ -132,6 +145,8 @@ func finish_setup() -> void:
 	_ready_layout = true
 	_rebuild_navigation()
 	_apply_layout()
+	_status.text = "Layout defaults" if model.last_load_status != "loaded" else ""
+	_status.tooltip_text = "Saved layout could not be read; defaults loaded (%s)." % model.last_load_status if model.last_load_status != "loaded" else ""
 
 
 func state(key: String) -> Dictionary:
@@ -239,7 +254,7 @@ func save_layout() -> void:
 func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
-	compact = area.size.x < 760 or area.size.y < 400
+	compact = area.size.x < metrics.px(760) or area.size.y < metrics.px(400)
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
 	if compact and (_compact_panel.is_empty() or not authorized.get(_compact_panel, false) or not state(_compact_panel).open or state(_compact_panel).minimized):
@@ -252,7 +267,7 @@ func _apply_layout() -> void:
 		var saved := state(key)
 		window.visible = authorized[key] and saved.open and not saved.minimized and not map_only and (not compact or key == _compact_panel)
 		window.apply_state(saved.pinned, compact)
-		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size)
+		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 		window.position = rect.position
 		window.size = rect.size
 		area.move_child(window, -1)
@@ -285,7 +300,7 @@ func _build_dialog() -> void:
 	_dialog = AcceptDialog.new()
 	_dialog.title = "Workspace setup"
 	_dialog.ok_button_text = "Apply"
-	_dialog.min_size = Vector2i(300, 0)
+	_dialog.min_size = Vector2i(metrics.px(300), 0)
 	add_child(_dialog)
 	var body := VBoxContainer.new()
 	_dialog.add_child(body)
@@ -328,7 +343,7 @@ func edit_workspace(create: bool) -> void:
 	_sync_checks()
 	_dialog.title = "New workspace" if create else "Choose panels"
 	_dialog.get_ok_button().disabled = false
-	_dialog.popup_centered(Vector2i(mini(380, int(size.x) - 20), 0))
+	_dialog.popup_centered(Vector2i(mini(metrics.px(380), int(size.x - metrics.px(20))), 0))
 	_name_input.grab_focus()
 	_name_input.select_all()
 

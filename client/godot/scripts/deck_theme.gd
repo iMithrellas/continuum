@@ -28,13 +28,13 @@ static func create(metrics := UiMetrics.new()) -> Theme:
 	result.set_stylebox("panel", "PanelContainer", box(INK))
 	for type: String in ["Button", "OptionButton", "MenuButton"]:
 		for state: String in ["normal", "hover", "pressed", "disabled"]:
-			var color: Color = {"normal": Color("1a2a36"), "hover": Color("263e4c"),
+			var color: Color = {"normal": Color("3a3731"), "hover": Color("4a443b"),
 				"pressed": Color("5c493b"), "disabled": Color("332f2a")}[state]
 			result.set_stylebox(state, type, box(color, ACCENT if state == "pressed" else LINE, metrics.px(6)))
 		result.set_stylebox("focus", type, box(Color.TRANSPARENT, ACCENT, 0))
 		result.set_color("font_color", type, Color("cbdce5"))
-		result.set_color("font_hover_color", type, Color.WHITE)
-		result.set_color("font_pressed_color", type, Color("98f2e4"))
+		result.set_color("font_hover_color", type, Color("fff8ed"))
+		result.set_color("font_pressed_color", type, Color("f0c39a"))
 		result.set_color("font_disabled_color", type, Color("627782"))
 	result.set_stylebox("normal", "LineEdit", box(Color("211f1b")))
 	result.set_stylebox("focus", "LineEdit", box(Color("211f1b"), ACCENT))

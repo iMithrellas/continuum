@@ -102,6 +102,11 @@ func _test_manager() -> void:
 		deck.add_panel(key)
 	deck.finish_setup()
 	await get_tree().process_frame
+	deck.apply_metrics(UiMetrics.new(24))
+	_assert(deck.metrics.base_font_size == 24 and deck.windows["people"].metrics.base_font_size == 24,
+		"runtime metric application reaches the deck and every window")
+	_assert(deck._dialog.min_size.x >= 550, "workspace dialog minimum scales with runtime metrics")
+	deck.apply_metrics(UiMetrics.new(13))
 	map.input_blocked = deck.blocks_map_input
 	_assert(deck.windows.size() == 8 and deck.authorized.size() == 8, "manager creates all actual game panels")
 	var active := deck.model.active

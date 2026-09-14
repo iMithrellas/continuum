@@ -362,9 +362,9 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 		draw_rect(rect, Color("151920"))
 		draw_rect(rect, colour, false, 2.0)
 		var text := ContinuumResourceKind.parse_enum_name(stack.kind.value).left(1).to_upper()
-		var font_size := clampi(int(cell * 0.30), 8, 12)
-		draw_string(_font, rect.position + Vector2(1, rect.size.y * 0.5 + font_size * 0.35),
-				text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - 2, font_size, colour)
+		var font_size := metrics.font(clampf(cell * 0.30, 8, 12))
+		draw_string(_font, rect.position + Vector2(metrics.px(1), rect.size.y * 0.5 + font_size * 0.35),
+				text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - metrics.px(2), font_size, colour)
 
 
 func _draw_delivery_routes(origin: Vector2, cell: float) -> void:

@@ -103,10 +103,11 @@ var _population: Label
 var _speed_strip: HBoxContainer
 var _settings := ClientSettings.new()
 var _metrics := UiMetrics.new()
+var _settings_warning := ""
 
 
 func _ready() -> void:
-	_settings.load_from()
+	_settings_warning = _settings.load_from()
 	_metrics = UiMetrics.new(_settings.font_size)
 	_history = SessionHistoryModel.new()
 	theme = DeckTheme.create(_metrics)
@@ -153,6 +154,37 @@ func _ready() -> void:
 
 	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
 	client.connect_db(_host, _database, options)
+
+## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
+func apply_settings(settings: ClientSettings, persist := true) -> Error:
+	var previous := _metrics
+	_settings = settings
+	_metrics = UiMetrics.new(settings.font_size)
+	_apply_control_metrics(self, previous, _metrics)
+	theme = DeckTheme.create(_metrics)
+	map.metrics = _metrics
+	_history_chart.metrics = _metrics
+	workspace.apply_metrics(_metrics)
+	map.queue_redraw()
+	_history_chart.queue_redraw()
+	if persist:
+		return _settings.save_to()
+	return OK
+
+func apply_font_size(value: int, persist := true) -> Error:
+	var settings := ClientSettings.new()
+	settings.font_size = value
+	settings.server_host = _settings.server_host
+	settings.database = _settings.database
+	return apply_settings(settings, persist)
+
+func _apply_control_metrics(root: Node, old_metrics: UiMetrics, new_metrics: UiMetrics) -> void:
+	var ratio := new_metrics.scale / old_metrics.scale
+	for child: Node in root.get_children():
+		if child is Control:
+			var control := child as Control
+			control.add_theme_font_size_override("font_size", maxi(1, roundi(control.get_theme_font_size("font_size") * ratio)))
+		_apply_control_metrics(child, old_metrics, new_metrics)
 
 
 ## Apply only the authenticated sender-scoped role view. The backend remains
@@ -841,6 +873,8 @@ func _set_connection_text(text: String, colour: Color) -> void:
 	if _connection_label == null:
 		return
 	_connection_message = text
+	if _settings_warning not in ["loaded", "missing"]:
+		_connection_message += " | settings %s; defaults" % _settings_warning
 	_connection_colour = colour
 	_render_connection_role()
 
