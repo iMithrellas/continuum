@@ -6,6 +6,8 @@ var failures := 0
 
 func _initialize() -> void:
 	await _test_success()
+	await _test_delayed_status_after_launcher_exit()
+	await _test_group_death_without_status()
 	await _test_unexpected_exit()
 	await _test_invalid_status()
 	await _test_cancel_cleans_descendants_and_blocks_restart()
@@ -38,6 +40,28 @@ func _test_success() -> void:
 			"actual process group id is tracked separately from launcher pid")
 	await _wait_until(func() -> bool: return not runner.is_running())
 	_assert(completed[0], "successful setup emits ready")
+
+
+func _test_delayed_status_after_launcher_exit() -> void:
+	var runner := _runner("delayed-status")
+	var completed := [false]
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 0.5; %s" % _write_status_command(runner, "0")])
+	runner.ready.connect(func(_host: String, database: String) -> void:
+		completed[0] = database == "continuum")
+	_assert(runner.start(), "delayed-status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(completed[0], "launcher exit does not preempt delayed status")
+
+
+func _test_group_death_without_status() -> void:
+	var runner := _runner("group-death-no-status")
+	var message := [""]
+	runner.helper_arguments = PackedStringArray(["-c", "sleep 0.5; exit 23"])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "group-death missing-status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0].contains("without a status"), "group death without status fails")
 
 
 func _test_unexpected_exit() -> void:

@@ -65,11 +65,13 @@ func start() -> bool:
 	var status_path := ProjectSettings.globalize_path(status_file)
 	var group_path := status_path + ".pgid"
 	var wrapper_path := status_path + ".pid"
+	var wrapper_done_path := status_path + ".done"
 	var cancel_path := status_path + ".cancel"
 	var ack_path := status_path + ".ack"
 	DirAccess.remove_absolute(status_path)
 	DirAccess.remove_absolute(group_path)
 	DirAccess.remove_absolute(wrapper_path)
+	DirAccess.remove_absolute(wrapper_done_path)
 	DirAccess.remove_absolute(cancel_path)
 	DirAccess.remove_absolute(ack_path)
 	arguments.append_array(["--status-file", status_path])
@@ -94,8 +96,9 @@ func start() -> bool:
 		"wait_ticks=0; while [ ! -e \"$4\" ] && [ ! -e \"$3\" ] && [ $wait_ticks -lt 100 ]; do " +
 		"sleep 0.01; wait_ticks=$((wait_ticks + 1)); done; " +
 		"if [ -e \"$3\" ] || [ ! -e \"$4\" ]; then exit 124; fi; " +
-		"shift 4; exec \"$@\"",
-		"continuum-process-group", wrapper_path, group_path, cancel_path, ack_path, command])
+		"done_path=\"$5\"; shift 5; \"$@\" & helper_pid=$!; wait \"$helper_pid\"; helper_status=$?; " +
+		"temporary=\"$done_path.$$\"; printf '%s\\n' \"$helper_status\" > \"$temporary\"; mv -f \"$temporary\" \"$done_path\"; exit \"$helper_status\"",
+		"continuum-process-group", wrapper_path, group_path, cancel_path, ack_path, wrapper_done_path, command])
 	launch_arguments.append_array(arguments)
 	_process_id = OS.create_process(PROCESS_GROUP_LAUNCHER, launch_arguments, false)
 	if _process_id < 0:
@@ -125,9 +128,11 @@ func _watch_process() -> void:
 	var status_path := ProjectSettings.globalize_path(status_file)
 	var group_path := status_path + ".pgid"
 	var wrapper_path := status_path + ".pid"
+	var wrapper_done_path := status_path + ".done"
 	var cancel_path := status_path + ".cancel"
 	var ack_path := status_path + ".ack"
-	var leader_reaped := false
+	var helper_dead := false
+	var group_dead := false
 	var unexpected_exit := false
 	var status_deadline := 0
 	while is_running():
@@ -146,19 +151,23 @@ func _watch_process() -> void:
 				break
 			await Engine.get_main_loop().process_frame
 			continue
-		if not _group_exists(_process_group_id):
+		if not group_dead and not _group_exists(_process_group_id):
+			group_dead = true
+			if _cancel_requested:
+				break
+		if group_dead and _cancel_requested:
 			break
-		if not leader_reaped:
-			var exit_code := OS.get_process_exit_code(_process_id)
-			if exit_code != -1:
-				leader_reaped = true
-				status_deadline = Time.get_ticks_msec() + int(STATUS_GRACE_SECONDS * 1000.0)
-		if leader_reaped and not FileAccess.file_exists(status_path) and not _cancel_requested \
+		if not helper_dead and FileAccess.file_exists(wrapper_done_path):
+			helper_dead = true
+			status_deadline = Time.get_ticks_msec() + int(STATUS_GRACE_SECONDS * 1000.0)
+		if helper_dead and FileAccess.file_exists(status_path):
+			break
+		if helper_dead and not FileAccess.file_exists(status_path) \
 				and Time.get_ticks_msec() >= status_deadline:
-			unexpected_exit = true
-			_cancel_requested = true
-			_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
-			_kill_process_group("TERM")
+				unexpected_exit = true
+				_cancel_requested = true
+				_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
+				_kill_process_group("TERM")
 		if _cancel_requested and Time.get_ticks_msec() >= _cleanup_deadline:
 			_kill_process_group("KILL")
 			_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
@@ -176,6 +185,7 @@ func _watch_process() -> void:
 		DirAccess.remove_absolute(status_path)
 		DirAccess.remove_absolute(group_path)
 		DirAccess.remove_absolute(wrapper_path)
+		DirAccess.remove_absolute(wrapper_done_path)
 		DirAccess.remove_absolute(cancel_path)
 		DirAccess.remove_absolute(ack_path)
 		if unexpected_exit:
@@ -190,6 +200,7 @@ func _watch_process() -> void:
 	DirAccess.remove_absolute(status_path)
 	DirAccess.remove_absolute(group_path)
 	DirAccess.remove_absolute(wrapper_path)
+	DirAccess.remove_absolute(wrapper_done_path)
 	DirAccess.remove_absolute(cancel_path)
 	DirAccess.remove_absolute(ack_path)
 	if not status_text.is_valid_int() or status_text != str(int(status_text)):
