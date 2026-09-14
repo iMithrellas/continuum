@@ -34,6 +34,8 @@ func _test_keys() -> void:
 
 func _test_persistence_boundaries() -> void:
 	var base := "/tmp/continuum-browser-test-%d" % Time.get_ticks_usec()
+	var paths: Array[String] = []
+	paths.append_array([base + ".history", base + ".favorites"])
 	var history = History.new(); history.load_from(base + ".history", base + ".favorites")
 	var key := History.canonical_key("http://Host", "Continuum", "default-world")
 	_assert(history.record_successful_subscription("http://Host", "Continuum", "default-world", "Home", 5) == OK, "successful subscription recorded")
@@ -47,25 +49,34 @@ func _test_persistence_boundaries() -> void:
 	var loaded = History.new(); loaded.load_from(base + ".history", base + ".favorites")
 	_assert(loaded.entries().is_empty(), "empty state persists")
 	var named_base := "/tmp/continuum-browser-named-%d" % Time.get_ticks_usec()
+	paths.append_array([named_base + ".history", named_base + ".favorites", named_base + ".legacy",
+			named_base + ".legacy-history", named_base + ".legacy-favorites"])
 	var named := History.new(); named.load_from(named_base + ".history", named_base + ".favorites")
 	var named_key := History.canonical_key("http://token-server.example", "named-db")
 	_assert(named.record_successful_subscription("http://token-server.example", "named-db", "default-world", "Named home", 7) == OK, "named entry records")
 	var named_loaded := History.new(); named_loaded.load_from(named_base + ".history", named_base + ".favorites")
 	_assert(named_loaded.entries()[0].get("display_name", "") == "Named home", "named entry survives reload")
+	var legacy := History.new(); legacy.legacy_import_marker_path = named_base + ".legacy"
+	legacy.load_from(named_base + ".legacy-history", named_base + ".legacy-favorites")
+	_assert(legacy.import_legacy_entry_once("http://legacy.example", "continuum") == OK, "legacy last server adopts explicit default world")
+	_assert(legacy.import_legacy_entry_once("http://other.example", "continuum") == OK and legacy.entries().size() == 1, "legacy adoption is one-time")
 	_assert(named_loaded.set_favorite(named_key, true) == OK, "token-containing canonical key can be favorited")
 	var favorite_loaded := History.new(); favorite_loaded.load_from(named_base + ".history", named_base + ".favorites")
 	_assert(favorite_loaded.entries()[0].favorite, "token-containing canonical key favorite survives reload")
 	var corrupt_path := "/tmp/continuum-browser-corrupt-%d.json" % Time.get_ticks_usec()
+	paths.append(corrupt_path)
 	var corrupt_file := FileAccess.open(corrupt_path, FileAccess.WRITE)
 	corrupt_file.store_string(JSON.stringify({"bad": {"key": "bad", "endpoint": 4, "database": "db", "world": "world", "last_seen": "new", "last_sample": 0}})); corrupt_file.close()
 	var corrupt := History.new(); corrupt.load_from(corrupt_path, corrupt_path + ".favorites")
 	_assert(corrupt.entries().is_empty(), "corrupt typed entry is discarded")
 	var denied_parent := "/tmp/continuum-browser-denied-%d" % Time.get_ticks_usec()
+	paths.append(denied_parent)
 	var denied_file := FileAccess.open(denied_parent, FileAccess.WRITE); denied_file.store_string("not a directory"); denied_file.close()
 	var denied := History.new(); denied.load_from(denied_parent + "/history.json", denied_parent + "/favorites.json")
 	var denied_before := denied.entries().duplicate(true)
 	var denied_error := denied.record_successful_subscription("http://example.com", "db", "default-world", "Denied", 8)
 	_assert(denied_error != OK and denied.entries() == denied_before, "failed save leaves state unchanged")
+	_cleanup(paths)
 
 func _test_probes() -> void:
 	var probes = Probes.new(); probes.set_visible(true)
@@ -93,7 +104,8 @@ func _test_probes() -> void:
 
 func _test_management_contract() -> void:
 	var manager = Management.new()
-	var store = History.new(); store.load_from("/tmp/continuum-manager.history", "/tmp/continuum-manager.favorites")
+	var base := "/tmp/continuum-manager-%d" % Time.get_ticks_usec()
+	var store = History.new(); store.load_from(base + ".history", base + ".favorites")
 	store.record_successful_subscription("http://example.com", "Continuum", "default-world", "Home", 1)
 	manager.set_history_store(store)
 	var stopped := [0]
@@ -109,6 +121,7 @@ func _test_management_contract() -> void:
 	manager.set_search("not found")
 	_assert(manager.selected_key == selected, "selection identifier survives filtering")
 	manager.free()
+	_cleanup([base + ".history", base + ".favorites"])
 
 func _test_http_adapter() -> void:
 	var server := TCPServer.new()
@@ -136,7 +149,8 @@ func _test_http_adapter() -> void:
 	probes.queue_free(); server.stop(); await process_frame
 
 func _test_rendered_browser() -> void:
-	var store = History.new(); store.load_from("/tmp/continuum-render.history", "/tmp/continuum-render.favorites")
+	var base := "/tmp/continuum-render-%d" % Time.get_ticks_usec()
+	var store = History.new(); store.load_from(base + ".history", base + ".favorites")
 	store.clear_history()
 	store.record_successful_subscription("http://example.com", "Continuum", "default-world", "Home", 9)
 	var manager = Management.new(); manager.apply_metrics(UiMetrics.new(24)); manager.set_history_store(store); get_root().add_child(manager); manager.set_anchors_preset(Control.PRESET_TOP_LEFT); manager.set_size(Vector2(360, 480))
@@ -158,6 +172,7 @@ func _test_rendered_browser() -> void:
 	manager.set_search(""); manager.request_history_removal(key); await process_frame
 	_assert(manager.visible_entries().is_empty(), "history removal refreshes rendered list")
 	manager.queue_free(); await process_frame
+	_cleanup([base + ".history", base + ".favorites"])
 
 func _nodes_named(root: Node, target: String) -> Array[Node]:
 	var result: Array[Node] = []
@@ -170,6 +185,11 @@ func _all_controls_fit(root: Node, width: float) -> bool:
 		if node is Control and node.get_global_rect().end.x > width + 0.5:
 			return false
 	return true
+
+func _cleanup(paths: Array[String]) -> void:
+	for path in paths:
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition: failures += 1; printerr("FAIL: %s" % message)

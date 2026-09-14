@@ -10,6 +10,7 @@ const DEFAULT_PORTS := {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
 var history_path := HISTORY_PATH
 var favorites_path := FAVORITES_PATH
+var legacy_import_marker_path := ""
 var _entries: Dictionary = {}
 var _favorites: Dictionary = {}
 
@@ -21,6 +22,20 @@ func load_from(history_file := "", favorites_file := "") -> Error:
 	var before_trim := _entries.size()
 	_trim_map(_entries)
 	if _entries.size() != before_trim: return _write_map(history_path, _entries)
+	return OK
+
+func import_legacy_entry_once(endpoint: String, database: String, world_slug := DEFAULT_WORLD,
+		display_name := "", now := -1) -> Error:
+	if legacy_import_marker_path.is_empty() or FileAccess.file_exists(legacy_import_marker_path):
+		return OK
+	var error := import_legacy_entry(endpoint, database, world_slug, display_name, now)
+	if error != OK:
+		return error
+	var marker := FileAccess.open(legacy_import_marker_path, FileAccess.WRITE)
+	if marker == null:
+		return ERR_CANT_OPEN
+	marker.store_string("legacy-last-server-imported")
+	marker.close()
 	return OK
 
 ## This is the only method that creates history records: callers must report a successful subscription.

@@ -6,6 +6,8 @@ const DEFAULT_FONT_SIZE := 13
 const MIN_FONT_SIZE := 10
 const MAX_FONT_SIZE := 24
 const SAVE_PATH := "user://continuum_settings.cfg"
+const HISTORY_PATH := "user://continuum_connection_history.json"
+const FAVORITES_PATH := "user://continuum_connection_favorites.json"
 
 var font_size := DEFAULT_FONT_SIZE
 var server_host := ""
@@ -19,6 +21,11 @@ static func path_from_args(fallback := SAVE_PATH) -> String:
 		if argument.begins_with("--settings-file="):
 			return argument.substr("--settings-file=".length())
 	return fallback
+
+static func companion_path_from_settings(settings_path: String, suffix: String, default_path: String) -> String:
+	if settings_path == SAVE_PATH:
+		return default_path
+	return settings_path + suffix
 
 func load_from(path := path_from_args()) -> String:
 	var config := ConfigFile.new()

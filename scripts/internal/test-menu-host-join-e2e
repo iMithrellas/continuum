@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+TEMP_DIR="$(mktemp -d /tmp/opencode/menu-host-join.XXXXXX)"
+SETTINGS_FILE="$TEMP_DIR/settings.cfg"
+DATA_DIR="$TEMP_DIR/data"
+cleanup() {
+    if [[ -e "$SETTINGS_FILE.runner-active" ]]; then
+        printf 'MENU_HOST_JOIN_E2E_ACTIVE: preserving %s\n' "$TEMP_DIR" >&2
+        return
+    fi
+    rm -rf -- "$TEMP_DIR"
+}
+trap cleanup EXIT
+mkdir -p "$DATA_DIR"
+export XDG_DATA_HOME="$DATA_DIR"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-continuum}"
+run_phase() {
+    local phase="$1"
+    local log="$TEMP_DIR/$phase.log"
+    if ! "$GODOT" --headless --path "$ROOT/client/godot" --scene res://tools/menu_host_join_e2e.tscn \
+        -- --settings-file="$SETTINGS_FILE" --phase="$phase" >"$log" 2>&1; then
+        printf 'MENU_HOST_JOIN_E2E_FAIL: phase=%s temp=%s\n' "$phase" "$TEMP_DIR" >&2
+        while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
+        return 1
+    fi
+    if ! rg -q "^MENU_HOST_JOIN_E2E_PASS phase=$phase$" "$log"; then
+        printf 'MENU_HOST_JOIN_E2E_FAIL: missing pass marker phase=%s temp=%s\n' "$phase" "$TEMP_DIR" >&2
+        while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
+        return 1
+    fi
+    while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
+}
+run_phase start
+run_phase reopen
