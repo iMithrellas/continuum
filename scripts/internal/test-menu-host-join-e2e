@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+SETTINGS_FILE="${CONTINUUM_E2E_SETTINGS_FILE:?set CONTINUUM_E2E_SETTINGS_FILE to an isolated absolute path}"
+DATA_DIR="${CONTINUUM_E2E_DATA_DIR:?set CONTINUUM_E2E_DATA_DIR to an isolated absolute directory}"
+PHASE="${1:-start}"
+mkdir -p "$DATA_DIR"
+export XDG_DATA_HOME="$DATA_DIR"
+export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-continuum}"
+"$GODOT" --headless --path "$ROOT/client/godot" --scene res://tools/menu_host_join_e2e.tscn \
+	-- --settings-file="$SETTINGS_FILE" --phase="$PHASE"
