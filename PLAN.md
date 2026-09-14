@@ -210,6 +210,50 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Test new history-key canonicalization, including `Continuum`/`continuum` deduplication with original display spelling retained, favorites persistence, successful subscriptions only, failed joins excluded, credential/world data retained after removal, and selection/sorting behavior; cover host case, conservative default-port rules, schemes, IPv4, hostnames, and bracketed IPv6 without changing raw credential keys or implicitly migrating credentials
 - [ ] Test probe success, timeout, backoff, stale samples, limited concurrency, no probe-created subscriptions, reachable-but-not-joinable servers, and profile authentication failures
 
+### Multiple logical worlds in one module database
+
+This is a logical-world feature, not a second-process or second-database design. A
+SpacetimeDB **server instance** can host a logical module database, and that one
+database must contain multiple independent Continuum worlds. A physical database
+per world is not the current answer, and no distributed cross-database transaction
+is assumed. "World" means the simulation namespace inside one logical module DB;
+"colony" is initially the one playable colony inside a world. Multiple colonies in
+one world are a later model with a shared world clock and future explicit transfer
+rules, not a claim that the current slice already supports them.
+
+- [ ] Add a durable world catalog with an immutable `world_id`, human display name, canonical world slug, desired simulation state (`running`/`stopped`), and creation/update metadata as needed for discovery; make the slug unique only within its logical module DB
+- [ ] Define world naming before schema work: canonical slugs are ASCII lowercase letters, digits, and hyphens; trim, case-fold, and turn supported spaces into hyphens; reject empty, non-ASCII/unsupported, reserved, over-length, and otherwise invalid names; reject collisions rather than silently merging or auto-renaming; preserve a separately validated display name, and use an explicit slug override only if the product needs names that cannot derive cleanly
+- [ ] Treat `world_id` as the durable relationship key and the slug as a user-visible selector. Renaming a world must not rewrite IDs, silently break references, or silently change persisted connection targets; any slug/prefix change is an explicit operation with collision checks
+- [ ] Scope every current authoritative world row by `world_id`, including the colony grid, colonists, resources and ground stacks, alerts, event log, work orders, terrain, seed, configuration/clock, speed policy, generation/reset state, and scheduler state; replace singleton assumptions and global/deterministic keys with world-qualified keys or IDs
+- [ ] Define the first migration from the shipped single-world schema as an explicit adoption of all existing rows into a named default world, preserving row IDs, relationships, settings, event/reset semantics, terrain, and seed; do not choose an arbitrary world; document rollback/backup and republish behavior
+- [ ] Keep world-level state separate from future colony-level state: the initial world may own the clock, policies, access model, terrain, and simulation lifecycle while the initial colony owns its grid, stock, colonists, and orders; decide each later shared policy deliberately rather than copying the current global meaning by accident
+- [ ] Add a world-scoped simulation stop reducer and lifecycle state. Stopping a world pauses its simulation/tick only; it does not stop the local managed server, a remote server, the SpacetimeDB process, or other worlds. Persist the desired state, retain reads and discovery, and make start/stop authorization explicit
+- [ ] Make the scheduler one global scheduled mechanism that enumerates runnable worlds, or otherwise preserve one coarse tick cadence without adding a per-colonist timer; select the simplest design compatible with current scheduled rows. A tick must carry/resolve `world_id` and a lifecycle/version guard so a stopped, reset, renamed, or recreated world cannot accept stale scheduled work
+- [ ] Ensure a stopped world receives no elapsed-time catch-up on start: pause means no simulation advancement, and restart resumes from the persisted clock at the next normal interval. Guard concurrent start/stop and scheduled ticks atomically; define behavior for outstanding tick attempts and make it idempotent
+- [ ] Decide and document the stopped-world command policy before reducers are changed: reads, subscriptions, discovery, and administration remain available; simulation-affecting commands are rejected by default while stopped unless an explicitly named administrative exception is justified. Do not rely on UI disabling for enforcement
+- [ ] Make authorization world-aware. Preserve the current sender-scoped role discovery shape where possible, but validate membership and every target world server-side; define whether admins/operators are global database members, world memberships, or a deliberate combination. Prevent cross-world reads, commands, event/audit leakage, and role confusion, with server-side ownership checks on every reducer
+- [ ] Expose world discovery/status through the server/module contract with permission-appropriate listing, creation, selection, lifecycle status, and any world-scoped role view. A stopped world remains selectable and readable; starting it requires the documented permission. Do not expose private membership rows, tokens, or unrelated worlds through public subscriptions
+- [ ] Extend the client session target and user-facing connection string structurally to `host + database + world`, with optional colony selection later; do not encode world selection ambiguously into the existing SDK database argument or invent a new network URL path without confirming the provider/module contract. The client connection still authenticates to `host/database`; world selection is a post-database discovery/session concern
+- [ ] Update the launch/server browser to list or discover worlds, allow permitted create/select actions, show running/stopped/unknown status, and make the selected world visible in connection status. Key successful connection history and favorites by normalized endpoint plus database plus world; retain host/database token paths and profile separation unchanged, and never store tokens in history
+- [ ] Keep local settings migration explicit: the current last-successful host/database entry adopts the named default world only after the migration establishes that adoption, never by silently picking the first discovered world. Preserve existing credentials, server data, successful-last-server behavior, and history/favorite deletion boundaries
+- [ ] Define future physical-database mapping only as an optional deployment concern: if used later, derive bounded deterministic names as `<world-slug>--<role>` after verifying platform/database identifier limits, reserve the delimiter, and make role names explicit. Slugs are unique only inside a logical DB, so same-slug worlds in different DBs require deployment-scope identity/registry handling; do not treat the prefix as globally unique
+
+#### Multiple-world phases
+
+- [ ] Phase 1: write schema/key, naming, lifecycle, command, authorization, migration, and client-target contracts; confirm SpacetimeDB scheduled reducer/table constraints and identifier limits against pinned documentation
+- [ ] Phase 2: add the world catalog and migrate the current single world into an explicit default world without changing gameplay semantics or durable IDs
+- [ ] Phase 3: thread world scope through persistence, reducers, views/subscriptions, event/alert reconciliation, reset/generation, and scheduler/tick guards; add world start/stop with no catch-up
+- [ ] Phase 4: add permission-aware discovery/create/select/status UI and extend history/favorites/session diagnostics without changing credential keys or remote/local server ownership semantics
+- [ ] Phase 5: evaluate multiple colonies per world and optional physical database deployment only after world isolation is proven; define shared clock/policy and explicit cross-colony transfer transactions then
+
+#### Multiple-world verification
+
+- [ ] Test slug normalization, Unicode/unsupported input, reserved/length rules, collisions, display-name preservation, rename behavior, and explicit default-world migration with IDs, refs, settings, favorites, tokens, terrain, seed, generation, and events preserved
+- [ ] Test two worlds in one logical DB for isolated subscriptions, reads, writes, resets, policies, clocks, terrain, stocks, colonists, orders, alerts, event history, and sender-scoped permissions; include rejected cross-world targets and no information leakage
+- [ ] Test stop/start persistence, stopped-world read/discovery access, default command rejection, atomic concurrent lifecycle changes, stale scheduler callbacks, world reset/recreate guards, normal next-interval resume, and no elapsed catch-up
+- [ ] Test global scheduler fairness/cadence and that stopping one world neither stops other worlds nor the server process; separately test local managed-server stop to preserve the distinction
+- [ ] Test world-aware connection selection, creation permissions, status rendering, selected-world display, history/favorite keys, legacy bookmark adoption, reconnect/session replacement, and profile token paths remaining host/database scoped
+
 #### Server Management menu
 
 - [ ] Add a separate **Server Management** menu, distinct from the existing offline launch actions and from in-game colony panels; provide an explicit launch entry and a clear return path to the game/menu
