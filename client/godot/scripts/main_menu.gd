@@ -7,6 +7,7 @@ signal settings_changed(settings: ClientSettings)
 signal exit_requested
 
 const HOST_PLACEHOLDER := "http://127.0.0.1:3000"
+const DATABASE_PATTERN := "^[a-z0-9]+(-[a-z0-9]+)*$"
 
 var main: Control
 var settings := ClientSettings.new()
@@ -244,8 +245,10 @@ static func validate_endpoint(host: String, database: String) -> String:
 		return "Host credentials are not supported."
 	if not _valid_authority(authority):
 		return "Host must be a valid hostname, IPv4 address, or bracketed IPv6 address."
-	if database.is_empty() or database.length() > 128 or not database.is_valid_identifier():
-		return "Database must be a non-empty identifier."
+	var database_pattern := RegEx.new()
+	database_pattern.compile(DATABASE_PATTERN)
+	if database.is_empty() or database.length() > 128 or database_pattern.search(database) == null:
+		return "Database must use lowercase letters and numbers separated by dashes."
 	return ""
 
 static func _valid_authority(authority: String) -> bool:
