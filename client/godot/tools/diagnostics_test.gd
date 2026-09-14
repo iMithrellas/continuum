@@ -1,0 +1,55 @@
+extends SceneTree
+
+const Stats = preload("res://scripts/diagnostics_stats.gd")
+const Session = preload("res://scripts/session_diagnostics.gd")
+const Overlay = preload("res://scripts/diagnostics_overlay.gd")
+
+func _init() -> void:
+	var stats := Stats.new(4, 10_000_000, 3, 100, 2_000_000)
+	for tick in [0, 10_000, 30_000, 60_000, 100_000]:
+		stats.observe_tick(tick)
+	var snap := stats.refresh(100_000, true)
+	assert(snap.count == 4 and is_equal_approx(snap.mean_fps, 40.0), "mean FPS uses N/sum intervals")
+	assert(is_equal_approx(snap.p50_frame_ms, 20.0) and is_equal_approx(snap.p95_frame_ms, 40.0) and is_equal_approx(snap.p99_frame_ms, 40.0), "nearest-rank percentiles")
+	assert(stats.refresh(100_050).count == 4, "refresh is low frequency")
+	stats.observe_tick(3_000_000, false)
+	stats.observe_tick(3_010_000)
+	assert(stats.refresh(3_010_000, true).count == 0, "invalid pause transition is not a frame")
+	stats.observe_tick(3_020_000)
+	var warmup := stats.refresh(3_020_000, true)
+	assert(warmup.count == 1 and warmup.warmup and warmup.p95_frame_ms == null, "resume anchors and exposes warmup")
+	var bounded := Stats.new(2, 25_000, 1, 0, 2_000_000)
+	for tick in [0, 10_000, 20_000, 30_000, 40_000]:
+		bounded.observe_tick(tick)
+	var bounded_snapshot := bounded.refresh(40_000, true)
+	assert(bounded_snapshot.count == 2 and is_equal_approx(bounded_snapshot.window_age_sec, 0.01), "count and age bounds are enforced")
+
+	var sent: Array[int] = []
+	var session := Session.new()
+	session.configure_probe(func(id: int) -> bool:
+		sent.append(id)
+		return true, 100, 500)
+	session.set_connected(true)
+	assert(session.pump(0) and not session.pump(1) and sent.size() == 1, "one probe in flight")
+	assert(session.respond(sent[0], 50), "successful response settles")
+	session.pump(100)
+	session.advance(250)
+	var network := session.snapshot(250)
+	assert(network.successful == 1 and network.timed_out == 1 and is_equal_approx(network.probe_timeout_ratio, 0.5), "timeouts denominator excludes inflight")
+	assert(network.rtt_samples_ms.size() == 2 and network.rtt_samples_ms[1] == null, "timeout is a graph gap, not zero")
+	session.reset()
+	assert(not session.respond(sent[1], 300) and session.snapshot(300).rtt_ms == null, "late response after reset is ignored")
+	session.set_connected(false)
+	session.set_connected(true)
+	assert(session.snapshot(301).successful == 0, "disconnect/reconnect resets session samples")
+	assert(network.packet_loss == null, "packet loss remains N/A")
+
+	var overlay := Overlay.new()
+	overlay.configure(false, true)
+	assert(not overlay.visible and not overlay.processing_enabled and overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE, "disabled overlay does no work and passes input")
+	overlay.configure(true, true)
+	overlay.apply_metrics(UiMetrics.new(24))
+	overlay.apply_metrics(UiMetrics.new(10))
+	assert(overlay.show_graph and overlay.metrics.base_font_size == 10, "graph and repeated font scaling follow configuration")
+	print("DIAGNOSTICS_PASS deterministic stats RTT overlay")
+	quit(0)
