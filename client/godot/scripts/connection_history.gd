@@ -137,8 +137,14 @@ static func _target(endpoint: String, database: String, world_slug: String) -> D
 
 static func _valid_slug(value: String) -> bool:
 	if value.length() == 0 or value.length() > 64 or value != value.to_lower() or value.strip_edges() != value: return false
+	if not ((value[0] >= "a" and value[0] <= "z") or (value[0] >= "0" and value[0] <= "9")): return false
+	if not ((value[-1] >= "a" and value[-1] <= "z") or (value[-1] >= "0" and value[-1] <= "9")): return false
+	var previous_dash := false
 	for character in value:
-		if not (character >= "a" and character <= "z") and not (character >= "0" and character <= "9") and character != "-": return false
+		var alphanumeric := (character >= "a" and character <= "z") or (character >= "0" and character <= "9")
+		if not alphanumeric and character != "-": return false
+		if character == "-" and previous_dash: return false
+		previous_dash = character == "-"
 	return true
 
 static func _valid_scheme(value: String) -> bool:
@@ -169,7 +175,11 @@ static func _valid_ipv6(value: String) -> bool:
 	return value.is_valid_ip_address() and value.contains(":")
 
 static func _port(value: String) -> int:
-	return int(value) if value.is_valid_int() and int(value) > 0 and int(value) <= 65535 else -1
+	if value.is_empty() or (value.length() > 1 and value.begins_with("0")): return -1
+	for character in value:
+		if character < "0" or character > "9": return -1
+	var port := int(value)
+	return port if port > 0 and port <= 65535 else -1
 
 func _matches(entry: Dictionary, needle: String) -> bool:
 	for field in ["display_name", "endpoint", "database", "world"]:
@@ -193,13 +203,17 @@ func _read_map(path: String) -> Dictionary:
 	for key in parsed:
 		if key is String and parsed[key] is Dictionary and parsed[key].has("key") and parsed[key]["key"] == key:
 			var entry: Dictionary = parsed[key]
-			var valid_types := entry.get("endpoint", null) is String and entry.get("database", null) is String and entry.get("world", null) is String and entry.get("last_seen", null) is int and entry.get("last_sample", null) is int
+			var valid_types := entry.get("endpoint", null) is String and entry.get("database", null) is String and entry.get("world", null) is String and _valid_timestamp(entry.get("last_seen", null)) and _valid_timestamp(entry.get("last_sample", null)) and (not entry.has("display_name") or entry.get("display_name") is String)
 			var allowed := true
 			for field in entry.keys():
-				if field not in ["key", "endpoint", "database", "database_canonical", "world", "status", "last_seen", "last_sample"]: allowed = false
+				if not ["key", "endpoint", "database", "database_canonical", "world", "display_name", "status", "last_seen", "last_sample"].has(str(field)): allowed = false
 			if valid_types and allowed and entry.get("status", "unknown") in ["unknown", "checking", "online", "unreachable"] and canonical_key(entry.endpoint, entry.database, entry.world) == key:
 				valid[key] = entry
 	return valid
+
+static func _valid_timestamp(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT: return true
+	return typeof(value) == TYPE_FLOAT and is_finite(value) and value == floor(value)
 
 func _read_favorites(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path): return {}
@@ -207,7 +221,7 @@ func _read_favorites(path: String) -> Dictionary:
 	if not parsed is Dictionary: return {}
 	var valid := {}
 	for key in parsed:
-		if key is String and key.length() <= 320 and not key.to_lower().contains("token") and parsed[key] is bool and parsed[key]: valid[key] = true
+		if key is String and key.length() <= 320 and parsed[key] is bool and parsed[key]: valid[key] = true
 	return valid
 
 func _write_map(path: String, value: Dictionary) -> Error:
