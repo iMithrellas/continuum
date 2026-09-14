@@ -202,7 +202,39 @@ workflows. List the available recipes with:
 just --list
 ```
 
-Start SpacetimeDB, publish the module, generate Godot bindings, and run the game:
+Run the client through its offline launch menu with:
+
+```sh
+just run
+```
+
+The menu has exactly five actions: `Join last server`, `Join server`, `Start
+local server`, `Settings`, and `Exit`. It starts offline; `Join last server` is
+disabled until a server join succeeds, and failed validation, connection,
+subscription, or local provisioning attempts are not remembered.
+
+`Join server` requires an `http://` or `https://` host containing only a
+hostname/IP (including bracketed IPv6) and an optional port from 1 through
+65535. The database must be a non-empty identifier of at most 128 characters.
+The settings file is local to this device and stores the last successful
+host/database and display preference, not replicated colony state. Auth tokens
+are separate for normal and admin profiles and keyed by host/database.
+
+`Start local server` is source-checkout-only. It runs
+`scripts/internal/start-local-server`, requiring Docker and Docker Compose,
+starts the Compose `spacetimedb` service, and publishes without removing
+volumes or using a fresh/destructive publish. It can be cancelled and cleans up
+its setup process group. Exported builds cannot use it; packaged server
+provisioning is planned and is not implemented.
+
+`Settings` exposes a base font size from 10 through 24, default 13. It drives
+the shared panel/UI metric scale and is persisted locally. The UI uses a muted
+dark palette. The former bottom legend/footer strip has been removed; use map
+labels, tile inspection, the panel chooser (`Ctrl+F`), function-key panels, and
+the workspace dock for those access paths.
+
+To prepare SpacetimeDB, publish the module, regenerate Godot bindings, and then
+run the game explicitly:
 
 ```sh
 just setup

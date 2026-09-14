@@ -162,6 +162,11 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [x] Concise searchable, collapsible, draggable-width sidebar with responsive font, button, spacing, and padding scale
 - [x] Role-aware sidebar controls fail closed from the authenticated sender-scoped role view; operator loss cancels Build immediately
 - [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
+- [x] Offline launch menu with Join last server, Join server, Start local server, Settings, and Exit actions
+- [x] Menu endpoint validation, successful-last-server persistence, cancellation, stale-callback guards, and session replacement across endpoint/profile changes
+- [x] Local source-checkout server runner with Docker/Compose prerequisite checks, non-destructive publish path, cancellation, and process-group cleanup; exported/package provisioning is not implemented
+- [x] Shared base-font setting from 10..24 (default 13) with persisted metric scaling and muted menu/workspace presentation
+- [x] Removed bottom legend/footer strip; map labels, inspection, panel chooser, function keys, and workspace dock provide the remaining access paths
 - [x] Just-first project, client, backend, and isolated-test workflow is exposed through documented `just` recipes; helper scripts remain private
 
 ## API
@@ -240,6 +245,7 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
 - [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies
 - [ ] Multi-settlement world model, trade, remote sites, expeditions, and communications loss
+- [ ] Packaged/export server provisioning and distribution workflow; current local hosting requires a source checkout with Docker Compose
 
 ## Project philosophy
 - [ ] Roughly **70% learning project**
