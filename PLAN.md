@@ -169,6 +169,47 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [x] Removed bottom legend/footer strip; map labels, inspection, panel chooser, function keys, and workspace dock provide the remaining access paths
 - [x] Just-first project, client, backend, and isolated-test workflow is exposed through documented `just` recipes; helper scripts remain private
 
+### Hosting and connection management
+
+- [ ] Verify native SpacetimeDB support, runtime distribution, module packaging, and graceful shutdown on every target platform before implementation
+- [ ] Define one shared server-manager contract for discovery, start, status, stop, autostart, health checks, and ownership; unsupported environments must report a clear reason
+- [ ] Keep dedicated hosting focused on Docker or documented manual service setup; the desktop UI must never control remote hosts or offer a local stop action for them
+- [ ] Add first-use provisioning for a native local server as a regular managed process, with local-only binding by default
+- [ ] Pin the native runtime and module for each world; explicit upgrades only, with no rebuild or publish on every world start
+- [ ] Store stable per-user server data, logs, and config in documented platform-appropriate paths, independent of the UI process
+- [ ] Track single-instance ownership with a stable process identity and server data/lock identity, not PID alone; handle duplicate starts and ownership conflicts safely
+- [ ] Let the UI start, inspect status, and stop managed local servers; stop gracefully, enforce a timeout, and offer force termination only after timeout
+- [ ] UI exit leaves a managed server running unless the user explicitly chooses stop and exit; reopening the UI rediscovers an already-running managed process
+- [ ] Keep starting a stopped server separate from enabling/disabling autostart
+- [ ] Register autostart only after user login: Linux per-user `systemd` service and Windows per-user scheduled task at logon; no pre-login boot requirement
+- [ ] Show managed-local status and actions distinctly from remote server ownership and actions
+- [ ] Add durable server connection history from successful subscriptions only, keyed by normalized endpoint plus database identity without changing existing profile credential partitioning
+- [ ] Keep history free of authentication tokens; removing history must not remove credentials or world data
+- [ ] Add durable favorites and preserve them across restarts; allow history removal without removing a favorite unless explicitly requested
+- [ ] Show `unknown`, `checking`, `online`, and `unreachable` in history/list views; `unreachable` is not definitive proof that a server is offline
+- [ ] Record last seen and last sample time; display stale samples as stale rather than implying current status
+- [ ] Measure latency using actual health/request round trips, not ICMP, and do not describe it as one-way network latency
+- [ ] Show connected-session rolling RTT as latest and smoothed values; show it as unavailable when disconnected
+- [ ] Bound background checks while the browser is visible with limited concurrency, timeouts, backoff, and no new subscription/reconnect per probe
+- [ ] Distinguish server reachable, database joinable, and profile authentication failure in status and diagnostics
+- [ ] Preserve existing menu, endpoint validation, successful-last-server persistence, cancellation, callback guards, and session replacement behavior
+
+#### Phased work
+
+- [ ] Phase 1: document and test the shared contract; confirm native SpacetimeDB platform support, distribution, module/runtime pinning, data paths, and shutdown behavior
+- [ ] Phase 2: implement first-use native provisioning and managed-process ownership/status/recovery without changing dedicated-host setup
+- [ ] Phase 3: add graceful stop/timeout handling, restart discovery, post-login autostart registration, conflict handling, and clear unsupported-platform UX
+- [ ] Phase 4: add history, favorites, status/last-seen/latency presentation, bounded probes, and reachable-versus-joinable/auth diagnostics
+- [ ] Phase 5: document upgrades, migrations, operational paths, and dedicated Docker/manual service guidance
+
+#### Hosting and connection tests
+
+- [ ] Test Linux and Windows login autostart, UI close/reopen discovery, clean shutdown, timeout/force offer, process crash recovery, duplicate starts, ownership conflicts, and paths containing spaces
+- [ ] Test unsupported platforms and unavailable native distributions with actionable errors; test pinned runtime/module startup and explicit upgrade behavior
+- [ ] Test remote entries cannot invoke local stop/control; test local managed actions remain separate from remote list ownership
+- [ ] Test history/favorites persistence, normalized endpoint/database keys, successful subscriptions only, failed joins excluded, credential/world data retained after removal, and selection/sorting behavior
+- [ ] Test probe success, timeout, backoff, stale samples, limited concurrency, no probe-created subscriptions, reachable-but-not-joinable servers, and profile authentication failures
+
 ## API
 - [ ] API-first design from the beginning
 - [ ] Official clients use the same underlying command model as external clients
@@ -245,7 +286,7 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
 - [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies
 - [ ] Multi-settlement world model, trade, remote sites, expeditions, and communications loss
-- [ ] Packaged/export server provisioning and distribution workflow; current local hosting requires a source checkout with Docker Compose
+- [ ] Packaged/export server provisioning and distribution workflow; current local hosting supports a source checkout with Docker Compose, while native managed hosting remains pending
 
 ## Project philosophy
 - [ ] Roughly **70% learning project**
