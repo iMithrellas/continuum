@@ -11,6 +11,9 @@ signal session_left
 
 const SessionHistoryModel = preload("res://scripts/session_history.gd")
 const HistoryChartControl = preload("res://scripts/history_chart.gd")
+const DiagnosticsStatsControl = preload("res://scripts/diagnostics_stats.gd")
+const SessionDiagnosticsControl = preload("res://scripts/session_diagnostics.gd")
+const DiagnosticsOverlayControl = preload("res://scripts/diagnostics_overlay.gd")
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
@@ -113,11 +116,19 @@ var _session_requested := false
 var _direct_launch := false
 var _session_generation := 0
 var _has_configured_client := false
+var _diagnostics_stats: DiagnosticsStats
+var _session_diagnostics: SessionDiagnostics
+var _diagnostics_overlay: DiagnosticsOverlay
+var _diagnostics_focus_paused := false
+var _diagnostics_last_tick := -1
+var _diagnostics_last_refresh := -1
 
 
 func _ready() -> void:
-	_settings_warning = _settings.load_from()
+	_settings_warning = _settings.load_from(_cli_option("--settings-file", ClientSettings.path_from_args()))
 	_metrics = UiMetrics.new(_settings.font_size)
+	_diagnostics_stats = DiagnosticsStatsControl.new()
+	_session_diagnostics = SessionDiagnosticsControl.new()
 	_history = SessionHistoryModel.new()
 	theme = DeckTheme.create(_metrics)
 	map.metrics = _metrics
@@ -137,6 +148,8 @@ func _ready() -> void:
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
 	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
+	_create_diagnostics_overlay()
+	_configure_diagnostics_overlay()
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_bind_client(client)
@@ -156,6 +169,7 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	map.metrics = _metrics
 	_history_chart.metrics = _metrics
 	workspace.apply_metrics(_metrics)
+	_configure_diagnostics_overlay()
 	if _menu != null:
 		_menu.apply_metrics(_metrics)
 	map.queue_redraw()
@@ -165,9 +179,25 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	return OK
 
 
+## Menu-facing diagnostics API. Graph collection is subordinate to diagnostics.
+func configure_diagnostics(show: bool, graph: bool, persist := true) -> Error:
+	var settings := _settings.clone()
+	settings.diagnostics_enabled = show
+	settings.diagnostics_graph_enabled = graph
+	return apply_settings(settings, persist)
+
+
+## The backend can provide this later without coupling Main to a transport API.
+## The callable receives a request id and returns whether the echo was sent.
+func attach_diagnostics_transport(send_authenticated_echo: Callable) -> void:
+	_session_diagnostics.configure_probe(send_authenticated_echo)
+	_session_diagnostics.reset()
+
+
 func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
 		direct_launch := false) -> void:
 	_session_generation += 1
+	_reset_diagnostics_epoch()
 	_cancel_reconnect()
 	_host = host.strip_edges()
 	_database = database.strip_edges()
@@ -246,6 +276,7 @@ func _unbind_client(client: ContinuumModuleClient) -> void:
 
 func leave_session() -> void:
 	_session_generation += 1
+	_reset_diagnostics_epoch()
 	_session_requested = false
 	_cancel_reconnect()
 	_release_main_subscription()
@@ -272,10 +303,8 @@ func _has_cli_connection() -> bool:
 	return _profile == ContinuumClientProfile.ADMIN
 
 func apply_font_size(value: int, persist := true) -> Error:
-	var settings := ClientSettings.new()
+	var settings := _settings.clone()
 	settings.font_size = value
-	settings.server_host = _settings.server_host
-	settings.database = _settings.database
 	return apply_settings(settings, persist)
 
 func _apply_control_metrics(root: Node, old_metrics: UiMetrics, new_metrics: UiMetrics) -> void:
@@ -345,6 +374,7 @@ func _identity_token_path(host: String, database: String) -> String:
 
 
 func _process(delta: float) -> void:
+	_process_diagnostics()
 	_sample_history()
 	if _intent_request != null:
 		_intent_seconds -= delta
@@ -378,6 +408,14 @@ func _process(delta: float) -> void:
 
 
 func _notification(what: int) -> void:
+	if what == NOTIFICATION_APPLICATION_FOCUS_OUT or what == NOTIFICATION_WM_WINDOW_FOCUS_OUT:
+		_diagnostics_focus_paused = true
+		_reset_diagnostics_samples()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN or what == NOTIFICATION_WM_WINDOW_FOCUS_IN:
+		_diagnostics_focus_paused = false
+		_diagnostics_last_tick = -1
+	elif what == NOTIFICATION_WM_SIZE_CHANGED:
+		_resize_diagnostics_overlay()
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_CRASH:
 		# Leaving cleanly matters here: the colony keeps running server-side, and a
 		# tidy close means the server is not left holding a dead session.
@@ -396,6 +434,7 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	if not _session_requested:
 		return
 	_cancel_reconnect()
+	_session_diagnostics.set_connected(true)
 	print("Continuum identity: %s" % identity.hex_encode())
 	_set_connection_text("connected as %s..." % identity.hex_encode().substr(0, 12),
 			Color("6fcf7f"))
@@ -437,6 +476,8 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 
 
 func _on_disconnected() -> void:
+	_session_diagnostics.set_connected(false)
+	_reset_diagnostics_samples()
 	_release_main_subscription()
 	_set_permissions("Unknown", false, false)
 	_history.reset()
@@ -450,6 +491,8 @@ func _on_disconnected() -> void:
 
 
 func _on_connection_error(code: int, reason: String) -> void:
+	_session_diagnostics.set_connected(false)
+	_reset_diagnostics_samples()
 	_release_main_subscription()
 	_set_connection_text("connection error %d: %s" % [code, reason], Color("ff5c6c"))
 	if _session_requested and _direct_launch:
@@ -466,6 +509,7 @@ func _fail_manual_session(message: String) -> void:
 	# the old epoch must not be allowed to restore gameplay.
 	_session_requested = false
 	_session_generation += 1
+	_reset_diagnostics_epoch()
 	var failed_generation := _session_generation
 	var failed_client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_cancel_reconnect()
@@ -527,6 +571,64 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 	options.one_time_token = false
 	options.save_token = true
 	SpacetimeDB.Continuum.connect_db(_host, _database, options)
+
+
+func _create_diagnostics_overlay() -> void:
+	var layer := CanvasLayer.new()
+	layer.layer = 1000
+	_diagnostics_overlay = DiagnosticsOverlayControl.new()
+	_diagnostics_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(_diagnostics_overlay)
+	add_child(layer)
+	_resize_diagnostics_overlay()
+
+
+func _resize_diagnostics_overlay() -> void:
+	if _diagnostics_overlay != null and get_viewport() != null:
+		_diagnostics_overlay.position = Vector2.ZERO
+		_diagnostics_overlay.size = get_viewport_rect().size
+
+
+func _configure_diagnostics_overlay() -> void:
+	if _diagnostics_overlay == null:
+		return
+	_diagnostics_overlay.apply_metrics(_metrics)
+	_diagnostics_overlay.configure(_settings.diagnostics_enabled,
+		_settings.diagnostics_graph_enabled)
+	if not _settings.diagnostics_enabled:
+		_reset_diagnostics_samples()
+
+
+func _reset_diagnostics_samples() -> void:
+	if _diagnostics_stats == null:
+		return
+	_diagnostics_stats.reset()
+	_session_diagnostics.reset()
+	_diagnostics_last_tick = -1
+	_diagnostics_last_refresh = -1
+	if _diagnostics_overlay != null:
+		_diagnostics_overlay.set_snapshots({}, {})
+
+
+func _reset_diagnostics_epoch() -> void:
+	_reset_diagnostics_samples()
+	if _session_diagnostics != null:
+		_session_diagnostics.set_connected(false)
+
+
+func _process_diagnostics() -> void:
+	if _diagnostics_stats == null or not _settings.diagnostics_enabled or _diagnostics_focus_paused:
+		return
+	var now_usec := Time.get_ticks_usec()
+	_diagnostics_stats.observe_tick(now_usec)
+	if _diagnostics_last_refresh >= 0 and now_usec - _diagnostics_last_refresh < DiagnosticsStats.DEFAULT_REFRESH_USEC:
+		return
+	_diagnostics_last_tick = now_usec
+	_diagnostics_last_refresh = now_usec
+	_session_diagnostics.advance(now_usec)
+	_session_diagnostics.pump(now_usec)
+	_diagnostics_overlay.set_snapshots(_diagnostics_stats.refresh(now_usec),
+		_session_diagnostics.snapshot(now_usec))
 
 
 func _on_table_changed(table_name: String) -> void:
