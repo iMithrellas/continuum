@@ -36,6 +36,8 @@ func _ready() -> void:
 	_assert(not Menu.validate_endpoint("http://:3000", "continuum").is_empty(), "port-only host rejected")
 	_assert(not Menu.validate_endpoint("http://localhost:0", "continuum").is_empty(), "zero port rejected")
 	_assert(not Menu.validate_endpoint("http://localhost", "bad name").is_empty(), "invalid database rejected")
+	_assert(Menu.validate_endpoint("http://localhost", "continuum-sidebar-access-it-648299").is_empty(), "dashed database accepted")
+	_assert(not Menu.validate_endpoint("http://localhost", "continuum_worker").is_empty(), "underscored database rejected")
 
 	var settings := ClientSettings.new()
 	var path := "user://main_menu_test_%d.cfg" % Time.get_ticks_usec()

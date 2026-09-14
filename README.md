@@ -217,7 +217,8 @@ subscription, or local provisioning attempts are not remembered.
 
 `Join server` requires an `http://` or `https://` host containing only a
 hostname/IP (including bracketed IPv6) and an optional port from 1 through
-65535. The database must be a non-empty identifier of at most 128 characters.
+65535. The database name must use lowercase ASCII letters and numbers
+separated by dashes and be at most 128 characters.
 The settings file is local to this device and stores the last successful
 host/database and display preference, not replicated colony state. Auth tokens
 are separate for normal and admin profiles and keyed by host/database.
