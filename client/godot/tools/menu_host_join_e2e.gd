@@ -34,21 +34,20 @@ func _start_and_join() -> void:
 	main._menu.local_server_requested.connect(func() -> void: local_signal_count[0] += 1)
 	var started_at := Time.get_ticks_msec()
 	print("PHASE menu-visible offline session_requested=false")
-	# This is the same Button signal used by the shipped UI, not a private callback.
-	main._menu._local_button.pressed.emit()
+	await _click_button(main._menu._local_button)
 	_assert(local_signal_count[0] == 1, "start-local button emitted its production signal")
 	print("PHASE start-local clicked t_ms=%d" % (Time.get_ticks_msec() - started_at))
 	await _wait_until(func() -> bool:
 		return main._state_ready and main._role_name == "Viewer" and \
-			not SpacetimeDB.Continuum.db.tile.iter().is_empty() and \
-			not SpacetimeDB.Continuum.db.colonist.iter().is_empty())
+			SpacetimeDB.Continuum.db.tile.iter().size() == 576 and \
+			SpacetimeDB.Continuum.db.colonist.iter().size() == 8)
 	if failed:
 		return
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	var tiles: Array[ContinuumTile] = client.db.tile.iter()
 	var colonists: Array[ContinuumColonist] = client.db.colonist.iter()
-	_assert(not tiles.is_empty() and not colonists.is_empty(),
-		"joined production subscription contains tiles and colonists")
+	_assert(tiles.size() == 576 and colonists.size() == 8,
+		"joined production subscription contains the fixed production fixture")
 	_assert(main.visible and main._menu.visible == false, "session is visible and menu is hidden")
 	_assert(main._role_name == "Viewer" and not main._can_operate and not main._is_admin,
 		"normal profile joins with readonly viewer permissions")
@@ -78,14 +77,17 @@ func _reopen_and_join_last() -> void:
 		"fresh process reopens offline without ghost autoconnect")
 	_assert(not main._menu._last_button.disabled, "persisted successful server enables join-last")
 	print("PHASE reopened offline session_requested=false join-last-enabled=true")
-	main._menu._last_button.pressed.emit()
+	await _click_button(main._menu._last_button)
 	print("PHASE join-last clicked")
-	await _wait_until(func() -> bool: return main._state_ready)
+	await _wait_until(func() -> bool:
+		return main._state_ready and main._role_name == "Viewer" and \
+			SpacetimeDB.Continuum.db.tile.iter().size() == 576 and \
+			SpacetimeDB.Continuum.db.colonist.iter().size() == 8)
 	if failed:
 		return
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
-	_assert(not client.db.tile.iter().is_empty() and not client.db.colonist.iter().is_empty(),
-		"join-last reconnect applies production tables")
+	_assert(client.db.tile.iter().size() == 576 and client.db.colonist.iter().size() == 8,
+		"join-last reconnect applies the fixed production fixture")
 	_assert(main._menu.visible == false and main._role_name == "Viewer" and not main._can_operate,
 		"join-last reconnect reaches readonly session UI")
 	print("PHASE join-last-reconnected host=%s db=%s tiles=%d colonists=%d role=%s" %
@@ -101,12 +103,38 @@ func _wait_until(condition: Callable) -> void:
 			return
 		await get_tree().process_frame
 	if main._menu._runner != null and main._menu._runner.is_running():
-		# Avoid cancellation/forced process control on a hung real runner. Leak only
-		# this test reference so the runner can finish independently of the harness.
-		printerr("MENU_HOST_JOIN_E2E_FAIL: timed out while runner was active; leaving it untouched")
+		# Avoid cancellation/forced process control on a hung real runner. Preserve
+		# its status files so the wrapper can report the active pipeline precisely.
+		var marker_path := _option("--settings-file", "") + ".runner-active"
+		var marker := FileAccess.open(marker_path, FileAccess.WRITE)
+		if marker:
+			marker.store_string("status_file=%s launcher_pid=%d process_group_id=%d\n" %
+				[main._menu._runner.status_file, main._menu._runner.launcher_pid(),
+				main._menu._runner.process_group_id()])
+			marker.close()
+		printerr("MENU_HOST_JOIN_E2E_FAIL: timed out while runner was active; leaving it untouched marker=%s" % marker_path)
 		main._menu._runner = null
+		failed = true
+		get_tree().quit(1)
 	else:
 		_fail("timed out waiting for production session readiness")
+
+func _click_button(button: Button) -> void:
+	_assert(button.visible and not button.disabled, "%s is visible and enabled" % button.text)
+	await get_tree().process_frame
+	var rect := button.get_global_rect()
+	_assert(rect.size.x > 0.0 and rect.size.y > 0.0, "%s has production layout geometry" % button.text)
+	button.grab_focus()
+	var down := InputEventAction.new()
+	down.action = "ui_accept"
+	down.pressed = true
+	Input.parse_input_event(down)
+	await get_tree().process_frame
+	var up := InputEventAction.new()
+	up.action = "ui_accept"
+	up.pressed = false
+	Input.parse_input_event(up)
+	await get_tree().process_frame
 
 func _option(name: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():

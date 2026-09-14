@@ -125,6 +125,11 @@ test-local-server-runner:
 test-main-menu:
     scripts/internal/test-main-menu
 
+# Exercise the production menu -> Docker publish -> readonly join flow twice.
+# This uses the existing local service and preserves its persistent state.
+test-menu-host-join-e2e:
+    scripts/internal/test-menu-host-join-e2e
+
 # Verify endpoint/profile changes replace the cached-auth client instance.
 test-session-switch:
     scripts/internal/test-session-switch
