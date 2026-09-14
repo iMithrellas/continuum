@@ -162,8 +162,12 @@ func _ready() -> void:
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	var previous := _metrics
-	_settings = settings
-	_metrics = UiMetrics.new(settings.font_size)
+	_settings.font_size = clampi(settings.font_size, ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE)
+	_settings.server_host = settings.server_host
+	_settings.database = settings.database
+	_settings.diagnostics_enabled = settings.diagnostics_enabled
+	_settings.diagnostics_graph_enabled = settings.diagnostics_graph_enabled
+	_metrics = UiMetrics.new(_settings.font_size)
 	_apply_control_metrics(self, previous, _metrics)
 	theme = DeckTheme.create(_metrics)
 	map.metrics = _metrics

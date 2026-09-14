@@ -28,6 +28,7 @@ func _run() -> void:
 	main.diagnostics_settings_path = settings_path
 	get_tree().root.add_child(main)
 	await get_tree().process_frame
+	_assert(main._menu.settings == main._settings, "main menu keeps the shared settings object")
 	_assert(main._diagnostics_overlay.visible and not main._diagnostics_overlay.show_graph,
 		"enabled diagnostics show without enabling the subordinate graph")
 	_assert(main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
@@ -46,9 +47,21 @@ func _run() -> void:
 	_assert(main._session_diagnostics.snapshot(2_000_000).successful == 0,
 		"disconnect resets session diagnostics")
 	main.apply_font_size(10, false)
-	_assert(main._settings.diagnostics_enabled and main._settings.server_host == settings.server_host and
+	_assert(main._menu.settings == main._settings and main._settings.diagnostics_enabled and
+			main._settings.server_host == settings.server_host and
 			main._settings.database == settings.database and main._metrics.base_font_size == 10,
-		"font changes clone all settings fields")
+		"font changes preserve all settings fields and menu ownership")
+	_assert(main._settings.remember_server("http://joined.test", "joined-db", settings_path) == OK,
+		"successful server save updates shared settings")
+	main._menu._refresh_last_button()
+	_assert(main._menu.settings.server_host == "http://joined.test" and
+			main._menu.settings.database == "joined-db" and not main._menu._last_button.disabled,
+		"menu sees the last server saved through the shared settings object")
+	main.apply_font_size(22, false)
+	_assert(main._menu.settings.diagnostics_enabled and main._menu.settings.font_size == 22 and
+			main._menu.settings.server_host == "http://joined.test" and
+			main._menu.settings.database == "joined-db",
+		"later font changes do not toggle diagnostics or lose last server")
 	main.configure_diagnostics(false, true, false)
 	_assert(not main._diagnostics_overlay.visible and not main._diagnostics_overlay.processing_enabled,
 		"disabled diagnostics stop overlay processing")
