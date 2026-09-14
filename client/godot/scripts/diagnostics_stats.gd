@@ -96,7 +96,7 @@ func _empty_snapshot() -> Dictionary:
 	return {"ready": false, "warmup": true, "count": 0, "window_age_sec": 0.0,
 		"minimum": minimum_samples,
 		"mean_fps": null, "p50_frame_ms": null, "p95_frame_ms": null,
-		"p99_frame_ms": null, "frame_samples_ms": []}
+		"p99_frame_ms": null, "frame_samples_ms": [], "frame_graph": []}
 
 func _make_snapshot(now_usec: int) -> Dictionary:
 	var count := _sorted.size()
@@ -113,7 +113,13 @@ func _make_snapshot(now_usec: int) -> Dictionary:
 		"p95_frame_ms": _nearest_rank(0.95) if ready else null,
 		"p99_frame_ms": _nearest_rank(0.99) if ready else null,
 		"frame_samples_ms": _sorted.map(func(value: float) -> float: return value * 1000.0),
-		"frame_graph_ms": _samples.map(func(value: float) -> float: return value * 1000.0)}
+		"frame_graph": _frame_graph()}
+
+func _frame_graph() -> Array:
+	var result: Array = []
+	for i in _samples.size():
+		result.append({"tick": _sample_ticks[i], "value": _samples[i] * 1000.0})
+	return result
 
 func _nearest_rank(percentile: float) -> float:
 	var rank := clampi(ceili(percentile * _sorted.size()), 1, _sorted.size())
