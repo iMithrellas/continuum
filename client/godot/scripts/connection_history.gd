@@ -18,15 +18,15 @@ func load_from(history_file := "", favorites_file := "") -> Error:
 	if not favorites_file.is_empty(): favorites_path = favorites_file
 	_entries = _read_map(history_path)
 	_favorites = _read_favorites(favorites_path)
-	_trim()
+	_trim_map(_entries)
 	return OK
 
 ## This is the only method that creates history records: callers must report a successful subscription.
 func record_successful_subscription(endpoint: String, database: String, world_slug := DEFAULT_WORLD,
-		display_name := "", now := -1) -> String:
+		display_name := "", now := -1) -> Error:
 	var target := _target(endpoint, database, world_slug)
 	if target.is_empty():
-		return ""
+		return ERR_INVALID_PARAMETER
 	var key: String = target.key
 	var entry: Dictionary = _entries.get(key, {})
 	entry.merge(target)
@@ -34,16 +34,18 @@ func record_successful_subscription(endpoint: String, database: String, world_sl
 	entry["status"] = "online"
 	if not display_name.is_empty():
 		entry["display_name"] = display_name.strip_edges()
-	_entries[key] = entry
-	_trim()
-	_write_map(history_path, _entries)
-	return key
+	var candidate := _entries.duplicate(true)
+	candidate[key] = entry
+	_trim_map(candidate)
+	var error := _write_map(history_path, candidate)
+	if error == OK: _entries = candidate
+	return error
 
 func import_legacy_entry(endpoint: String, database: String, world_slug: String,
-		display_name := "", now := -1) -> String:
+		display_name := "", now := -1) -> Error:
 	# Adoption is explicit: callers must name the world instead of guessing from a catalog.
 	if world_slug.strip_edges().is_empty():
-		return ""
+		return ERR_INVALID_PARAMETER
 	return record_successful_subscription(endpoint, database, world_slug, display_name, now)
 
 func entries(search := "") -> Array[Dictionary]:
@@ -59,28 +61,33 @@ func entries(search := "") -> Array[Dictionary]:
 			return int(a.last_seen) > int(b.last_seen))
 	return result
 
-func set_favorite(key: String, favorite: bool) -> bool:
-	if not _entries.has(key): return false
-	if favorite: _favorites[key] = true
-	else: _favorites.erase(key)
-	_write_map(favorites_path, _favorites)
-	return true
+func set_favorite(key: String, favorite: bool) -> Error:
+	if not _entries.has(key): return ERR_DOES_NOT_EXIST
+	var candidate := _favorites.duplicate(true)
+	if favorite: candidate[key] = true
+	else: candidate.erase(key)
+	var error := _write_map(favorites_path, candidate)
+	if error == OK: _favorites = candidate
+	return error
 
-func remove_history(key: String) -> bool:
-	if not _entries.has(key): return false
-	_entries.erase(key)
-	_write_map(history_path, _entries)
-	return true
+func remove_history(key: String) -> Error:
+	if not _entries.has(key): return ERR_DOES_NOT_EXIST
+	var candidate := _entries.duplicate(true); candidate.erase(key)
+	var error := _write_map(history_path, candidate)
+	if error == OK: _entries = candidate
+	return error
 
-func remove_favorite(key: String) -> bool:
-	if not _favorites.has(key): return false
-	_favorites.erase(key)
-	_write_map(favorites_path, _favorites)
-	return true
+func remove_favorite(key: String) -> Error:
+	if not _favorites.has(key): return ERR_DOES_NOT_EXIST
+	var candidate := _favorites.duplicate(true); candidate.erase(key)
+	var error := _write_map(favorites_path, candidate)
+	if error == OK: _favorites = candidate
+	return error
 
-func clear_history() -> void:
-	_entries.clear()
-	_write_map(history_path, _entries)
+func clear_history() -> Error:
+	var error := _write_map(history_path, {})
+	if error == OK: _entries.clear()
+	return error
 
 static func canonical_key(endpoint: String, database: String, world_slug := DEFAULT_WORLD) -> String:
 	var target := _target(endpoint, database, world_slug)
@@ -105,6 +112,7 @@ static func _target(endpoint: String, database: String, world_slug: String) -> D
 			port = _port(authority.substr(close + 2))
 			if port < 0: return {}
 		if not host.contains(":"): return {}
+		if not _valid_ipv6(host.substr(1, host.length() - 2)): return {}
 	else:
 		var colon := authority.find(":")
 		if colon >= 0:
@@ -114,9 +122,10 @@ static func _target(endpoint: String, database: String, world_slug: String) -> D
 		else: host = authority
 		if host.is_empty() or host.contains(":"): return {}
 	if host.is_empty(): return {}
+	if not host.begins_with("[") and not _valid_dns_or_ipv4(host): return {}
 	var db := database.strip_edges()
 	var world := world_slug.strip_edges().to_lower()
-	if db.is_empty() or db.contains("/") or world.is_empty() or not _valid_slug(world): return {}
+	if not _valid_database(db) or world.is_empty() or not _valid_slug(world): return {}
 	var canonical_host := host if host.begins_with("[") else host.to_lower()
 	var endpoint_key := scheme + "://" + canonical_host
 	if port >= 0 and (not DEFAULT_PORTS.has(scheme) or port != DEFAULT_PORTS[scheme]): endpoint_key += ":%d" % port
@@ -131,9 +140,34 @@ static func _valid_slug(value: String) -> bool:
 	return true
 
 static func _valid_scheme(value: String) -> bool:
-	if value.is_empty() or not ((value[0] >= "a" and value[0] <= "z")): return false
-	for character in value:
-		if not ((character >= "a" and character <= "z") or (character >= "0" and character <= "9") or character in ["+", ".", "-"]): return false
+	return value == "http" or value == "https" or value == "ws" or value == "wss"
+
+static func _valid_database(value: String) -> bool:
+	if value.length() < 1 or value.length() > 128: return false
+	for character in value.to_lower():
+		if not ((character >= "a" and character <= "z") or (character >= "0" and character <= "9") or character == "-" ): return false
+	return true
+
+static func _valid_dns_or_ipv4(host: String) -> bool:
+	if host.length() > 253 or host.begins_with(".") or host.ends_with("."): return false
+	for label in host.split("."):
+		if label.is_empty() or label.length() > 63 or label.begins_with("-") or label.ends_with("-"): return false
+		for character in label.to_lower():
+			if not ((character >= "a" and character <= "z") or (character >= "0" and character <= "9") or character == "-"): return false
+	return true
+
+static func _valid_ipv6(value: String) -> bool:
+	if value.is_empty() or value.find(":") < 0 or value.contains(":::"): return false
+	var halves := value.split("::")
+	var compressed := halves.size() == 2
+	if halves.size() > 2: return false
+	var groups := value.replace("::", ":").split(":")
+	if not compressed and groups.size() != 8: return false
+	if compressed and groups.size() >= 8: return false
+	for group in groups:
+		if group.is_empty() or group.length() > 4: return false
+		for character in group.to_lower():
+			if not ((character >= "a" and character <= "f") or (character >= "0" and character <= "9")): return false
 	return true
 
 static func _port(value: String) -> int:
@@ -144,14 +178,14 @@ func _matches(entry: Dictionary, needle: String) -> bool:
 		if str(entry.get(field, "")).to_lower().contains(needle): return true
 	return false
 
-func _trim() -> void:
-	while _entries.size() > MAX_ENTRIES:
+func _trim_map(entries: Dictionary) -> void:
+	while entries.size() > MAX_ENTRIES:
 		var oldest := ""
 		var oldest_time := 9223372036854775807
-		for key in _entries:
-			if int(_entries[key].get("last_seen", 0)) < oldest_time:
-				oldest = key; oldest_time = int(_entries[key].get("last_seen", 0))
-		_entries.erase(oldest)
+		for key in entries:
+			if int(entries[key].get("last_seen", 0)) < oldest_time:
+				oldest = key; oldest_time = int(entries[key].get("last_seen", 0))
+		entries.erase(oldest)
 
 func _read_map(path: String) -> Dictionary:
 	if not FileAccess.file_exists(path): return {}
@@ -161,7 +195,8 @@ func _read_map(path: String) -> Dictionary:
 	for key in parsed:
 		if key is String and parsed[key] is Dictionary and parsed[key].has("key") and parsed[key]["key"] == key:
 			var entry: Dictionary = parsed[key]
-			if canonical_key(str(entry.get("endpoint", "")), str(entry.get("database", "")), str(entry.get("world", ""))) == key:
+			var valid_types := entry.get("endpoint", null) is String and entry.get("database", null) is String and entry.get("world", null) is String and entry.get("last_seen", null) is int and entry.get("last_sample", null) is int
+			if valid_types and canonical_key(entry.endpoint, entry.database, entry.world) == key:
 				valid[key] = entry
 	return valid
 
@@ -171,7 +206,7 @@ func _read_favorites(path: String) -> Dictionary:
 	if not parsed is Dictionary: return {}
 	var valid := {}
 	for key in parsed:
-		if key is String and bool(parsed[key]): valid[key] = true
+		if key is String and key.length() <= 320 and parsed[key] is bool and parsed[key]: valid[key] = true
 	return valid
 
 func _write_map(path: String, value: Dictionary) -> Error:
