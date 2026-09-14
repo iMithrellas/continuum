@@ -1,0 +1,190 @@
+extends SceneTree
+
+const RUNNER_SCRIPT := "res://scripts/local_server_runner.gd"
+var failures := 0
+
+
+func _initialize() -> void:
+	await _test_success()
+	await _test_delayed_status_after_launcher_exit()
+	await _test_group_death_without_status()
+	await _test_unexpected_exit()
+	await _test_invalid_status()
+	await _test_cancel_cleans_descendants_and_blocks_restart()
+	await _test_missing_group_handshake_does_not_run_helper()
+	await _test_cancel_before_group_handshake_does_not_run_helper()
+	if failures == 0:
+		print("LOCAL_SERVER_RUNNER_PASS")
+		quit(0)
+	else:
+		print("LOCAL_SERVER_RUNNER_FAIL (%d failures)" % failures)
+		quit(1)
+
+
+func _runner(status_name: String) -> ContinuumLocalServerRunner:
+	var runner: ContinuumLocalServerRunner = load(RUNNER_SCRIPT).new()
+	runner.helper_command = "/bin/sh"
+	runner.status_file = "/tmp/continuum-runner-%s.status" % status_name
+	return runner
+
+
+func _test_success() -> void:
+	var runner := _runner("success")
+	var completed := [false]
+	runner.helper_arguments = PackedStringArray(["-c", _write_status_command(runner, "0") + "; sleep 0.5"])
+	runner.ready.connect(func(_host: String, database: String) -> void:
+		completed[0] = database == "continuum")
+	_assert(runner.start(), "successful setup starts")
+	await _wait_until(func() -> bool: return runner.process_group_id() > 0)
+	_assert(runner.process_group_id() != runner.launcher_pid(),
+			"actual process group id is tracked separately from launcher pid")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(completed[0], "successful setup emits ready")
+
+
+func _test_delayed_status_after_launcher_exit() -> void:
+	var runner := _runner("delayed-status")
+	var completed := [false]
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 0.5; %s" % _write_status_command(runner, "0")])
+	runner.ready.connect(func(_host: String, database: String) -> void:
+		completed[0] = database == "continuum")
+	_assert(runner.start(), "delayed-status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(completed[0], "launcher exit does not preempt delayed status")
+
+
+func _test_group_death_without_status() -> void:
+	var runner := _runner("group-death-no-status")
+	var message := [""]
+	runner.helper_arguments = PackedStringArray(["-c", "sleep 0.5; exit 23"])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "group-death missing-status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0].contains("without a status"), "group death without status fails")
+
+
+func _test_unexpected_exit() -> void:
+	var runner := _runner("unexpected")
+	var message := [""]
+	var child_file := "/tmp/continuum-runner-unexpected-child.pid"
+	DirAccess.remove_absolute(child_file)
+	runner.helper_arguments = PackedStringArray(["-c",
+		"sleep 30 & child=$!; printf '%%s\\n' $child > '%s'; exit 23" % child_file])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "unexpected exit setup starts")
+	await _wait_until(func() -> bool: return runner.process_group_id() > 0)
+	var unexpected_group_id := runner.process_group_id()
+	await _wait_until(func() -> bool: return FileAccess.file_exists(child_file))
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0].contains("without a status"), "unexpected exit fails instead of hanging")
+	var child_pid := int(FileAccess.get_file_as_string(child_file).strip_edges())
+	_assert(child_pid > 0, "unexpected-exit descendant PID is numeric")
+	await _wait_until(func() -> bool: return not _live_process(child_pid))
+	_assert(not _live_group(unexpected_group_id), "unexpected-exit group has no live descendants")
+
+
+func _test_invalid_status() -> void:
+	var runner := _runner("invalid")
+	var message := [""]
+	runner.helper_arguments = PackedStringArray(["-c", _write_status_command(runner, "")])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "invalid status setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0].contains("invalid status"), "empty status is rejected")
+
+
+func _test_cancel_cleans_descendants_and_blocks_restart() -> void:
+	var runner := _runner("cancel")
+	var pid_file := "/tmp/continuum-runner-child-pids"
+	DirAccess.remove_absolute(pid_file)
+	runner.helper_arguments = PackedStringArray(["-c", _grandchild_command(pid_file)])
+	_assert(runner.start(), "cancellable setup starts")
+	await _wait_until(func() -> bool: return runner.process_group_id() > 0)
+	var cancel_group_id := runner.process_group_id()
+	await _wait_until(func() -> bool: return FileAccess.file_exists(pid_file))
+	var pids := _read_pids(pid_file)
+	_assert(pids.size() == 2, "published helper writes numeric child and grandchild PIDs")
+	runner.cancel()
+	_assert(not runner.start(), "restart is blocked while process group cleans up")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	for process_id in pids:
+		await _wait_until(func() -> bool: return not _live_process(process_id))
+		_assert(not _live_process(process_id), "published-group cancellation terminates descendants")
+	_assert(not _live_group(cancel_group_id), "cancellation leaves no live group descendants")
+	_assert(runner.start(), "restart works after process group cleanup")
+	runner.cancel()
+	await _wait_until(func() -> bool: return not runner.is_running())
+
+
+func _test_missing_group_handshake_does_not_run_helper() -> void:
+	var runner := _runner("missing-group")
+	var message := [""]
+	var marker_file := "/tmp/continuum-runner-missing-helper-ran"
+	DirAccess.remove_absolute(marker_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c", _marker_command(marker_file)])
+	runner.failed.connect(func(value: String) -> void: message[0] = value)
+	_assert(runner.start(), "missing-PGID setup starts")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(message[0] != "", "missing PGID fails within the handshake timeout")
+	_assert(not FileAccess.file_exists(marker_file), "helper does not run without a published PGID ACK")
+
+
+func _test_cancel_before_group_handshake_does_not_run_helper() -> void:
+	var runner := _runner("early-cancel")
+	var marker_file := "/tmp/continuum-runner-early-helper-ran"
+	DirAccess.remove_absolute(marker_file)
+	runner.test_skip_process_group_publication = true
+	runner.helper_arguments = PackedStringArray(["-c", _marker_command(marker_file)])
+	_assert(runner.start(), "early-cancellable setup starts")
+	runner.cancel()
+	_assert(not runner.start(), "early cancellation blocks immediate restart")
+	await _wait_until(func() -> bool: return not runner.is_running())
+	_assert(not FileAccess.file_exists(marker_file), "cancel before publication does not run helper")
+
+
+func _grandchild_command(pid_file: String) -> String:
+	return "sh -c 'sleep 30 & grand=$!; printf \"%%s\\n\" \"$$ $grand\" > \"%s\"; wait $grand' & child=$!; wait $child" % pid_file
+
+
+func _marker_command(marker_file: String) -> String:
+	return "printf 'ran\\n' > '%s'" % marker_file
+
+
+func _read_pids(pid_file: String) -> Array[int]:
+	var values: Array[int] = []
+	for value in FileAccess.get_file_as_string(pid_file).strip_edges().split(" ", false):
+		if value.is_valid_int() and int(value) > 0:
+			values.append(int(value))
+	return values
+
+
+func _write_status_command(runner: ContinuumLocalServerRunner, value: String) -> String:
+	var path := ProjectSettings.globalize_path(runner.status_file)
+	return "printf '%s\\n' > '%s'" % [value, path]
+
+
+func _live_process(process_id: int) -> bool:
+	var output: Array = []
+	var command := "ps -o stat= -p %d | grep -qv '^Z'" % process_id
+	return OS.execute("sh", ["-c", command], output, true) == 0
+
+
+func _live_group(group_id: int) -> bool:
+	var output: Array = []
+	var command := "ps -eo pgid= | grep -Eq '^ *%d *$'" % group_id
+	return OS.execute("sh", ["-c", command], output, true) == 0
+
+
+func _wait_until(condition: Callable) -> void:
+	var deadline := Time.get_ticks_msec() + 5000
+	while not condition.call() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	_assert(condition.call(), "async operation completes")
+
+
+func _assert(condition: bool, description: String) -> void:
+	if not condition:
+		failures += 1
+		printerr("FAIL: %s" % description)
