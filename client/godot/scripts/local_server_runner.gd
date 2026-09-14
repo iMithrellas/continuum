@@ -24,12 +24,21 @@ const STATUS_GRACE_SECONDS := 0.25
 @export var status_file := ""
 
 var _process_id := -1
+var _process_group_id := -1
 var _cancel_requested := false
 var _cleanup_deadline := 0
 
 
 func is_running() -> bool:
 	return _process_id >= 0
+
+
+func process_group_id() -> int:
+	return _process_group_id
+
+
+func launcher_pid() -> int:
+	return _process_id
 
 
 ## Starts exactly one provisioning process. Repeated clicks are harmless.
@@ -50,7 +59,9 @@ func start() -> bool:
 	if status_file.is_empty():
 		status_file = "user://continuum_local_server_%s.status" % Time.get_ticks_usec()
 	var status_path := ProjectSettings.globalize_path(status_file)
+	var group_path := status_path + ".pgid"
 	DirAccess.remove_absolute(status_path)
+	DirAccess.remove_absolute(group_path)
 	arguments.append_array(["--status-file", status_path])
 	if not FileAccess.file_exists(command):
 		_fail("Local server setup helper is missing: %s" % command)
@@ -58,8 +69,13 @@ func start() -> bool:
 
 	_cancel_requested = false
 	_cleanup_deadline = 0
+	_process_group_id = -1
 	progress.emit("Starting local SpacetimeDB infrastructure...")
-	var launch_arguments := PackedStringArray([command])
+	# setsid may fork before exec, so its returned PID is not a reliable PGID. The
+	# shell records its actual PID/PGID before execing the helper.
+	var launch_arguments := PackedStringArray(["-f", "/bin/sh", "-c",
+		"printf '%s\\n' \"$$\" > \"$1\"; shift; exec \"$@\"",
+		"continuum-process-group", group_path, command])
 	launch_arguments.append_array(arguments)
 	_process_id = OS.create_process(PROCESS_GROUP_LAUNCHER, launch_arguments, false)
 	if _process_id < 0:
@@ -83,10 +99,17 @@ func cancel() -> void:
 
 func _watch_process() -> void:
 	var status_path := ProjectSettings.globalize_path(status_file)
+	var group_path := status_path + ".pgid"
 	var leader_reaped := false
 	var unexpected_exit := false
 	var status_deadline := 0
-	while is_running() and _group_exists(_process_id):
+	while is_running():
+		_refresh_process_group_id(group_path)
+		if _process_group_id < 0:
+			await Engine.get_main_loop().process_frame
+			continue
+		if not _group_exists(_process_group_id):
+			break
 		if not leader_reaped:
 			var exit_code := OS.get_process_exit_code(_process_id)
 			if exit_code != -1:
@@ -107,10 +130,12 @@ func _watch_process() -> void:
 		return
 
 	_process_id = -1
+	_process_group_id = -1
 	if _cancel_requested:
 		_cancel_requested = false
 		_cleanup_deadline = 0
 		DirAccess.remove_absolute(status_path)
+		DirAccess.remove_absolute(group_path)
 		if unexpected_exit:
 			_fail("Local server setup ended without a status report. Check Docker and the setup output.")
 			return
@@ -121,6 +146,7 @@ func _watch_process() -> void:
 		return
 	var status_text := FileAccess.get_file_as_string(status_path).strip_edges()
 	DirAccess.remove_absolute(status_path)
+	DirAccess.remove_absolute(group_path)
 	if not status_text.is_valid_int() or status_text != str(int(status_text)):
 		_fail("Local server setup wrote an invalid status report.")
 		return
@@ -147,15 +173,21 @@ func _group_exists(process_id: int) -> bool:
 func _kill_process_group(signal_name: String) -> void:
 	if not is_running():
 		return
+	if _process_group_id < 0:
+		return
 	var output: Array = []
-	OS.execute("kill", ["-%s" % signal_name, "--", "-%d" % _process_id], output, true)
+	OS.execute("kill", ["-%s" % signal_name, "--", "-%d" % _process_group_id], output, true)
 
 
-## RefCounted has no automatic tree callback. Owners embedding this adapter should
-## call dispose() from their _exit_tree() so a launch-menu teardown cleans up too.
+## RefCounted has no automatic lifecycle callback. The owning launch-menu node must
+## call dispose() from its own _exit_tree() so teardown cleans up the process group.
 func dispose() -> void:
 	cancel()
 
 
-func _exit_tree() -> void:
-	dispose()
+func _refresh_process_group_id(group_path: String) -> void:
+	if _process_group_id >= 0 or not FileAccess.file_exists(group_path):
+		return
+	var value := FileAccess.get_file_as_string(group_path).strip_edges()
+	if value.is_valid_int() and value == str(int(value)) and int(value) > 0:
+		_process_group_id = int(value)
