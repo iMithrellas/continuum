@@ -146,6 +146,7 @@ func _ready() -> void:
 	_server_management.set_local_management_state({"can_start": false, "can_stop": false, "can_force_stop": false,
 		"message": "Native process management pending"})
 	_server_management.visible = false
+	_server_management.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_server_management)
 	_metrics = UiMetrics.new(_settings.font_size)
 	_diagnostics_stats = DiagnosticsStatsControl.new()
