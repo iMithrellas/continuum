@@ -10,6 +10,8 @@ const SAVE_PATH := "user://continuum_settings.cfg"
 var font_size := DEFAULT_FONT_SIZE
 var server_host := ""
 var database := ""
+var diagnostics_enabled := false
+var diagnostics_graph_enabled := false
 var last_load_status := "missing"
 
 static func path_from_args(fallback := SAVE_PATH) -> String:
@@ -30,6 +32,8 @@ func load_from(path := path_from_args()) -> String:
 	font_size = clampi(int(config.get_value("ui", "font_size", DEFAULT_FONT_SIZE)), MIN_FONT_SIZE, MAX_FONT_SIZE)
 	server_host = _safe_string(config.get_value("server", "host", ""))
 	database = _safe_string(config.get_value("server", "database", ""))
+	diagnostics_enabled = bool(config.get_value("diagnostics", "enabled", false))
+	diagnostics_graph_enabled = bool(config.get_value("diagnostics", "graph_enabled", false))
 	last_load_status = "loaded"
 	return last_load_status
 
@@ -38,12 +42,24 @@ func save_to(path := path_from_args()) -> Error:
 	config.set_value("ui", "font_size", clampi(font_size, MIN_FONT_SIZE, MAX_FONT_SIZE))
 	config.set_value("server", "host", server_host.strip_edges())
 	config.set_value("server", "database", database.strip_edges())
+	config.set_value("diagnostics", "enabled", diagnostics_enabled)
+	config.set_value("diagnostics", "graph_enabled", diagnostics_graph_enabled)
 	return config.save(path)
 
 func remember_server(host: String, db: String, path := path_from_args()) -> Error:
 	server_host = host.strip_edges()
 	database = db.strip_edges()
 	return save_to(path)
+
+func clone() -> ClientSettings:
+	var copy := ClientSettings.new()
+	copy.font_size = font_size
+	copy.server_host = server_host
+	copy.database = database
+	copy.diagnostics_enabled = diagnostics_enabled
+	copy.diagnostics_graph_enabled = diagnostics_graph_enabled
+	copy.last_load_status = last_load_status
+	return copy
 
 static func _safe_string(value: Variant) -> String:
 	return value if value is String else ""
