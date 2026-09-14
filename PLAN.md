@@ -207,17 +207,18 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Test Linux and Windows login autostart, UI close/reopen discovery, clean shutdown, timeout/force offer, process crash recovery, duplicate starts, ownership conflicts, and paths containing spaces
 - [ ] Test unsupported platforms and unavailable native distributions with actionable errors; test pinned runtime/module startup and explicit upgrade behavior
 - [ ] Test remote entries cannot invoke local stop/control; test local managed actions remain separate from remote list ownership
-- [ ] Test history/favorites persistence, normalized endpoint/database keys, successful subscriptions only, failed joins excluded, credential/world data retained after removal, and selection/sorting behavior
+- [ ] Test new history-key canonicalization, favorites persistence, successful subscriptions only, failed joins excluded, credential/world data retained after removal, and selection/sorting behavior; cover host case, conservative default-port rules, schemes, IPv4, hostnames, and bracketed IPv6 without implicitly migrating credential keys
 - [ ] Test probe success, timeout, backoff, stale samples, limited concurrency, no probe-created subscriptions, reachable-but-not-joinable servers, and profile authentication failures
 
 #### Server Management menu
 
 - [ ] Add a separate **Server Management** menu, distinct from the existing offline launch actions and from in-game colony panels; provide an explicit launch entry and a clear return path to the game/menu
-- [ ] Show successful connection history in a searchable list, pin favorites above unpinned history, and preserve the existing normalized endpoint/database identity key and successful-last-server behavior
+- [ ] Show successful connection history in a searchable list, pin favorites above unpinned history, and preserve successful-last-server behavior
+- [ ] Define a new history-only canonical key from the endpoint scheme/host/port and database identity: lowercase the scheme and DNS host, require brackets around IPv6 literals without address rewriting, remove a port only when it is the explicitly known default for that scheme, preserve unknown or non-default ports, and keep database identity case-sensitive/whitespace-preserving unless provider rules require otherwise; do not reuse or rewrite the existing profile credential key, and do not imply credential migration
 - [ ] Keep history removal, favorite removal, and local-world/server-data removal as separate explicit actions; never remove credentials or world data as a side effect of clearing history
 - [ ] Include local managed-server discovery, status, start, graceful stop, timeout/force offer, and ownership-conflict details in this view; remote entries remain connection-only and cannot invoke local management controls
 - [ ] Preserve the last successful action and selection when returning to the menu, while clearly distinguishing `unknown`, `checking`, `online`, `unreachable`, and stale samples
-- [ ] Keep search and list operations local and bounded; background checks use the existing limited concurrency, timeout, backoff, and no-new-subscription rules
+- [ ] Keep search and list operations local and bounded; plan background checks at an initial maximum of 4 concurrent probes, a 3-second per-probe timeout, a 10-second visible-list refresh interval, and exponential retry backoff capped at 60 seconds (initial values remain tunable); do not poll while the view is hidden and do not create subscriptions or reconnect sessions for probes
 
 ## Client diagnostics
 
@@ -227,7 +228,7 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 
 ### Timing and statistics contract
 
-- [ ] Record bounded per-frame wall-clock interval samples with `Time.get_ticks_usec()` from a render/process observation point; do not use `_process(delta)` for elapsed-time measurement because `delta` follows engine time scaling, and do not use system wall-clock time
+- [ ] Record bounded per-frame wall-clock interval samples with `Time.get_ticks_usec()` at a render/process observation callback; the callback is a valid observation point, but do not use its `_process(delta)` value for elapsed time because `delta` follows engine time scaling, and do not use system wall-clock time
 - [ ] Treat `Performance.TIME_FPS` as an optional coarse display only: the official monitor is updated once per second; `Engine.get_frames_per_second()` is also an average, not a percentile source
 - [ ] Compute mean FPS over the active window as `N / sum(frame_interval_seconds)`; compute p50, p95, and p99 from the sorted frame-time samples in milliseconds using a specified nearest-rank rule (`ceil(percentile * N)`, 1-based, clamped to `1..N`)
 - [ ] If an FPS equivalent is shown for a percentile, label it exactly as `p99 frame-time equivalent FPS` (and similarly for other percentiles); never label the inverse p99 frame time as `99th percentile FPS` or as “1% low average”
@@ -237,23 +238,24 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 
 ### Network diagnostics contract
 
-- [ ] Display application-level round-trip time only: send an authenticated-independent echo/heartbeat that the current provider/SDK can support, timestamp send/response with the same monotonic clock, and keep rolling actual samples with their timestamps
-- [ ] Confirm whether the pinned SpacetimeDB/Flametime SDK exposes a usable application echo/heartbeat response before implementation; if not, add the smallest provider-supported health response without mutating simulation state or requiring colony permissions
+- [ ] Display application-level round-trip time only: plan a permission-independent application echo/heartbeat over the currently authenticated SpacetimeDB session, timestamp send/response with the same monotonic clock, and keep rolling actual samples with their timestamps; the probe must not require operator permission or mutate simulation state
+- [ ] Confirm before implementation that the pinned SpacetimeDB/Flametime SDK currently has no application echo/heartbeat response for the active WebSocket path; `/v1/ping` is not an active-session RTT measurement. Validate the smallest backend/provider addition needed for the session echo, and show session RTT as `N/A` until it exists
+- [ ] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
 - [ ] Mark RTT unavailable when disconnected and stale after the freshness timeout; do not reuse the last value as current, and keep missing intervals visible in any graph
 - [ ] Do not call WebSocket/TCP transport reliable delivery “packet loss”: generic Godot `WebSocketPeer`/TCP APIs do not expose actual IP packet-loss counters, and the current SDK protocol does not provide them
-- [ ] Show `N/A` for packet loss unless verified transport counters become available; if probes are implemented, show a separately named `probe timeouts` ratio with denominator = completed probes in the observation window, include timeout/reset semantics, and never relabel it as packet loss
+- [ ] Show `N/A` for packet loss unless verified transport counters become available; if probes are implemented, show a separately named `probe timeouts` ratio with denominator = settled attempts in the observation window (`successful + timed out`), exclude in-flight/cancelled attempts, define timeout and session-reset semantics, and never relabel it as packet loss
 
 ### Diagnostics tests
 
 - [ ] Unit-test deterministic interval samples for mean FPS, nearest-rank p50/p95/p99 frame times, sample/window bounds, low-frequency refresh, minimum sample warmup, and correctly labelled percentile FPS equivalents
 - [ ] Test stalls, pause/resume, minimize/unfocus transitions, long gaps, engine time-scale changes, session reset, and invalid/missing samples without contaminating the active timing window
-- [ ] Test authenticated-independent RTT success, timeout, stale expiry, disconnect/reconnect reset, rolling timestamps, probe-timeout denominator/reset behavior, and honest `N/A` packet-loss presentation
+- [ ] Test permission-independent session-echo RTT success, timeout, stale expiry, disconnect/reconnect reset, rolling timestamps, settled-attempt denominator/reset behavior, optional separately labelled HTTP health RTT, and honest `N/A` packet-loss presentation
 - [ ] Test diagnostics setting persistence, graph dependency on the main toggle, safe-area/input pass-through behavior, accessibility scaling, separate frame-time/RTT units, and missing-data gaps
-- [ ] Test Server Management launch/return navigation, searchable history, favorites pinned first, last-successful selection/action persistence, local management controls, remote-control isolation, and history/favorite/data deletion boundaries
+- [ ] Test Server Management launch/return navigation, searchable history, favorites pinned first, last-successful selection/action persistence, local management controls, remote-control isolation, new history-key canonicalization including IPv6, and history/favorite/data deletion boundaries
 
 ### Diagnostics research references
 
-The client is Godot `4.7` (`client/godot/project.godot`), with SpacetimeDB `2.10.0`, schema v10, and vendored Flametime Godot-SpacetimeDB-SDK `0.3.2` at commit `f6c59d7`. The current provider path is an authenticated SpacetimeDB WebSocket (`v3.bsatn.spacetimedb`) carrying subscriptions and reducer calls; there is no separate Continuum REST service. Use the pinned SDK/provider contract rather than reimplementing wire messages.
+The client is Godot `4.7` (`client/godot/project.godot`), with SpacetimeDB `2.10.0`, schema v10, and vendored Flametime Godot-SpacetimeDB-SDK `0.3.2` at commit `f6c59d7`. The current provider path is an authenticated SpacetimeDB WebSocket (`v3.bsatn.spacetimedb`) carrying subscriptions and reducer calls; there is no separate Continuum REST service or current application echo/heartbeat on that active WebSocket path. Use the pinned SDK/provider contract rather than reimplementing wire messages.
 
 - [ ] Verify timing implementation against [Godot Performance](https://docs.godotengine.org/en/stable/classes/class_performance.html): `Performance.TIME_FPS` is a once-per-second average monitor, while `TIME_PROCESS` is a per-frame process duration and neither is a percentile history
 - [ ] Verify the distinction against [Godot Engine](https://docs.godotengine.org/en/stable/classes/class_engine.html): `Engine.get_frames_per_second()` returns average rendered FPS and is not a p50/p95/p99 calculation
