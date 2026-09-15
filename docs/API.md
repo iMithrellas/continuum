@@ -119,6 +119,7 @@ Rust signatures and the generated binding types.
 
 | Reducer | Signature | Authorization and validation |
 | --- | --- | --- |
+| `diagnostic_echo` | `(_nonce: u64)` | Permission-independent, nonmutating acknowledgement. The client measures application RTT using the matching SDK request ID and successful reducer outcome; the nonce is not returned as a payload. |
 | `set_tile_enabled` | `(tile_id: u32, enabled: bool)` | Operator/admin. Unknown IDs and `empty` tiles error; the current value is a no-op. |
 | `build_facility` | `(tile_id: u32, kind: TileKind)` | Operator/admin. Only `dining`, `sleep`, or `recreation` may be built on an in-bounds `empty` tile. Deducts exactly `20` stored wood atomically and enables the facility; insufficient wood or invalid targets error. |
 | `build_tile_block` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, kind: TileKind)` | Operator/admin. Inclusive bounds normalize reversed endpoints. Any non-`empty` kind is accepted when every cell is in-bounds, present, and empty. Costs `20 * area` stored wood and enables every cell atomically. Empty kind, missing or occupied cells, invalid bounds, or insufficient/non-finite wood error; rejection changes no rows or audit event. |
