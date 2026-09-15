@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/scripts" "$TMP/tools"
+ln -s "$ROOT/client/godot/scripts/native_server_manager.gd" "$TMP/scripts/native_server_manager.gd"
+ln -s "$ROOT/client/godot/scripts/native_server_platform_adapter.gd" "$TMP/scripts/native_server_platform_adapter.gd"
+ln -s "$ROOT/client/godot/tools/native_server_manager_test.gd" "$TMP/tools/native_server_manager_test.gd"
+cp "$ROOT/client/godot/tools/native_hosting_test_project/project.godot" "$TMP/project.godot"
+"$GODOT" --headless --path "$TMP" --script res://tools/native_server_manager_test.gd
