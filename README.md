@@ -126,6 +126,20 @@ selects; the selected-block buttons separately dispatch the corresponding
 enable/disable or work-order mutation. Displayed state follows the subscribed
 server rows, and pending requests do not optimistically change the map.
 
+## Native Local Hosting
+
+Linux x86_64 can manage one durable SpacetimeDB `2.10.0` instance at
+`http://127.0.0.1:3001`. Start, graceful stop, status refresh, and explicit
+post-timeout force stop are available in **Servers**. The manager
+persists under XDG data storage, keeps runtime helpers out of the checkout, and
+refuses module digest changes until an explicit upgrade flow is added. Closing
+the client leaves a healthy server running and a fresh client can rediscover it.
+
+Native installation uses only the pinned, checksum-verified installer; missing
+Cargo, wasm targets, runtime files, or module artifacts produce actionable
+errors. Native lifecycle tests use the private-PID Docker workflow described in
+[docs/native-hosting-contract.md](docs/native-hosting-contract.md).
+
 ## Workspace UI
 
 The map is the primary surface. The workspace manager provides eight real game
@@ -210,19 +224,22 @@ Run the client through its offline launch menu with:
 just run
 ```
 
-The menu has six actions: `Join last server`, `Join server`, `Start local server`,
-`Settings`, `Servers`, and `Exit`. It starts offline; `Join last server` is
-disabled until a server join succeeds, and failed validation, connection,
-subscription, or local provisioning attempts are not remembered.
+The launch menu has four actions: `Join last server`, `Servers`, `Settings`, and
+`Exit`. It starts offline; `Join last server` is disabled until a server join
+succeeds, and failed validation, connection, subscription, or local provisioning
+attempts are not remembered. Settings contains display and diagnostics controls;
+all server controls except the last-server shortcut live in `Servers`.
 
-`Servers` opens a separate searchable Server Management view. It lists successful
-connections only, pins favorites first, preserves history in companion local
-files, and performs bounded visible-only HTTP health probes. Rows label the result
+`Servers` opens a separate searchable Server Management view with `Host` and
+`Database` inputs, `Join server`, and native local-server controls, including
+startup cancellation and login autostart. Its history lists successful connections
+only, pins favorites first, preserves history in companion local files, and
+performs bounded visible-only HTTP health probes. Rows label the result
 as HTTP status/RTT; this is not active-session RTT. Return hides probes and restores
 the menu. World selection is not exposed yet, and selecting a row joins the current
 single-world SDK target (`host/database`).
 
-`Join server` requires an `http://` or `https://` host containing only a
+`Servers` -> `Join server` requires an `http://` or `https://` host containing only a
 hostname/IP (including bracketed IPv6) and an optional port from 1 through
 65535. The database name must use lowercase ASCII letters and numbers
 separated by dashes and be at most 128 characters.
@@ -232,15 +249,46 @@ are separate for normal and admin profiles and keyed by host/database.
 Use `--settings-file=PATH` to select an alternate settings file for a test or
 disposable run; the default is `user://continuum_settings.cfg`.
 
-`Start local server` is source-checkout-only. It runs
-`scripts/internal/start-local-server`, requiring Docker and Docker Compose. The
-runner is POSIX/Linux-oriented: it currently depends on `/usr/bin/setsid`,
-`/bin/sh`, and process-group `kill` behavior in addition to the source checkout.
-It starts the Compose `spacetimedb` service and publishes without removing
-volumes or using a fresh/destructive publish. It can be cancelled and cleans up
-its setup process group. It does not regenerate Godot bindings; after schema or
-generated-type changes, run `just bindings`. Exported builds cannot use it;
-packaged server provisioning is planned and is not implemented.
+`Servers` -> `Start local server` installs the checksum-pinned SpacetimeDB 2.10.0 native
+runtime when necessary, prepares the module once, and starts a regular process
+on `http://127.0.0.1:3001`. It does **not** start Docker. A source checkout needs
+Cargo and the `wasm32-unknown-unknown` target for the first module build; an
+exported client needs a packaged module and installer assets. Subsequent starts
+reuse the installed module and data. A different module digest is refused rather
+than silently upgrading the world.
+
+`Cancel startup` in `Servers` prevents subsequent preparation/start/join steps.
+A download or build already in progress finishes its bounded atomic step safely;
+the UI remains responsive. Exit uses the same cancellation boundary before closing,
+rather than joining a busy worker on the UI thread. Already-running servers are
+left alone.
+
+Before exporting, run `just prepare-native-export`. The included `Linux` and
+`Windows` Godot export presets include the generated module and bootstrap assets
+from `client/godot/native/`. Install the matching Godot export templates, then
+export the desired preset. Packaged bootstrap files are staged out of the PCK
+into the per-user native directory before execution; exported clients do not
+search for a source checkout or require Cargo.
+
+Use **Servers** for local Start, Stop, Refresh, and status. Stop first requests
+graceful shutdown; Force stop requires a timeout and a confirmation dialog.
+Exiting the client leaves the server running, and reopening discovers it.
+**Servers → Start at login** registers a Linux user-systemd
+service or a Windows per-user Task Scheduler logon task. Registration state is
+read back from the OS; disabling autostart does not stop the running server.
+
+Native data, configuration, logs, runtime and module pins live under
+`$XDG_DATA_HOME/Continuum/native` (default `~/.local/share/Continuum/native`) on
+Linux and `%LOCALAPPDATA%/Continuum/native` on Windows. `CONTINUUM_NATIVE_ROOT`
+overrides this root for isolated runs. Client identity tokens remain separate;
+starting a server does not grant the game client Operator permissions.
+
+Linux x86_64 has passed the real native lifecycle and menu integration gates in
+an isolated PID namespace. Windows x86_64 uses the verified upstream native
+archive and has parser, quoting, identity and state-machine coverage, but its OS
+lifecycle and actual logon execution have **not** been run on this Linux host.
+See [the Windows validation guide](docs/windows-native-hosting.md).
+Dedicated hosting still uses the Docker recipes or a manually configured service.
 
 `Settings` exposes a base font size from 10 through 24, default 13. It drives
 the shared panel/UI metric scale and is persisted locally. The UI uses a muted
@@ -248,11 +296,13 @@ dark palette. The former bottom legend/footer strip has been removed; use map
 labels, tile inspection, the panel chooser (`Ctrl+F`), function-key panels, and
 the workspace dock for those access paths.
 Settings also exposes `Show diagnostics` and a subordinate `Show frame/RTT graph`
-toggle. Active-session RTT and packet loss remain `N/A` until the SDK/backend echo
-path exists; the graph never substitutes HTTP health RTT for it.
+toggle. Active-session RTT measures successful `diagnostic_echo` acknowledgements
+on the game's authenticated WebSocket, with latest and smoothed values. It is
+unavailable when disconnected or when the server lacks the reducer. Packet loss
+remains `N/A`: WebSocket/TCP does not expose it. Probe timeouts are reported
+separately, and HTTP health RTT never substitutes for session RTT.
 
-To prepare SpacetimeDB, publish the module, regenerate Godot bindings, and then
-run the game explicitly:
+To use the separate Docker development workflow, publish and regenerate bindings:
 
 ```sh
 just setup
@@ -282,7 +332,10 @@ and `stdb`. Backend checks are `check`, `test`, `fmt-check`, `fmt`, and `wasm`;
 local server control is `up`, `down`, and `logs`. Authorization and isolated
 integration gates are `admin-grant`, `admin`, `test-map-ui`,
 `test-access`, `test-sidebar-access`, `test-block-reducers`, and
-`test-access-cleanup`, `test-server-browser`, and `test-diagnostics`.
+`test-access-cleanup`, `test-server-browser`, `test-diagnostics`, `test-native`,
+`test-session-ping`, and `test-menu-host-join-e2e`. The last recipe runs native
+processes only inside a private PID-namespace container; Docker is test isolation,
+not the production local-server runtime.
 
 ## Development
 
@@ -487,7 +540,9 @@ operator clients are intentionally rejected by the existing authorization rules.
 
 ## Persistence And Multiplayer
 
-The `spacetimedb-data` Docker volume stores authoritative colony state. Normal
+The managed native server stores authoritative state in its per-user native data
+directory. Native stop/restart and client exit do not delete it. For the dedicated
+Docker workflow, the `spacetimedb-data` volume stores authoritative colony state. Normal
 container restarts and `just down` preserve it. Do not remove Compose volumes
 unless you intend to delete the colony and CLI identity.
 

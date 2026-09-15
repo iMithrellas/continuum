@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cargo build --manifest-path "$ROOT/backend/spacetimedb/Cargo.toml" --release --target wasm32-unknown-unknown
+DEST="$ROOT/client/godot/native"
+mkdir -p "$DEST"
+cp "$ROOT/backend/spacetimedb/target/wasm32-unknown-unknown/release/continuum_module.wasm" "$DEST/continuum_module.wasm"
+for asset in install-spacetimedb.sh install-spacetimedb.ps1 native-server-supervisor.sh native-server-provisioner.sh windows-supervisor.ps1 WindowsNativeProcessControl.cs; do
+    cp "$ROOT/scripts/native-hosting/$asset" "$DEST/$asset"
+done
+printf 'Prepared native runtime bootstrap assets and module for Linux/Windows export.\n'

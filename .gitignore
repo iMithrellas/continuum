@@ -2,6 +2,8 @@
 .godot/
 /android/
 client/godot/spacetime_bindings/codegen_debug/
+client/godot/native/
+client/godot/build/
 
 # Rust
 target/

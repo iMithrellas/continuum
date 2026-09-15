@@ -164,7 +164,9 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
 - [x] Offline launch menu with Join last server, Join server, Start local server, Settings, Servers, and Exit actions
 - [x] Menu endpoint validation, successful-last-server persistence, cancellation, stale-callback guards, and session replacement across endpoint/profile changes
-- [x] Local source-checkout server runner with Docker/Compose and POSIX/Linux process-group prerequisites, non-destructive publish path, cancellation, and process-group cleanup; binding regeneration and exported/package provisioning are not implemented
+- [x] Local native-process launch replaces Docker in the menu; pinned first-use installation/module preparation, Start/Stop/status controls, timeout-confirmed force stop, persistent data, and reopen discovery are implemented
+- [x] Native startup cancellation prevents later start/join steps; an in-progress atomic download/build may finish while the UI remains responsive
+- [x] `prepare-native-export` and Linux/Windows export presets stage the module and bootstrap assets; exported clients copy bootstrap resources from the PCK into durable per-user storage
 - [x] Shared base-font setting from 10..24 (default 13), persisted metric scaling, alternate `--settings-file=PATH` support, and muted menu/workspace presentation
 - [x] Removed bottom legend/footer strip; map labels, inspection, panel chooser, function keys, and workspace dock provide the remaining access paths
 - [x] Just-first project, client, backend, and isolated-test workflow is exposed through documented `just` recipes; helper scripts remain private
@@ -172,24 +174,24 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 ### Hosting and connection management
 
 - [ ] Verify native SpacetimeDB support, runtime distribution, module packaging, and graceful shutdown on every target platform before implementation
-- [ ] Define one shared server-manager contract for discovery, start, status, stop, autostart, health checks, and ownership; unsupported environments must report a clear reason
-- [ ] Keep dedicated hosting focused on Docker or documented manual service setup; the desktop UI must never control remote hosts or offer a local stop action for them
-- [ ] Add first-use provisioning for a native local server as a regular managed process, with local-only binding by default
-- [ ] Pin the native runtime and module for each world; explicit upgrades only, with no rebuild or publish on every world start
-- [ ] Store stable per-user server data, logs, and config in documented platform-appropriate paths, independent of the UI process
-- [ ] Track single-instance ownership with a stable process identity and server data/lock identity, not PID alone; handle duplicate starts and ownership conflicts safely
-- [ ] Let the UI start, inspect status, and stop managed local servers; stop gracefully, enforce a timeout, and offer force termination only after timeout
-- [ ] UI exit leaves a managed server running unless the user explicitly chooses stop and exit; reopening the UI rediscovers an already-running managed process
-- [ ] Keep starting a stopped server separate from enabling/disabling autostart
-- [ ] Register autostart only after user login: Linux per-user `systemd` service and Windows per-user scheduled task at logon; no pre-login boot requirement
-- [ ] Show managed-local status and actions distinctly from remote server ownership and actions
+- [x] Shared server-manager/controller contract covers discovery, start, status, graceful/confirmed-force stop, health, ownership, and unsupported-platform errors
+- [x] Dedicated Docker/manual-service workflows remain separate; local controls never target remote history entries
+- [x] First-use native provisioning binds locally at `127.0.0.1:3001`; ordinary menu launch does not start a server
+- [x] Runtime/module are pinned for the shared server/database, not per logical world; starts reuse the installed module and refuse digest changes pending an explicit upgrade flow
+- [x] Stable per-user native data, logs, config, runtime, and module paths are independent of client scene/profile state
+- [x] Process start identities plus data locks and snapshot-checked manifests gate management; Linux supervisor-loss adoption and two-process force stop have real isolated coverage
+- [x] Server Management exposes Start/Stop/Refresh/status and explicit confirmation after graceful-stop timeout
+- [x] Client exit leaves the server running and reopen rediscovers it; Stop is a separate explicit action
+- [x] Starting/stopping and enabling/disabling autostart are separate actions
+- [x] Linux user-systemd and Windows per-user logon-task registration/readback are implemented; actual Windows OS/logon validation remains below as a release gate
+- [x] Managed-local status/actions are distinct from remote history/list ownership
 - [ ] Add durable server connection history from successful subscriptions only, keyed by normalized endpoint plus database identity without changing existing profile credential partitioning
 - [ ] Keep history free of authentication tokens; removing history must not remove credentials or world data
 - [ ] Add durable favorites and preserve them across restarts; allow history removal without removing a favorite unless explicitly requested
 - [ ] Show `unknown`, `checking`, `online`, and `unreachable` in history/list views; `unreachable` is not definitive proof that a server is offline
 - [ ] Record last seen and last sample time; display stale samples as stale rather than implying current status
 - [ ] Measure latency using actual health/request round trips, not ICMP, and do not describe it as one-way network latency
-- [ ] Show connected-session rolling RTT as latest and smoothed values; show it as unavailable when disconnected
+- [x] Connected-session echo acknowledgements produce latest/smoothed RTT; disconnected/stale readings remain unavailable
 - [ ] Bound background checks while the browser is visible with limited concurrency, timeouts, backoff, and no new subscription/reconnect per probe
 - [ ] Distinguish server reachable, database joinable, and profile authentication failure in status and diagnostics
 - [ ] Preserve existing menu, endpoint validation, successful-last-server persistence, cancellation, callback guards, and session replacement behavior
@@ -205,9 +207,11 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 #### Current handoff
 
 - [x] Client-side browser, history/favorites, bounded HTTP probes, and menu/settings integration are complete and backend-free.
-- [ ] Native Linux process-management prototype remains unmerged; runtime validation is blocked and Windows support is not implemented. The client keeps the legacy Docker action and does not enable managed start/stop/autostart.
+- [x] Native Linux launch, UI start/stop, persistence/reopen, process ownership, and timeout-force-restart gates pass inside a private PID namespace; the menu no longer invokes Docker.
+- [x] Windows adapter, installer, dedicated console/Job Object ownership, and logon-task integration are implemented and wired into the UI; Windows archive contents/checksums and Linux-safe helper tests were verified.
+- [ ] Run the Windows lifecycle/Task Scheduler integration gate on a disposable Windows x86_64 account and exercise actual login on both operating systems; do not treat Linux-side mocks as Windows runtime proof.
 - [ ] Multiworld backend contract is approved in task/world-backend `e421d5f`, but client binding selection/adoption is not integrated; the current browser and SDK remain single-world.
-- [ ] Session diagnostics sampler and frame overlay are complete, with persisted settings and an optional graph. Active-session RTT echo and packet-loss support remain pending and display `N/A`.
+- [x] Session diagnostics, persisted toggles, optional graph, and live echo RTT are integrated; packet loss deliberately remains `N/A` because no transport counters are available.
 
 #### Hosting and connection tests
 
@@ -289,12 +293,12 @@ rules, not a claim that the current slice already supports them.
 
 ### Network diagnostics contract
 
-- [ ] Display application-level round-trip time only: an authenticated session echo remains pending because the current SDK has no response path; active-session RTT is therefore `N/A`
+- [x] Display application-level RTT using successful `diagnostic_echo` reducer acknowledgements on the active client connection; reject failed/late replies and cancel pending SDK calls on reset, timeout, or disconnect
 - [ ] Confirm before implementation that the pinned SpacetimeDB/Flametime SDK currently has no application echo/heartbeat response for the active WebSocket path; `/v1/ping` is not an active-session RTT measurement. Validate the smallest backend/provider addition needed for the session echo, and show session RTT as `N/A` until it exists
 - [x] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
-- [ ] Mark RTT unavailable when disconnected and stale after the freshness timeout; do not reuse the last value as current, and keep missing intervals visible in any graph
+- [x] Mark RTT unavailable when disconnected/stale and retain missing intervals as graph gaps
 - [ ] Do not call WebSocket/TCP transport reliable delivery “packet loss”: generic Godot `WebSocketPeer`/TCP APIs do not expose actual IP packet-loss counters, and the current SDK protocol does not provide them
-- [ ] Show `N/A` for packet loss unless verified transport counters become available; if probes are implemented, show a separately named `probe timeouts` ratio with denominator = settled attempts in the observation window (`successful + timed out`), exclude in-flight/cancelled attempts, define timeout and session-reset semantics, and never relabel it as packet loss
+- [x] Packet loss is `N/A`; `probe timeouts` counts settled successes/timeouts only, excluding cancellation, in-flight attempts, and explicit server rejection
 
 ### Diagnostics tests
 

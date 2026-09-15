@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT="${E2E_PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+if [[ "${CONTINUUM_NATIVE_TEST_SANDBOX:-}" != private-pid-namespace || ! -f /.dockerenv ]]; then
+    exec "$ROOT/scripts/internal/test-native-server-container"
+fi
 GODOT="${GODOT:-godot}"
-TEMP_DIR="$(mktemp -d /tmp/opencode/menu-host-join.XXXXXX)"
+TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/menu-host-join.XXXXXX")"
 SETTINGS_FILE="$TEMP_DIR/settings.cfg"
 DATA_DIR="$TEMP_DIR/data"
 cleanup() {
@@ -15,7 +18,6 @@ cleanup() {
 trap cleanup EXIT
 mkdir -p "$DATA_DIR"
 export XDG_DATA_HOME="$DATA_DIR"
-export COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-continuum}"
 run_phase() {
     local phase="$1"
     local log="$TEMP_DIR/$phase.log"
@@ -25,8 +27,13 @@ run_phase() {
         while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
         return 1
     fi
-    if ! rg -q "^MENU_HOST_JOIN_E2E_PASS phase=$phase$" "$log"; then
+    if ! grep -q "^MENU_HOST_JOIN_E2E_PASS phase=$phase$" "$log"; then
         printf 'MENU_HOST_JOIN_E2E_FAIL: missing pass marker phase=%s temp=%s\n' "$phase" "$TEMP_DIR" >&2
+        while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
+        return 1
+    fi
+    if grep -Eq 'SCRIPT ERROR|^ERROR' "$log"; then
+        printf 'MENU_HOST_JOIN_E2E_FAIL: Godot errors in phase=%s\n' "$phase" >&2
         while IFS= read -r line; do printf '%s\n' "$line"; done < "$log"
         return 1
     fi

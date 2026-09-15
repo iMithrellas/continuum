@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+NAME="continuum-native-verify-$(date +%s)-$$"
+VOLUME="${NAME}-fixture"
+IMAGE="rust:1.93-bookworm"
+LOG="/tmp/opencode/${NAME}.log"
+CACHE_ARCHIVE="${NATIVE_TEST_CACHE:-/tmp/opencode/spacetime-2.10.0-review.tar.gz}"
+GODOT_CACHE="${NATIVE_GODOT_CACHE:-/tmp/opencode/Godot_v4.5.1-stable_linux.x86_64.zip}"
+MODULE_CACHE="${NATIVE_MODULE_CACHE:-$ROOT/backend/spacetimedb/target/wasm32-unknown-unknown/release/continuum_module.wasm}"
+
+cleanup() {
+  docker stop --time 5 "$NAME" >>"$LOG" 2>&1 || true
+  docker rm "$NAME" >>"$LOG" 2>&1 || true
+  docker volume rm "$VOLUME" >>"$LOG" 2>&1 || true
+}
+trap cleanup EXIT
+
+: >"$LOG"
+docker volume create "$VOLUME" >>"$LOG"
+docker run -d --name "$NAME" --network bridge --cap-drop ALL --cap-add SETGID --cap-add SETUID --cap-add CHOWN --cap-add FOWNER --cap-add DAC_OVERRIDE \
+  --security-opt no-new-privileges --pids-limit 256 \
+  --mount "type=bind,src=$ROOT,dst=/src,readonly" \
+  --mount "type=bind,src=$CACHE_ARCHIVE,dst=/cache/spacetime.tar.gz,readonly" \
+  --mount "type=bind,src=$GODOT_CACHE,dst=/cache/godot.zip,readonly" \
+  --mount "type=bind,src=$MODULE_CACHE,dst=/cache/continuum_module.wasm,readonly" \
+  --mount "type=volume,src=$VOLUME,dst=/fixture" \
+  --workdir /src --entrypoint /bin/bash "$IMAGE" -lc 'sleep 3600' >>"$LOG"
+
+pid_mode="$(docker inspect --format '{{.HostConfig.PidMode}}' "$NAME")"
+privileged="$(docker inspect --format '{{.HostConfig.Privileged}}' "$NAME")"
+[[ -z "$pid_mode" && "$privileged" == false ]] || {
+  printf 'unsafe Docker isolation: PidMode=%q Privileged=%q\n' "$pid_mode" "$privileged" >&2
+  exit 1
+}
+host_pid_ns="unreadable-by-sandbox"
+container_pid_ns="$(docker exec "$NAME" readlink /proc/1/ns/pid)"
+container_host_pid="$(docker inspect --format '{{.State.Pid}}' "$NAME")"
+[[ -n "$container_pid_ns" && "$container_host_pid" != 1 ]] || {
+  printf 'container PID namespace verification failed: host_pid=%q container_ns=%q\n' "$container_host_pid" "$container_pid_ns" >&2
+  exit 1
+}
+
+set +e
+docker exec "$NAME" bash -lc '
+  set -euo pipefail
+  export PATH="/usr/local/cargo/bin:$PATH"
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq
+  apt-get install -y -qq ca-certificates curl tar coreutils procps python3 unzip >/dev/null
+  module=/fixture/continuum_module.wasm
+  if [[ -s /cache/continuum_module.wasm ]]; then
+    cp /cache/continuum_module.wasm "$module"
+  else
+    rustup target add wasm32-unknown-unknown >/dev/null
+  fi
+
+  export CONTINUUM_NATIVE_HOME="/fixture/user-data/Continuum/native/spacetimedb/2.10.0"
+  export CONTINUUM_NATIVE_ARCHIVE=/cache/spacetime.tar.gz
+  /src/scripts/native-hosting/install-spacetimedb.sh
+  ls -la "$CONTINUUM_NATIVE_HOME"
+  runtime="$CONTINUUM_NATIVE_HOME/spacetimedb-standalone"
+  cli="$CONTINUUM_NATIVE_HOME/spacetimedb-cli"
+  [[ -x "$runtime" && -x "$cli" ]] || { printf "installed native binaries missing\n" >&2; exit 1; }
+
+  archive=/fixture/spacetime-2.10.0.tar.gz
+  cp /cache/spacetime.tar.gz "$archive"
+  actual_archive_sha256="$(sha256sum "$archive" | cut -d" " -f1)"
+  expected_archive_sha256=2188099ab1dde4a9a0ca88334fb10440eb9509bdcae93b4ef1147c7a66c8e702
+  [[ "$actual_archive_sha256" == "$expected_archive_sha256" ]] || { printf "archive hash mismatch\n" >&2; exit 1; }
+  printf "ARCHIVE_SHA256=%s\n" "$actual_archive_sha256"
+  printf "RUNTIME_SHA256=%s\n" "$(sha256sum "$runtime" | cut -d" " -f1)"
+
+  data="/fixture/native data"
+  config="/fixture/native config"
+  mkdir -p "$data" "$config"
+  "$runtime" start --listen-addr 127.0.0.1:3001 --data-dir "$data" --jwt-key-dir "$config" \
+    >/fixture/runtime.log 2>&1 &
+  runtime_pid=$!
+  for _ in $(seq 1 60); do curl --silent --fail http://127.0.0.1:3001/v1/ping >/dev/null && break; sleep 1; done
+  curl --silent --fail http://127.0.0.1:3001/v1/ping >/dev/null
+  printf "DIRECT_RUNTIME_HEALTH=pass PID=%s\n" "$runtime_pid"
+  printf "persistence-marker\n" >"$data/persistence-marker"
+  kill -INT -- "$runtime_pid"
+  for _ in $(seq 1 20); do kill -0 "$runtime_pid" 2>/dev/null || break; sleep 1; done
+  if kill -0 "$runtime_pid" 2>/dev/null; then
+    kill -KILL -- "$runtime_pid"
+    wait "$runtime_pid" 2>/dev/null || true
+    printf "DIRECT_RUNTIME_FORCE_AFTER_TIMEOUT=used\n"
+  else
+    wait "$runtime_pid" 2>/dev/null || true
+    printf "DIRECT_RUNTIME_INT=graceful\n"
+  fi
+  [[ -f "$data/persistence-marker" ]]
+  "$runtime" start --listen-addr 127.0.0.1:3001 --data-dir "$data" --jwt-key-dir "$config" \
+    >/fixture/runtime-restart.log 2>&1 &
+  restarted_pid=$!
+  for _ in $(seq 1 60); do curl --silent --fail http://127.0.0.1:3001/v1/ping >/dev/null && break; sleep 1; done
+  curl --silent --fail http://127.0.0.1:3001/v1/ping >/dev/null
+  [[ -f "$data/persistence-marker" ]]
+  printf "DIRECT_RUNTIME_RESTART_PERSISTENCE=pass PID=%s\n" "$restarted_pid"
+  kill -INT -- "$restarted_pid"
+  for _ in $(seq 1 20); do kill -0 "$restarted_pid" 2>/dev/null || break; sleep 1; done
+  kill -0 "$restarted_pid" 2>/dev/null && kill -KILL -- "$restarted_pid" || true
+  wait "$restarted_pid" 2>/dev/null || true
+
+  if [[ ! -s "$module" ]]; then
+    cargo build --manifest-path /src/backend/spacetimedb/Cargo.toml --release \
+      --target wasm32-unknown-unknown --target-dir /fixture/cargo-target >/dev/null
+    cp /fixture/cargo-target/wasm32-unknown-unknown/release/continuum_module.wasm "$module"
+  fi
+  module_sha256="$(sha256sum "$module" | cut -d" " -f1)"
+  lock="$data.lock"
+  manifest=/fixture/server.json
+  log=/fixture/supervisor.log
+  python3 -c "import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGTERM, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])" \
+    /src/scripts/native-hosting/native-server-supervisor.sh start "$runtime" "$cli" "$module" \
+    127.0.0.1:3001 continuum "$data" "$config" "$lock" "$log" "$manifest" \
+    "$module_sha256" coldstart-test >/fixture/supervisor.out 2>&1 &
+  supervisor_pid=$!
+  running=false
+  for _ in $(seq 1 120); do
+    manifest_text=""
+    if [[ -f "$manifest" ]]; then
+      manifest_text="$(<"$manifest")"
+    fi
+    manifest_phase="${manifest_text#*\"phase\":\"}"
+    manifest_phase="${manifest_phase%%\"*}"
+    if [[ "$manifest_phase" == running ]]; then
+      running=true
+      break
+    fi
+    kill -0 "$supervisor_pid" 2>/dev/null || { printf "supervisor exited early\n" >&2; exit 1; }
+    sleep 1
+  done
+  [[ "$running" == true && "$manifest_phase" == running ]]
+  printf "COLDSTART_MANIFEST=%s\n" "$manifest_text"
+  set +e
+  curl --silent --fail http://127.0.0.1:3001/v1/ping >/dev/null
+  ping_rc=$?
+  "$cli" sql --format json -s http://127.0.0.1:3001 continuum "SELECT * FROM colony" >/fixture/colony.json 2>/fixture/colony.err
+  sql_rc=$?
+  set -e
+  printf "POST_PUBLISH_HEALTH_RC=%s SQL_RC=%s\n" "$ping_rc" "$sql_rc"
+  [[ "$ping_rc" == 0 && "$sql_rc" == 0 ]]
+  [[ "$manifest_text" == *runtime_pid* && "$manifest_text" == *coldstart-test* ]]
+  printf "SUPERVISOR_COLDSTART=pass HEALTH_BEFORE_PUBLISH=pass\n"
+  [[ -s /fixture/colony.json ]]
+  printf "REAL_MODULE_JOIN_READ=pass\n"
+
+  python3 -c "import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGTERM, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])" \
+    /src/scripts/native-hosting/native-server-supervisor.sh start "$runtime" "$cli" "$module" \
+    127.0.0.1:3001 continuum "$data" "$config" "$lock" "$log" /fixture/conflict.json \
+    "$module_sha256" conflict-test >/fixture/conflict.out 2>&1 &
+  conflicting_pid=$!
+  wait "$conflicting_pid" && conflicting_rc=0 || conflicting_rc=$?
+  [[ "$conflicting_rc" == 73 && "$manifest_phase" == running ]]
+  printf "MULTIPLE_MANAGER_LOCK_CONFLICT=pass OWNER_PRESERVED=pass\n"
+
+  marker_mtime="$(stat -c %Y "$data/.continuum-module.sha256")"
+  runtime_pid="${manifest_text#*\"runtime_pid\":}"
+  runtime_pid="${runtime_pid%%,*}"
+  [[ "$runtime_pid" =~ ^[2-9][0-9]*$ ]]
+  kill -KILL -- "$runtime_pid"
+  for _ in $(seq 1 20); do kill -0 "$supervisor_pid" 2>/dev/null || break; sleep 1; done
+  wait "$supervisor_pid" 2>/dev/null || true
+  [[ ! -e /proc/$runtime_pid ]] || { printf "runtime crash did not release supervisor\n" >&2; exit 1; }
+  printf "RUNTIME_CRASH_RECOVERY_PRECONDITION=pass\n"
+
+  python3 -c "import os,signal,sys; signal.signal(signal.SIGINT, signal.SIG_DFL); signal.signal(signal.SIGTERM, signal.SIG_DFL); os.execv(sys.argv[1], sys.argv[1:])" \
+    /src/scripts/native-hosting/native-server-supervisor.sh start "$runtime" "$cli" "$module" \
+    127.0.0.1:3001 continuum "$data" "$config" "$lock" "$log" /fixture/restart.json \
+    "$module_sha256" restart-test >/fixture/restart.out 2>&1 &
+  restarted_supervisor_pid=$!
+  restart_running=false
+  for _ in $(seq 1 120); do
+    restart_manifest=""
+    if [[ -f /fixture/restart.json ]]; then
+      restart_manifest="$(< /fixture/restart.json)"
+    fi
+    restart_phase="${restart_manifest#*\"phase\":\"}"
+    restart_phase="${restart_phase%%\"*}"
+    if [[ "$restart_phase" == running ]]; then
+      restart_running=true
+      break
+    fi
+    kill -0 "$restarted_supervisor_pid" 2>/dev/null || { printf "restart supervisor exited early\n" >&2; exit 1; }
+    sleep 1
+  done
+  [[ "$restart_running" == true && "$restart_phase" == running ]]
+  [[ "$(stat -c %Y "$data/.continuum-module.sha256")" == "$marker_mtime" ]]
+  printf "RESTART_SKIP_REPUBLISH=pass MARKER_MTIME_UNCHANGED=pass\n"
+  kill -INT -- "$restarted_supervisor_pid"
+  for _ in $(seq 1 60); do
+    kill -0 "$restarted_supervisor_pid" 2>/dev/null || break
+    sleep 0.1
+  done
+  if kill -0 "$restarted_supervisor_pid" 2>/dev/null; then
+    printf "SUPERVISOR_INT_GRACEFUL=fail\n" >&2
+    ps -eo pid,ppid,args >&2
+    exit 1
+  fi
+  wait "$restarted_supervisor_pid" 2>/dev/null || true
+  printf "SUPERVISOR_INT_GRACEFUL=pass\n"
+
+  godot_zip=/fixture/Godot_v4.5.1-stable_linux.x86_64.zip
+  godot_sha256=02ec53d1cc7dbb9cc6355393c61b9ab43d1244751a124f10248a4802830788cd
+  cp /cache/godot.zip "$godot_zip"
+  actual_godot_sha256="$(sha256sum "$godot_zip" | cut -d" " -f1)"
+  printf "GODOT_SHA256=%s\n" "$actual_godot_sha256"
+  [[ "$actual_godot_sha256" == "$godot_sha256" ]]
+  unzip -q -o "$godot_zip" -d /fixture/godot
+  godot=/fixture/godot/Godot_v4.5.1-stable_linux.x86_64
+  [[ -x "$godot" ]]
+  CONTINUUM_NATIVE_TEST_SANDBOX=private-pid-namespace \
+  NATIVE_MANAGER_REAL=1 \
+  NATIVE_MANAGER_RUNTIME="$runtime" \
+  NATIVE_MANAGER_CLI="$cli" \
+  NATIVE_MANAGER_SUPERVISOR=/src/scripts/native-hosting/native-server-supervisor.sh \
+  NATIVE_MANAGER_MODULE="$module" \
+  GODOT="$godot" \
+    /src/scripts/internal/test-native-server-manager
+  rm -rf /fixture/src
+  mkdir -p /fixture/src
+  cp -a /src/client /fixture/src/client
+  cp -a /src/scripts /fixture/src/scripts
+  mkdir -p /fixture/src/client/godot/native
+  cp "$module" /fixture/src/client/godot/native/continuum_module.wasm
+  for asset in install-spacetimedb.sh install-spacetimedb.ps1 native-server-supervisor.sh native-server-provisioner.sh windows-supervisor.ps1 WindowsNativeProcessControl.cs; do
+    cp "/src/scripts/native-hosting/$asset" "/fixture/src/client/godot/native/$asset"
+  done
+  XDG_DATA_HOME=/fixture/production-user \
+  CONTINUUM_NATIVE_ROOT=/fixture/production-user/Continuum/native \
+  CONTINUUM_NATIVE_MODULE=/fixture/src/client/godot/native/continuum_module.wasm \
+  CONTINUUM_NATIVE_TEST_SANDBOX=private-pid-namespace \
+  GODOT="$godot" \
+  E2E_PROJECT_ROOT=/fixture/src \
+    /fixture/src/scripts/internal/test-menu-host-join-e2e
+  printf "CONTAINER_TEST_PASS\n"
+' | tee -a "$LOG"
+container_rc="${PIPESTATUS[0]}"
+set -e
+if [[ "$container_rc" != 0 ]]; then
+  docker exec "$NAME" bash -lc 'ls -la /fixture; for file in /fixture/supervisor.out /fixture/supervisor.log /fixture/restart.out /fixture/colony.err; do if [[ -f "$file" ]]; then printf "%s\n" "--- $file"; while IFS= read -r line; do printf "%s\n" "$line"; done <"$file"; fi; done; printf "%s\n" "--- processes"; ps -eo pid,ppid,args' | tee -a "$LOG" || true
+  exit "$container_rc"
+fi
+
+printf 'container=%s volume=%s PidMode=%s Privileged=%s host_pid_ns=%s container_pid_ns=%s\n' \
+  "$NAME" "$VOLUME" "${pid_mode:-notset}" "$privileged" "$host_pid_ns" "$container_pid_ns"
+printf 'evidence_log=%s\n' "$LOG"

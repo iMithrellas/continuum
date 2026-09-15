@@ -7,6 +7,7 @@ var failures := 0
 
 func _init() -> void:
 	_test_keys()
+	_test_validation()
 	_test_persistence_boundaries()
 	_test_management_contract()
 	await _test_probes()
@@ -15,6 +16,15 @@ func _init() -> void:
 	if failures == 0: print("SERVER_BROWSER_PASS")
 	else: print("SERVER_BROWSER_FAIL (%d failures)" % failures)
 	quit(0 if failures == 0 else 1)
+
+func _test_validation() -> void:
+	for endpoint: Array in [["http://127.0.0.1:3000", "continuum"], ["https://[2001:db8::1]:443", "continuum"],
+			["http://localhost", "continuum-sidebar-access-it-648299"]]:
+		_assert(Management.validate_endpoint(endpoint[0], endpoint[1]).is_empty(), "valid direct endpoint accepted: %s" % endpoint[0])
+	for endpoint: Array in [["127.0.0.1:3000", "continuum"], ["http://", "continuum"], ["http://?", "continuum"],
+			["http://:3000", "continuum"], ["http://localhost:0", "continuum"], ["http://localhost", "bad name"],
+			["http://localhost", "continuum_worker"], ["http://[::1]3000", "continuum"]]:
+		_assert(not Management.validate_endpoint(endpoint[0], endpoint[1]).is_empty(), "invalid direct endpoint rejected: %s / %s" % endpoint)
 
 func _test_keys() -> void:
 	var key := History.canonical_key("HTTPS://Example.COM:443", "Continuum", "main-world")
@@ -153,24 +163,103 @@ func _test_rendered_browser() -> void:
 	var store = History.new(); store.load_from(base + ".history", base + ".favorites")
 	store.clear_history()
 	store.record_successful_subscription("http://example.com", "Continuum", "default-world", "Home", 9)
-	var manager = Management.new(); manager.apply_metrics(UiMetrics.new(24)); manager.set_history_store(store); get_root().add_child(manager); manager.set_anchors_preset(Control.PRESET_TOP_LEFT); manager.set_size(Vector2(360, 480))
-	await process_frame
-	var rows := _nodes_named(manager, "Home")
-	_assert(rows.size() == 1, "browser renders one stable history row")
-	var label: Label = rows[0] if rows[0] is Label else rows[0].get_child(0)
-	_assert(label.text.contains("unknown") and label.text.contains("Home") and label.text.contains("default-world") and label.text.contains("HTTP RTT unavailable"), "row renders status address world and HTTP RTT")
-	_assert(_all_controls_fit(manager, 360), "font 24 browser controls fit narrow viewport")
+	for index in 30:
+		store.record_successful_subscription("http://example.com", "colony-%d" % index, "default-world", "Colony %d" % index, 10 + index)
+	var manager = Management.new()
+	var probes := Probes.new()
+	probes.transport = func(_entry: Dictionary, _complete: Callable) -> void: pass
+	manager.set_probe_service(probes)
+	manager.set_connection_defaults("http://localhost:3001", "continuum")
+	manager.set_history_store(store)
+	get_root().add_child(manager)
+	manager.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	for viewport_size: Vector2 in [Vector2(1440, 860), Vector2(360, 480)]:
+		manager.set_size(viewport_size)
+		manager.apply_metrics(UiMetrics.new(24 if viewport_size.x == 360 else 13))
+		for _frame in 8: await process_frame
+		_assert(_nodes_named(manager, "Home").size() == 1, "browser renders one stable history row")
+		_assert(_nodes_named(manager, "http://example.com / Continuum").size() == 1 and
+			_nodes_named(manager, "World: default-world").size() == 31 and
+			_nodes_named(manager, "HTTP RTT unavailable").size() == 31, "rows identify address, database, world and HTTP RTT")
+		_assert(_all_controls_fit(manager, viewport_size.x), "browser controls fit horizontally at %s" % viewport_size)
+		var background: ColorRect = manager.get_node("ServerBackground")
+		_assert(background.color.a == 1.0 and background.get_global_rect() == manager.get_global_rect(), "opaque backdrop covers the entire viewport")
+		_assert(manager.get_global_rect().encloses(manager._content.get_global_rect()), "browser panel stays inside viewport: %s" % manager._content.get_global_rect())
+		_assert(manager.get_global_rect().encloses(manager._back_button.get_global_rect()), "Return remains on screen with long history")
+		var scroll: ScrollContainer = manager.find_child("ServerContentScroll", true, false)
+		_assert(scroll.clip_contents and scroll.follow_focus and not scroll.get_h_scroll_bar().visible, "body clips and scrolls vertically with keyboard focus")
+		_assert(manager._sections.vertical == (viewport_size.x == 360), "server forms stack only in compact view")
+		for button: Button in [manager._join_button, manager._local_start, manager._native_autostart, manager._history_join_buttons[-1]]:
+			scroll.ensure_control_visible(button)
+			await process_frame
+			_assert(scroll.get_global_rect().grow(2).encloses(button.get_global_rect()), "scroll reaches %s at %s: %s in %s" % [button.text, viewport_size, button.get_global_rect(), scroll.get_global_rect()])
+		for label: Label in manager._history_list.find_children("*", "Label", true, false):
+			_assert(label.size.y >= manager._metrics.base_font_size, "history labels have readable height")
+	manager.set_status("A detailed connection failure. ".repeat(30), true)
+	for _frame in 8: await process_frame
+	_assert(manager.get_global_rect().encloses(manager._content.get_global_rect()) and
+		manager.get_global_rect().encloses(manager._back_button.get_global_rect()), "long errors scroll instead of pushing Return out of the viewport")
+	manager.set_status("")
+
+	var key := History.canonical_key("http://example.com", "Continuum")
+	manager.set_search("Home")
+	manager.set_search("Home")
+	_assert(manager._history_list.get_child_count() == 1, "same-frame filtering detaches old rows immediately")
+	for _frame in 8: await process_frame
+	var join: Button = manager._history_join_buttons[0]
+	join.grab_focus()
+	probes.set_visible(true)
+	probes.refresh(manager.visible_entries(), 0.0)
+	probes.complete(key, {"reachable": true, "health_ok": true, "rtt_ms": 12}, 1.0)
+	_assert(manager._history_join_buttons[0] == join and join.has_focus(), "health results preserve history row identity and keyboard focus")
+	_assert(manager._probe_labels[key].text.contains("12 ms HTTP"), "health result updates only the matching sample")
+	probes.set_visible(false)
+	var joins: Array[Dictionary] = []
+	manager.join_requested.connect(func(target: Dictionary) -> void: joins.append(target))
+	manager._join_host.text = "invalid"
+	manager._join_server()
+	_assert(joins.is_empty() and manager._status_warning, "direct join validates input in Servers")
+	manager._join_host.text = "  http://localhost:3001  "
+	manager._join_database.text = "  continuum  "
+	manager._join_server()
+	manager._join_server()
+	_assert(joins == [{"endpoint": "http://localhost:3001", "database": "continuum"}] and manager._join_button.disabled,
+		"direct join dispatches trimmed endpoint once and stays busy")
+	_assert(not manager.request_join(key), "pending direct join blocks history joins")
+	manager.set_busy(false)
+	manager.set_status("Connection failed", true)
+	_assert(not manager._join_button.disabled and manager._status.text == "Connection failed", "failed connection leaves retry and feedback in Servers")
+	manager.apply_metrics(UiMetrics.new(19))
+	_assert(manager._join_host.text == "  http://localhost:3001  " and manager._status.text == "Connection failed", "font changes preserve typed endpoint and feedback")
+	_assert(_nodes_named(manager, "BrowserContent").size() == 1, "font rebuild detaches old content immediately")
 	manager.set_local_management_state({"can_stop": true})
 	await process_frame
 	var stop_buttons := _nodes_named(manager, "Stop local")
 	_assert(stop_buttons.size() == 1 and not (stop_buttons[0] as Button).disabled, "capability update refreshes local controls")
-	var key := History.canonical_key("http://example.com", "Continuum")
+	var local_actions := [0, 0, 0]
+	manager.local_start_requested.connect(func() -> void: local_actions[0] += 1)
+	manager.local_cancel_requested.connect(func() -> void: local_actions[1] += 1)
+	manager.native_autostart_requested.connect(func(_enabled: bool) -> void: local_actions[2] += 1)
+	manager.set_local_management_state({"can_start": true})
+	manager.request_local_start()
+	manager.request_local_start()
+	_assert(local_actions[0] == 1 and manager._local_cancel.visible and manager._join_button.disabled, "local startup blocks repeated starts and offers cancellation in Servers")
+	manager._local_cancel.pressed.emit()
+	manager.set_native_busy(false)
+	manager._native_autostart.button_pressed = true
+	_assert(local_actions == [1, 1, 1], "cancel and autostart controls dispatch server-management signals")
+	manager.set_native_autostart(false)
+	_assert(not manager._native_autostart.button_pressed and local_actions[2] == 1, "OS autostart readback does not emit another request")
 	manager.request_favorite(key, true); await process_frame
 	_assert(manager.visible_entries()[0].get("favorite", false), "favorite mutation refreshes labels")
 	manager.request_join(key); manager.set_search("missing"); await process_frame
 	_assert(manager.selected_key == key, "selection identifier survives search filtering")
-	manager.set_search(""); manager.request_history_removal(key); await process_frame
-	_assert(manager.visible_entries().is_empty(), "history removal refreshes rendered list")
+	manager.set_busy(false)
+	manager.set_search("Home"); manager.request_history_removal(key); await process_frame
+	_assert(manager.visible_entries().is_empty() and _nodes_named(manager, "No connections match").size() == 1, "filtered history removal shows an empty state")
+	store.clear_history()
+	manager.set_search("")
+	_assert(_nodes_named(manager, "No saved connections yet").size() == 1, "new players see a useful empty history message")
 	manager.queue_free(); await process_frame
 	_cleanup([base + ".history", base + ".favorites"])
 
@@ -182,7 +271,8 @@ func _nodes_named(root: Node, target: String) -> Array[Node]:
 
 func _all_controls_fit(root: Node, width: float) -> bool:
 	for node in _nodes_named(root, ""):
-		if node is Control and node.get_global_rect().end.x > width + 0.5:
+		if node is Control and node.is_visible_in_tree() and (node.get_global_rect().position.x < -0.5 or node.get_global_rect().end.x > width + 0.5):
+			printerr("Overflow: %s %s" % [node.get_path(), node.get_global_rect()])
 			return false
 	return true
 
