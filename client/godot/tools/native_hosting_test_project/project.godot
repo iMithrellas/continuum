@@ -1,0 +1,6 @@
+; Isolated headless project for native hosting tests. It intentionally has no
+; application autoloads, so generated SpacetimeDB bindings cannot mask failures.
+config_version=5
+
+[application]
+config/name="Continuum Native Hosting Tests"
