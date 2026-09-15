@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+mkdir -p "$TMP/scripts" "$TMP/tools"
+ln -s "$ROOT/client/godot/scripts/native_server_windows_adapter.gd" "$TMP/scripts/native_server_windows_adapter.gd"
+ln -s "$ROOT/client/godot/tools/native_server_windows_adapter_test.gd" "$TMP/tools/native_server_windows_adapter_test.gd"
+cp "$ROOT/client/godot/tools/native_hosting_test_project/project.godot" "$TMP/project.godot"
+"$GODOT" --headless --path "$TMP" --script res://tools/native_server_windows_adapter_test.gd
+if command -v pwsh >/dev/null 2>&1; then
+    pwsh -NoProfile -NonInteractive -File "$ROOT/scripts/native-hosting/windows-process-control-test.ps1"
+    pwsh -NoProfile -NonInteractive -File "$ROOT/scripts/native-hosting/windows-task-scheduler-test.ps1"
+    pwsh -NoProfile -NonInteractive -File "$ROOT/scripts/native-hosting/windows-supervisor-state-test.ps1"
+fi
