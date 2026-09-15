@@ -1,0 +1,13 @@
+{
+	"version": "2.10.0",
+	"artifacts": {
+		"Linux-x86_64": {
+			"url": "https://github.com/clockworklabs/SpacetimeDB/releases/download/v2.10.0/spacetime-x86_64-unknown-linux-gnu.tar.gz",
+			"sha256": "2188099ab1dde4a9a0ca88334fb10440eb9509bdcae93b4ef1147c7a66c8e702"
+		},
+		"Windows-x86_64": {
+			"url": "https://github.com/clockworklabs/SpacetimeDB/releases/download/v2.10.0/spacetime-x86_64-pc-windows-msvc.zip",
+			"sha256": "ff7027140b25de58ad6dc2751545264d3926d2f79352ee6093084aa7ecf6737a"
+		}
+	}
+}
