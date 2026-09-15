@@ -111,6 +111,13 @@ func _init() -> void:
 	transport_session = null
 	fake_client = null
 
+	var expiry := Session.new()
+	expiry.configure_probe(func(_id: int) -> bool: return true, 10, 1_000, 1)
+	expiry.set_connected(true)
+	assert(expiry.pump(0), "expiry probe starts")
+	assert(not expiry.respond(1, 10), "expired reply is rejected even before advance")
+	assert(expiry.snapshot(10).timed_out == 1, "expired reply is counted as timeout")
+
 	var overlay := Overlay.new()
 	overlay.configure(false, true)
 	assert(not overlay.visible and not overlay.processing_enabled and overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE, "disabled overlay does no work and passes input")

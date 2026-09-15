@@ -141,3 +141,7 @@ test-server-browser:
 # Verify diagnostics statistics, overlay behavior, and settings integration.
 test-diagnostics:
     scripts/internal/test-diagnostics
+
+# Run the authenticated reducer-ack session diagnostics gate in private Docker resources.
+test-session-ping:
+    scripts/internal/test-session-ping

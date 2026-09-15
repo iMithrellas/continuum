@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+RUN_ID="$(date +%s)-$$"
+PROJECT="continuum-session-ping-${RUN_ID}"
+CONTAINER="${PROJECT}-container"
+DATA_VOLUME="${PROJECT}-data"
+CONFIG_VOLUME="${PROJECT}-config"
+DB="sessionping-${RUN_ID}"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/continuum-session-ping-${RUN_ID}.XXXXXX")"
+GODOT_LOG="$TMP/godot.log"
+container_created=0
+data_volume_created=0
+config_volume_created=0
+
+cleanup() {
+	set +e
+	if (( container_created )); then
+		docker stop "$CONTAINER" >/dev/null 2>&1 || printf 'cleanup: stop failed for %s\n' "$CONTAINER" >&2
+		docker rm "$CONTAINER" >/dev/null 2>&1 || printf 'cleanup: remove failed for %s\n' "$CONTAINER" >&2
+	fi
+	if (( data_volume_created )); then
+		docker volume rm "$DATA_VOLUME" >/dev/null 2>&1 || printf 'cleanup: remove failed for %s\n' "$DATA_VOLUME" >&2
+	fi
+	if (( config_volume_created )); then
+		docker volume rm "$CONFIG_VOLUME" >/dev/null 2>&1 || printf 'cleanup: remove failed for %s\n' "$CONFIG_VOLUME" >&2
+	fi
+	if [[ -n "${TMP:-}" && "$TMP" == "${TMPDIR:-/tmp}/continuum-session-ping-${RUN_ID}."* ]]; then
+		rm -rf -- "$TMP"
+	fi
+}
+trap cleanup EXIT
+
+cd "$ROOT"
+cargo build --manifest-path backend/spacetimedb/Cargo.toml \
+	--release --target wasm32-unknown-unknown
+
+docker volume create "$DATA_VOLUME" >/dev/null
+data_volume_created=1
+docker volume create "$CONFIG_VOLUME" >/dev/null
+config_volume_created=1
+docker run --rm --user root --entrypoint sh \
+	--volume "$DATA_VOLUME:/home/spacetime/.local/share/spacetime" \
+	--volume "$CONFIG_VOLUME:/home/spacetime/.config/spacetime" \
+	clockworklabs/spacetime:v2.10.0 -c \
+	'chown -R 1000:1000 /home/spacetime/.local/share/spacetime /home/spacetime/.config/spacetime'
+docker run --detach --name "$CONTAINER" --publish 127.0.0.1::3000 \
+	--volume "$DATA_VOLUME:/home/spacetime/.local/share/spacetime" \
+	--volume "$CONFIG_VOLUME:/home/spacetime/.config/spacetime" \
+	--volume "$ROOT/backend/spacetimedb/target/wasm32-unknown-unknown/release/continuum_module.wasm:/module.wasm:ro" \
+	clockworklabs/spacetime:v2.10.0 start --listen-addr 0.0.0.0:3000 >/dev/null
+container_created=1
+PORT_SPEC="$(docker port "$CONTAINER" 3000/tcp)"
+HOST_PORT="${PORT_SPEC##*:}"
+
+for _ in {1..30}; do
+	if timeout 3 docker exec "$CONTAINER" spacetime server ping local >/dev/null 2>&1; then
+		break
+	fi
+	sleep 1
+done
+timeout 10 docker exec "$CONTAINER" spacetime server ping local
+docker exec "$CONTAINER" spacetime server set-default local
+# Standalone servers issue local identities during publish; the hosted CLI-login
+# endpoint does not exist on this server and must not be used as an auth host.
+timeout 30 docker exec "$CONTAINER" spacetime publish --server http://127.0.0.1:3000 --yes -b /module.wasm "$DB" </dev/null
+
+mkdir -p "$TMP/tokens"
+set +e
+"$GODOT" --headless --path "$ROOT/client/godot" --scene res://tools/session_ping_e2e.tscn -- \
+	--stdb-host="http://127.0.0.1:${HOST_PORT}" --stdb-db="$DB" \
+	--token-path="$TMP/tokens/session.token" >"$GODOT_LOG" 2>&1
+godot_rc=$?
+set -e
+cat "$GODOT_LOG"
+if (( godot_rc != 0 )); then
+	printf 'session ping Godot test exited with %d\n' "$godot_rc" >&2
+	exit "$godot_rc"
+fi
+if rg -n 'SCRIPT ERROR|^ERROR' "$GODOT_LOG"; then
+	printf 'session ping Godot log contains an error\n' >&2
+	exit 1
+fi
+if ! rg -Fxq 'SESSION_PING_E2E_PASS' "$GODOT_LOG"; then
+	printf 'session ping pass marker missing\n' >&2
+	exit 1
+fi

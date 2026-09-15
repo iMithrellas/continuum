@@ -18,7 +18,7 @@ func _init(client, sampler: SessionDiagnostics) -> void:
 	_sampler.set_connected(_client.is_connected_db())
 
 func _send_echo(probe_id: int) -> bool:
-	if _disposed:
+	if _disposed or not _client.is_connected_db():
 		return false
 	var call = _client.reducers.diagnostic_echo(probe_id)
 	if call.error != OK:

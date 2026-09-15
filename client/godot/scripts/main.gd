@@ -121,6 +121,7 @@ var _session_generation := 0
 var _has_configured_client := false
 var _diagnostics_stats: DiagnosticsStats
 var _session_diagnostics: SessionDiagnostics
+var _session_ping: SessionPingTransport
 var _diagnostics_overlay: DiagnosticsOverlay
 var _diagnostics_focus_paused := false
 var _diagnostics_last_tick := -1
@@ -297,6 +298,9 @@ func _bind_client(client: ContinuumModuleClient) -> void:
 
 
 func _unbind_client(client: ContinuumModuleClient) -> void:
+	if _session_ping != null:
+		_session_ping.dispose()
+		_session_ping = null
 	if client.connected.is_connected(_on_connected):
 		client.connected.disconnect(_on_connected)
 	if client.disconnected.is_connected(_on_disconnected):
@@ -477,6 +481,9 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	if _session_ping != null:
+		_session_ping.dispose()
+		_session_ping = null
 	_release_main_subscription()
 	if _access != null:
 		_access.stop()
@@ -486,6 +493,8 @@ func _exit_tree() -> void:
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	if not _session_requested:
 		return
+	if _session_ping == null:
+		_session_ping = SessionPingTransport.new(SpacetimeDB.Continuum, _session_diagnostics)
 	_cancel_reconnect()
 	_session_diagnostics.set_connected(true)
 	print("Continuum identity: %s" % identity.hex_encode())
@@ -665,6 +674,9 @@ func _reset_diagnostics_samples() -> void:
 
 
 func _reset_diagnostics_epoch() -> void:
+	if _session_ping != null:
+		_session_ping.dispose()
+		_session_ping = null
 	_reset_diagnostics_samples()
 	if _session_diagnostics != null:
 		_session_diagnostics.set_connected(false)
