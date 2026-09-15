@@ -1,0 +1,3 @@
+# Generated bindings and the vendored SDK are consumed by the client but not useful to browse.
+client/godot/addons/SpacetimeDB/
+client/godot/spacetime_bindings/schema/
