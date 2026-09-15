@@ -1,4 +1,4 @@
-## Production happy-path gate: menu -> Start local server -> joined session.
+## Production happy-path gate: menu -> Servers -> Start local -> joined session.
 ## The native controller and SDK are intentionally real; no callbacks or reducers are faked.
 extends Node
 
@@ -39,14 +39,19 @@ func _start_and_join() -> void:
 		"production first-use flow starts without an installed native runtime")
 	_assert(main._menu.visible, "main menu is visible on offline launch")
 	_assert(not main._session_requested, "offline launch has no session request")
-	_assert(not main._menu._join_button.disabled and not main._menu._local_button.disabled,
-		"join and start-local controls are enabled offline")
 	_assert(main._menu._last_button.disabled, "join-last is disabled before a successful join")
-	var local_signal_count := [0]
-	main._menu.local_server_requested.connect(func() -> void: local_signal_count[0] += 1)
-	var started_at := Time.get_ticks_msec()
 	print("PHASE menu-visible offline session_requested=false")
-	await _click_button(main._menu._local_button)
+	main._show_server_management()
+	await _wait_until(func() -> bool:
+		return main._native_controller.cached_state() == "offline" and not main._server_management._local_start.disabled)
+	if failed: return
+	_assert(main._server_management.visible and not main._menu.visible, "Servers opens the production browser")
+	_assert(not main._server_management._join_button.disabled and not main._server_management._local_start.disabled,
+		"browser join and start-local controls are enabled offline")
+	var local_signal_count := [0]
+	main._server_management.local_start_requested.connect(func() -> void: local_signal_count[0] += 1)
+	var started_at := Time.get_ticks_msec()
+	await _click_button(main._server_management._local_start)
 	_assert(local_signal_count[0] == 1, "start-local button emitted its production signal")
 	print("PHASE start-local clicked t_ms=%d" % (Time.get_ticks_msec() - started_at))
 	await _wait_until_native_any(["installing", "preparing", "starting", "online"])

@@ -130,7 +130,7 @@ server rows, and pending requests do not optimistically change the map.
 
 Linux x86_64 can manage one durable SpacetimeDB `2.10.0` instance at
 `http://127.0.0.1:3001`. Start, graceful stop, status refresh, and explicit
-post-timeout force stop are available from the menu/server browser. The manager
+post-timeout force stop are available in **Servers**. The manager
 persists under XDG data storage, keeps runtime helpers out of the checkout, and
 refuses module digest changes until an explicit upgrade flow is added. Closing
 the client leaves a healthy server running and a fresh client can rediscover it.
@@ -224,19 +224,22 @@ Run the client through its offline launch menu with:
 just run
 ```
 
-The menu has six actions: `Join last server`, `Join server`, `Start local server`,
-`Settings`, `Servers`, and `Exit`. It starts offline; `Join last server` is
-disabled until a server join succeeds, and failed validation, connection,
-subscription, or local provisioning attempts are not remembered.
+The launch menu has four actions: `Join last server`, `Servers`, `Settings`, and
+`Exit`. It starts offline; `Join last server` is disabled until a server join
+succeeds, and failed validation, connection, subscription, or local provisioning
+attempts are not remembered. Settings contains display and diagnostics controls;
+all server controls except the last-server shortcut live in `Servers`.
 
-`Servers` opens a separate searchable Server Management view. It lists successful
-connections only, pins favorites first, preserves history in companion local
-files, and performs bounded visible-only HTTP health probes. Rows label the result
+`Servers` opens a separate searchable Server Management view with `Host` and
+`Database` inputs, `Join server`, and native local-server controls, including
+startup cancellation and login autostart. Its history lists successful connections
+only, pins favorites first, preserves history in companion local files, and
+performs bounded visible-only HTTP health probes. Rows label the result
 as HTTP status/RTT; this is not active-session RTT. Return hides probes and restores
 the menu. World selection is not exposed yet, and selecting a row joins the current
 single-world SDK target (`host/database`).
 
-`Join server` requires an `http://` or `https://` host containing only a
+`Servers` -> `Join server` requires an `http://` or `https://` host containing only a
 hostname/IP (including bracketed IPv6) and an optional port from 1 through
 65535. The database name must use lowercase ASCII letters and numbers
 separated by dashes and be at most 128 characters.
@@ -246,7 +249,7 @@ are separate for normal and admin profiles and keyed by host/database.
 Use `--settings-file=PATH` to select an alternate settings file for a test or
 disposable run; the default is `user://continuum_settings.cfg`.
 
-`Start local server` installs the checksum-pinned SpacetimeDB 2.10.0 native
+`Servers` -> `Start local server` installs the checksum-pinned SpacetimeDB 2.10.0 native
 runtime when necessary, prepares the module once, and starts a regular process
 on `http://127.0.0.1:3001`. It does **not** start Docker. A source checkout needs
 Cargo and the `wasm32-unknown-unknown` target for the first module build; an
@@ -254,10 +257,11 @@ exported client needs a packaged module and installer assets. Subsequent starts
 reuse the installed module and data. A different module digest is refused rather
 than silently upgrading the world.
 
-`Cancel startup` prevents subsequent preparation/start/join steps. A download or
-build already in progress finishes its bounded atomic step safely; the UI remains
-responsive. Exit uses the same cancellation boundary before closing, rather than
-joining a busy worker on the UI thread. Already-running servers are left alone.
+`Cancel startup` in `Servers` prevents subsequent preparation/start/join steps.
+A download or build already in progress finishes its bounded atomic step safely;
+the UI remains responsive. Exit uses the same cancellation boundary before closing,
+rather than joining a busy worker on the UI thread. Already-running servers are
+left alone.
 
 Before exporting, run `just prepare-native-export`. The included `Linux` and
 `Windows` Godot export presets include the generated module and bootstrap assets
@@ -269,7 +273,7 @@ search for a source checkout or require Cargo.
 Use **Servers** for local Start, Stop, Refresh, and status. Stop first requests
 graceful shutdown; Force stop requires a timeout and a confirmation dialog.
 Exiting the client leaves the server running, and reopening discovers it.
-**Settings → Start native server at login** registers a Linux user-systemd
+**Servers → Start at login** registers a Linux user-systemd
 service or a Windows per-user Task Scheduler logon task. Registration state is
 read back from the OS; disabling autostart does not stop the running server.
 

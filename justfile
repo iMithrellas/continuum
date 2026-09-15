@@ -121,7 +121,7 @@ test-access-cleanup:
 test-local-server-runner:
     scripts/internal/test-local-server-runner
 
-# Exercise the offline launch menu and its fake runner/session guards.
+# Exercise offline menu navigation, join-last guards, settings, and narrow layouts.
 test-main-menu:
     scripts/internal/test-main-menu
 
