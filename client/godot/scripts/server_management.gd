@@ -9,6 +9,7 @@ signal history_remove_requested(key: String)
 signal local_start_requested
 signal local_stop_requested
 signal local_force_stop_requested
+signal local_refresh_requested
 signal world_selected(world_id: String, world_slug: String)
 
 var history: ContinuumConnectionHistory
@@ -20,6 +21,10 @@ var local_management_state: Dictionary = {}
 var _history_list: VBoxContainer
 var _content: Control
 var _metrics := UiMetrics.new()
+var _local_start: Button
+var _local_stop: Button
+var _local_force: Button
+var _native_note: Label
 
 func _ready() -> void:
 	if history == null:
@@ -49,7 +54,14 @@ func set_world_catalog(worlds: Array[Dictionary]) -> void:
 func set_local_management_state(state: Dictionary) -> void:
 	# The host application supplies capability/status; this component never assumes Docker.
 	local_management_state = state.duplicate(true)
-	if is_inside_tree(): _build_ui()
+	if is_inside_tree() and is_instance_valid(_local_start):
+		_update_local_controls()
+
+func _update_local_controls() -> void:
+	_local_start.disabled = not bool(local_management_state.get("can_start", false))
+	_local_stop.disabled = not bool(local_management_state.get("can_stop", false))
+	_local_force.disabled = not bool(local_management_state.get("can_force_stop", false))
+	_native_note.text = str(local_management_state.get("message", "Native process management pending"))
 
 func select_world(world_id: String, world_slug: String) -> void:
 	world_selected.emit(world_id, world_slug)
@@ -111,17 +123,22 @@ func _build_ui() -> void:
 	_content.add_child(margin)
 	var column := VBoxContainer.new(); margin.add_child(column)
 	var heading := Label.new(); heading.text = "SERVER MANAGEMENT"; heading.clip_text = true; heading.custom_minimum_size = Vector2(1, _metrics.px(24)); heading.add_theme_font_size_override("font_size", _metrics.font(20)); column.add_child(heading)
-	var search := LineEdit.new(); search.placeholder_text = "Search connections"; search.custom_minimum_size = _metrics.min_size(120, 32); search.text_changed.connect(set_search); column.add_child(search)
+	var search := LineEdit.new(); search.placeholder_text = "Search connections"; search.text = _search; search.custom_minimum_size = _metrics.min_size(120, 32); search.text_changed.connect(set_search); column.add_child(search)
 	var scroll := ScrollContainer.new(); scroll.name = "ConnectionHistoryScroll"; scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL; scroll.custom_minimum_size = _metrics.min_size(0, 120); column.add_child(scroll)
 	var list := VBoxContainer.new(); list.name = "ConnectionHistory"; list.size_flags_horizontal = Control.SIZE_EXPAND_FILL; scroll.add_child(list)
 	_history_list = list
 	_refresh_history_list()
 	var local := HFlowContainer.new()
 	var start := Button.new(); start.text = "Start local"; start.disabled = not bool(local_management_state.get("can_start", false)); start.pressed.connect(request_local_start); local.add_child(start)
+	_local_start = start
 	var stop := Button.new(); stop.text = "Stop local"; stop.disabled = not bool(local_management_state.get("can_stop", false)); stop.pressed.connect(request_local_stop); local.add_child(stop)
+	_local_stop = stop
 	var force := Button.new(); force.text = "Force stop"; force.disabled = not bool(local_management_state.get("can_force_stop", false)); force.pressed.connect(request_local_force_stop); local.add_child(force)
+	_local_force = force
+	var refresh := Button.new(); refresh.text = "Refresh"; refresh.pressed.connect(func() -> void: local_refresh_requested.emit()); local.add_child(refresh)
 	column.add_child(local)
 	var native_note := Label.new()
+	_native_note = native_note
 	native_note.text = str(local_management_state.get("message", "Native process management pending"))
 	native_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	native_note.add_theme_color_override("font_color", DeckTheme.MUTED)

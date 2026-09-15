@@ -23,7 +23,7 @@ func _process(delta: float) -> void:
 		_started = true
 
 func _connect() -> void:
-	var host := _option("--stdb-host", "http://127.0.0.1:3000")
+	var host := _option("--stdb-host", "http://127.0.0.1:3001")
 	var database := _option("--stdb-db", "continuum")
 	var profile := _option("--profile", ContinuumClientProfile.ADMIN)
 	var options := SpacetimeDBConnectionOptions.new()

@@ -17,6 +17,7 @@ const DiagnosticsOverlayControl = preload("res://scripts/diagnostics_overlay.gd"
 const ConnectionHistoryModel = preload("res://scripts/connection_history.gd")
 const ServerProbesControl = preload("res://scripts/server_probes.gd")
 const ServerManagementControl = preload("res://scripts/server_management.gd")
+const NativeServerController = preload("res://scripts/native_server_controller.gd")
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
@@ -129,9 +130,13 @@ var _diagnostics_last_refresh := -1
 var _server_history: ContinuumConnectionHistory
 var _server_probes: ContinuumServerProbes
 var _server_management: ContinuumServerManagement
+var _native_controller: ContinuumNativeServerController
+var _native_force_dialog: ConfirmationDialog
+var _exit_requested := false
 
 
 func _ready() -> void:
+	get_tree().auto_accept_quit = false
 	var settings_path := _cli_option("--settings-file", ClientSettings.path_from_args())
 	_settings_warning = _settings.load_from(settings_path)
 	_server_history = ConnectionHistoryModel.new()
@@ -145,7 +150,7 @@ func _ready() -> void:
 	_server_management.set_history_store(_server_history)
 	_server_management.set_probe_service(_server_probes)
 	_server_management.set_local_management_state({"can_start": false, "can_stop": false, "can_force_stop": false,
-		"message": "Native process management pending"})
+		"message": "Checking native server..."})
 	_server_management.visible = false
 	_server_management.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_server_management)
@@ -168,7 +173,12 @@ func _ready() -> void:
 	_menu.server_management_requested.connect(_show_server_management)
 	_server_management.join_requested.connect(_on_server_management_join_requested)
 	_server_management.back_requested.connect(_hide_server_management)
-	_menu.exit_requested.connect(func() -> void: get_tree().quit())
+	_server_management.local_start_requested.connect(_native_start)
+	_server_management.local_stop_requested.connect(_native_stop)
+	_server_management.local_force_stop_requested.connect(_native_force_stop)
+	_server_management.local_refresh_requested.connect(_native_refresh)
+	_menu.local_server_requested.connect(_native_start)
+	_menu.exit_requested.connect(_request_exit)
 	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
 	map.input_blocked = workspace.blocks_map_input
 	map.tile_selected.connect(_on_tile_selected)
@@ -176,13 +186,19 @@ func _ready() -> void:
 	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
+	_native_controller = NativeServerController.new()
+	_native_controller.state_changed.connect(_on_native_state, CONNECT_DEFERRED)
+	_native_controller.server_ready.connect(_on_native_ready, CONNECT_DEFERRED)
+	add_child(_native_controller)
+	_native_controller.autostart_changed.connect(_on_native_autostart_changed)
+	_native_controller.request_autostart_status()
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_bind_client(client)
 	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
 	if _has_cli_connection():
 		_direct_launch = true
-		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3000"),
+		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3001"),
 			_cli_option("--stdb-db", "continuum"), _profile, true)
 
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
@@ -193,6 +209,7 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	_settings.database = settings.database
 	_settings.diagnostics_enabled = settings.diagnostics_enabled
 	_settings.diagnostics_graph_enabled = settings.diagnostics_graph_enabled
+	_settings.native_autostart = settings.native_autostart
 	_metrics = UiMetrics.new(_settings.font_size)
 	_apply_control_metrics(self, previous, _metrics)
 	theme = DeckTheme.create(_metrics)
@@ -209,6 +226,82 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	if persist:
 		return _settings.save_to()
 	return OK
+
+func set_native_autostart(enabled: bool) -> void:
+	if _native_controller != null: _native_controller.request_autostart(enabled)
+
+func _on_native_autostart_changed(enabled: bool, error: String) -> void:
+	if not error.is_empty():
+		_menu.set_status(error, true)
+	else:
+		_settings.native_autostart = enabled
+		_settings.save_to()
+	if _menu._native_autostart != null:
+		_menu._native_autostart.set_pressed_no_signal(_settings.native_autostart)
+
+func _native_start() -> void:
+	if _native_controller == null: return
+	_menu.set_native_busy(true)
+	_menu.set_status("Starting native server...", false)
+	_native_controller.request_start()
+
+func cancel_local_setup() -> void:
+	if _session_requested and not _state_ready and _host == ContinuumNativeServerManager.DEFAULT_HOST:
+		leave_session()
+	if _native_controller != null:
+		_native_controller.cancel_startup()
+	_menu.set_native_busy(false)
+
+func _request_exit() -> void:
+	if _exit_requested:
+		return
+	_exit_requested = true
+	_closing = true
+	_session_requested = false
+	_cancel_reconnect()
+	_reset_diagnostics_epoch()
+	if SpacetimeDB.Continuum.is_connected_db():
+		SpacetimeDB.Continuum.disconnect_db()
+	_menu.set_status("Closing after the current atomic setup step finishes...")
+	if _native_controller != null:
+		_native_controller.request_shutdown()
+
+func _native_stop() -> void:
+	if _session_requested and _host == ContinuumNativeServerManager.DEFAULT_HOST:
+		leave_session()
+	if _native_controller != null: _native_controller.request_stop(false)
+
+func _native_force_stop() -> void:
+	if _native_controller == null or _native_controller.cached_state() != "stop_timeout": return
+	if _native_force_dialog == null:
+		_native_force_dialog = ConfirmationDialog.new()
+		_native_force_dialog.title = "Force stop native server?"
+		_native_force_dialog.dialog_text = "The native server did not stop gracefully. Terminate both owned processes?"
+		_native_force_dialog.confirmed.connect(func() -> void: _native_controller.request_stop(true))
+		add_child(_native_force_dialog)
+	_native_force_dialog.popup_centered()
+
+func _native_refresh() -> void:
+	if _native_controller != null: _native_controller.request_status()
+
+func _on_native_ready(value_host: String, value_database: String) -> void:
+	_hide_server_management()
+	_menu.set_status("Native server ready. Joining...")
+	configure_connection(value_host, value_database)
+
+func _on_native_state(value: String, message: String) -> void:
+	if _exit_requested:
+		return
+	var can_start := value in ["offline", "unknown"]
+	var can_stop := value in ["online", "starting", "unhealthy"]
+	var can_force := value == "stop_timeout"
+	var display := "Native server: %s" % value
+	if not message.is_empty(): display += " | " + message
+	_server_management.set_local_management_state({"can_start": can_start, "can_stop": can_stop,
+		"can_force_stop": can_force, "message": display})
+	if not _session_requested:
+		_menu.set_native_busy(value in ["installing", "preparing", "starting"])
+	_menu.set_status(display, value in ["unhealthy", "stop_timeout", "conflict"])
 
 
 ## Menu-facing diagnostics API. Graph collection is subordinate to diagnostics.
@@ -270,6 +363,7 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 	if generation != _session_generation or not _session_requested:
 		return
 	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
+	client.handle_window_close = false
 	_access = _create_access(client)
 	_access.changed.connect(_set_permissions)
 	_access.start()
@@ -431,6 +525,10 @@ func _identity_token_path(host: String, database: String) -> String:
 
 
 func _process(delta: float) -> void:
+	if _exit_requested:
+		if _native_controller == null or _native_controller.finish_shutdown():
+			get_tree().quit()
+		return
 	_process_diagnostics()
 	_sample_history()
 	if _intent_request != null:
@@ -473,7 +571,9 @@ func _notification(what: int) -> void:
 		_diagnostics_last_tick = -1
 	elif what == NOTIFICATION_WM_SIZE_CHANGED:
 		_resize_diagnostics_overlay()
-	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_CRASH:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		_request_exit()
+	elif what == NOTIFICATION_CRASH:
 		# Leaving cleanly matters here: the colony keeps running server-side, and a
 		# tidy close means the server is not left holding a dead session.
 		_closing = true

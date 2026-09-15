@@ -14,6 +14,7 @@ var server_host := ""
 var database := ""
 var diagnostics_enabled := false
 var diagnostics_graph_enabled := false
+var native_autostart := false
 var last_load_status := "missing"
 
 static func path_from_args(fallback := SAVE_PATH) -> String:
@@ -41,6 +42,7 @@ func load_from(path := path_from_args()) -> String:
 	database = _safe_string(config.get_value("server", "database", ""))
 	diagnostics_enabled = bool(config.get_value("diagnostics", "enabled", false))
 	diagnostics_graph_enabled = bool(config.get_value("diagnostics", "graph_enabled", false))
+	native_autostart = bool(config.get_value("native", "autostart", false))
 	last_load_status = "loaded"
 	return last_load_status
 
@@ -51,6 +53,7 @@ func save_to(path := path_from_args()) -> Error:
 	config.set_value("server", "database", database.strip_edges())
 	config.set_value("diagnostics", "enabled", diagnostics_enabled)
 	config.set_value("diagnostics", "graph_enabled", diagnostics_graph_enabled)
+	config.set_value("native", "autostart", native_autostart)
 	return config.save(path)
 
 func remember_server(host: String, db: String, path := path_from_args()) -> Error:
@@ -65,6 +68,7 @@ func clone() -> ClientSettings:
 	copy.database = database
 	copy.diagnostics_enabled = diagnostics_enabled
 	copy.diagnostics_graph_enabled = diagnostics_graph_enabled
+	copy.native_autostart = native_autostart
 	copy.last_load_status = last_load_status
 	return copy
 

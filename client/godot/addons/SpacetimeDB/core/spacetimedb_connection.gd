@@ -1,5 +1,6 @@
 #@tool
 class_name SpacetimeDBConnection extends Node
+var handle_window_close := true
 
 var _websocket := WebSocketPeer.new()
 var _target_url: String
@@ -217,7 +218,8 @@ func _process(delta: float) -> void:
 					emit_signal("disconnected") # Normal closure signal
 			_is_connected = false
 			_connection_requested = false
-			get_tree().auto_accept_quit = true
+			if handle_window_close:
+				get_tree().auto_accept_quit = true
 			set_process(false) # Stop polling
 
 
@@ -246,6 +248,5 @@ func _notification(what: int) -> void:
 			if _websocket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
 				_handle_game_closing()
 		NOTIFICATION_WM_CLOSE_REQUEST:
-			print("WM_CLOSE_REQUEST")
-			if _websocket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+			if handle_window_close and _websocket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
 				_handle_game_closing()

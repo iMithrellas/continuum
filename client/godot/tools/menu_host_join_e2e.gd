@@ -1,5 +1,5 @@
 ## Production happy-path gate: menu -> Start local server -> joined session.
-## The runner and SDK are intentionally real; no callbacks or reducers are faked.
+## The native controller and SDK are intentionally real; no callbacks or reducers are faked.
 extends Node
 
 const MainScene = preload("res://scenes/main.tscn")
@@ -9,10 +9,19 @@ var main: Control
 var failed := false
 
 func _ready() -> void:
+	if OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") != "private-pid-namespace" or not FileAccess.file_exists("/.dockerenv"):
+		_fail("run the native E2E through its private-container recipe")
+		return
 	call_deferred("_run")
 
 func _run() -> void:
+	_assert(MainScene != null, "main scene resource loads")
 	main = MainScene.instantiate()
+	_assert(main != null and main.get_script() != null, "main scene has a production root script")
+	_assert(main.get_node_or_null("Map") != null and main.get_node_or_null("Workspace") != null,
+		"main scene has non-null production subviews")
+	_assert(main.get_node("Map").get_script() != null and main.get_node("Workspace").get_script() != null,
+		"production subviews have scripts")
 	add_child(main)
 	await get_tree().process_frame
 	if _option("--phase", "start") == "reopen":
@@ -25,6 +34,9 @@ func _run() -> void:
 	get_tree().quit(0)
 
 func _start_and_join() -> void:
+	var native_root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
+	_assert(not native_root.is_empty() and not FileAccess.file_exists(native_root.path_join("spacetimedb/2.10.0/spacetimedb-standalone")),
+		"production first-use flow starts without an installed native runtime")
 	_assert(main._menu.visible, "main menu is visible on offline launch")
 	_assert(not main._session_requested, "offline launch has no session request")
 	_assert(not main._menu._join_button.disabled and not main._menu._local_button.disabled,
@@ -37,6 +49,9 @@ func _start_and_join() -> void:
 	await _click_button(main._menu._local_button)
 	_assert(local_signal_count[0] == 1, "start-local button emitted its production signal")
 	print("PHASE start-local clicked t_ms=%d" % (Time.get_ticks_msec() - started_at))
+	await _wait_until_native_any(["installing", "preparing", "starting", "online"])
+	_assert(main._native_controller.cached_state() in ["installing", "preparing", "starting", "online"],
+		"native start enters a visible production lifecycle state")
 	await _wait_until(func() -> bool:
 		return main._state_ready and main._role_name == "Viewer" and \
 			SpacetimeDB.Continuum.db.tile.iter().size() == 576 and \
@@ -53,6 +68,13 @@ func _start_and_join() -> void:
 		"normal profile joins with readonly viewer permissions")
 	print("PHASE server-ready-and-joined host=%s db=%s tiles=%d colonists=%d role=%s" %
 		[main._host, main._database, tiles.size(), colonists.size(), main._role_name])
+	main.configure_diagnostics(true, true, false)
+	await _wait_until(func() -> bool: return main._session_diagnostics.snapshot(Time.get_ticks_usec()).successful >= 3)
+	if failed: return
+	var network: Dictionary = main._session_diagnostics.snapshot(Time.get_ticks_usec())
+	_assert(network.rtt_ms != null and network.rtt_ms > 0.0, "production diagnostics receives active-session RTT")
+	_assert(network.packet_loss == null, "packet loss remains honestly unavailable")
+	print("PHASE active-session-ping latest_ms=%.3f" % network.rtt_ms)
 	var settings_path := _option("--settings-file", "")
 	_assert(not settings_path.is_empty() and FileAccess.file_exists(settings_path),
 		"isolated settings file exists after ready")
@@ -70,6 +92,16 @@ func _start_and_join() -> void:
 	_assert(main._menu.visible and not main._session_requested and not main._menu._last_button.disabled,
 		"return to menu keeps join-last enabled after success")
 	print("PHASE returned-to-menu join-last-enabled=true")
+	main._show_server_management()
+	await get_tree().process_frame
+	await _click_button(main._server_management._local_stop)
+	await _wait_until_native("offline")
+	if failed: return
+	await _click_button(main._server_management._local_start)
+	await _wait_until_native("online")
+	await _wait_until(func() -> bool: return main._state_ready)
+	_assert(main._state_ready, "native restart rejoins the last server")
+	main.leave_session()
 	main.queue_free()
 
 func _reopen_and_join_last() -> void:
@@ -102,22 +134,21 @@ func _wait_until(condition: Callable) -> void:
 		if condition.call():
 			return
 		await get_tree().process_frame
-	if main._menu._runner != null and main._menu._runner.is_running():
-		# Avoid cancellation/forced process control on a hung real runner. Preserve
-		# its status files so the wrapper can report the active pipeline precisely.
-		var marker_path := _option("--settings-file", "") + ".runner-active"
-		var marker := FileAccess.open(marker_path, FileAccess.WRITE)
-		if marker:
-			marker.store_string("status_file=%s launcher_pid=%d process_group_id=%d\n" %
-				[main._menu._runner.status_file, main._menu._runner.launcher_pid(),
-				main._menu._runner.process_group_id()])
-			marker.close()
-		printerr("MENU_HOST_JOIN_E2E_FAIL: timed out while runner was active; leaving it untouched marker=%s" % marker_path)
-		main._menu._runner = null
-		failed = true
-		get_tree().quit(1)
-	else:
-		_fail("timed out waiting for production session readiness")
+	_fail("timed out waiting for production session readiness")
+
+func _wait_until_native(expected: String) -> void:
+	var deadline := Time.get_ticks_msec() + TIMEOUT_SECONDS * 1000
+	while Time.get_ticks_msec() < deadline:
+		if main._native_controller.cached_state() == expected: return
+		await get_tree().process_frame
+	_fail("timed out waiting for native server state " + expected)
+
+func _wait_until_native_any(expected: Array[String]) -> void:
+	var deadline := Time.get_ticks_msec() + TIMEOUT_SECONDS * 1000
+	while Time.get_ticks_msec() < deadline:
+		if expected.has(main._native_controller.cached_state()): return
+		await get_tree().process_frame
+	_fail("native start never entered an expected lifecycle state")
 
 func _click_button(button: Button) -> void:
 	_assert(button.visible and not button.disabled, "%s is visible and enabled" % button.text)
@@ -125,13 +156,13 @@ func _click_button(button: Button) -> void:
 	var rect := button.get_global_rect()
 	_assert(rect.size.x > 0.0 and rect.size.y > 0.0, "%s has production layout geometry" % button.text)
 	button.grab_focus()
-	var down := InputEventAction.new()
-	down.action = "ui_accept"
+	var down := InputEventKey.new()
+	down.keycode = KEY_ENTER
 	down.pressed = true
 	Input.parse_input_event(down)
 	await get_tree().process_frame
-	var up := InputEventAction.new()
-	up.action = "ui_accept"
+	var up := InputEventKey.new()
+	up.keycode = KEY_ENTER
 	up.pressed = false
 	Input.parse_input_event(up)
 	await get_tree().process_frame

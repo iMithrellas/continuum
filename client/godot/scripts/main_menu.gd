@@ -7,7 +7,7 @@ signal server_management_requested
 signal settings_changed(settings: ClientSettings)
 signal exit_requested
 
-const HOST_PLACEHOLDER := "http://127.0.0.1:3000"
+const HOST_PLACEHOLDER := "http://127.0.0.1:3001"
 const DATABASE_PATTERN := "^[a-z0-9]+(-[a-z0-9]+)*$"
 
 var main: Control
@@ -26,6 +26,7 @@ var _settings_panel: VBoxContainer
 var _font_size: SpinBox
 var _diagnostics_toggle: CheckButton
 var _graph_toggle: CheckButton
+var _native_autostart: CheckButton
 var _error: Label
 var _runner_epoch := 0
 
@@ -81,8 +82,7 @@ func _build() -> void:
 	column.add_child(_join_button)
 
 	_local_button = _button("Start local server", func() -> void:
-		local_server_requested.emit()
-		_start_local_server())
+		local_server_requested.emit())
 	column.add_child(_local_button)
 	_cancel_local_button = _button("Cancel local setup", _cancel_local_server)
 	_cancel_local_button.visible = false
@@ -123,6 +123,11 @@ func _build() -> void:
 	_graph_toggle.disabled = not settings.diagnostics_enabled
 	_graph_toggle.toggled.connect(_graph_changed)
 	_settings_panel.add_child(_graph_toggle)
+	_native_autostart = CheckButton.new()
+	_native_autostart.text = "Start native server at login"
+	_native_autostart.button_pressed = settings.native_autostart
+	_native_autostart.toggled.connect(_native_autostart_changed)
+	_settings_panel.add_child(_native_autostart)
 
 func set_status(message: String, warning := false) -> void:
 	_status.text = message
@@ -133,6 +138,11 @@ func set_busy(busy: bool) -> void:
 	_last_button.disabled = busy or not _has_last_server()
 	_local_button.disabled = busy
 	_cancel_local_button.visible = busy and _runner != null and _runner.is_running()
+
+func set_native_busy(busy: bool) -> void:
+	set_busy(busy)
+	_cancel_local_button.text = "Cancel startup"
+	_cancel_local_button.visible = busy
 
 func _process(_delta: float) -> void:
 	# The runner reports cancellation as progress and intentionally has no extra
@@ -182,6 +192,9 @@ func _start_local_server() -> void:
 		set_busy(true)
 
 func _cancel_local_server() -> void:
+	if main != null and main.has_method("cancel_local_setup"):
+		main.cancel_local_setup()
+		return
 	if _runner != null:
 		_runner_epoch += 1
 		_runner.cancel()
@@ -234,6 +247,10 @@ func _diagnostics_changed(value: bool) -> void:
 func _graph_changed(value: bool) -> void:
 	settings.diagnostics_graph_enabled = value if settings.diagnostics_enabled else false
 	_apply_settings()
+
+func _native_autostart_changed(value: bool) -> void:
+	if main != null and main.has_method("set_native_autostart"):
+		main.set_native_autostart(value)
 
 func _apply_settings() -> void:
 	if main != null and main.has_method("apply_settings"):
