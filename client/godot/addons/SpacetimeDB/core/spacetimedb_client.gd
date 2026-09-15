@@ -631,6 +631,12 @@ func call_reducer(reducer_name: String, args: Array = [], types: Array = []) -> 
 	print("SpacetimeDBClient: Internal error - WebSocket peer not available in connection.")
 	return SpacetimeDBReducerCall.fail(ERR_CONNECTION_ERROR)
 
+## Drop a reducer request that no longer has an owner.
+func cancel_reducer_call(call: SpacetimeDBReducerCall) -> bool:
+	if call == null or call.request_id < 0:
+		return false
+	return _pending_reducer_call.erase(call.request_id)
+
 func call_procedure(procedure_name: String, args: Array = [], types: Array = [], return_type: StringName = &"") -> SpacetimeDBProcedureCall:
 	if not is_connected_db():
 		printerr("SpacetimeDBClient: Cannot call procedure, not connected.")

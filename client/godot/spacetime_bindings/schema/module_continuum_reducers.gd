@@ -6,6 +6,11 @@ var _client: SpacetimeDBClient
 
 func _init(p_client: SpacetimeDBClient) -> void:
 	_client = p_client
+
+## 0. nonce: int [br]
+func diagnostic_echo(nonce: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('diagnostic_echo', [nonce], [&'U64'])
+
 ## 0. alert_id: int [br]
 func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('acknowledge_alert', [alert_id], [&'U64'])
@@ -90,4 +95,3 @@ func set_work_order(tile_id: int, work: ContinuumWorkType, priority: int, enable
 ## 1. enabled: bool [br]
 func set_zone_enabled(kind: ContinuumTileKind, enabled: bool) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_zone_enabled', [kind, enabled], [&'ContinuumTileKind', &'Bool'])
-
