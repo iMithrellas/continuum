@@ -76,6 +76,12 @@ pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
     Ok(())
 }
 
+/// Authenticated transport diagnostic with no world or permission dependency.
+#[reducer]
+pub fn diagnostic_echo(_ctx: &ReducerContext, _nonce: u64) -> Result<(), String> {
+    Ok(())
+}
+
 /// Enable or disable a single tile. Disabling recreation starts the failure chain.
 #[reducer]
 pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Result<(), String> {
