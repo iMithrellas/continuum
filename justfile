@@ -145,6 +145,10 @@ test-diagnostics:
 test-session-ping:
     scripts/internal/test-session-ping
 
+# Stage the module and bootstrap scripts before using the Linux/Windows export presets.
+prepare-native-export:
+    bash scripts/internal/prepare-native-export
+
 # Native ownership, cancellation and Windows pure-helper tests; no real host signals.
 test-native:
     scripts/internal/test-native-server-manager
