@@ -14,6 +14,7 @@ class_name SpacetimeDBClient extends Node
 @export var debug_mode: bool = true
 @export var current_subscriptions: Dictionary[int, SpacetimeDBSubscription]
 @export var use_threading: bool = true
+var handle_window_close := true
 
 var deserializer_worker: Thread
 var _packet_queue: Array[PackedByteArray] = []
@@ -117,6 +118,7 @@ func initialize_and_connect():
 
 	# 5. Initialize Connection Handler
 	_connection = SpacetimeDBConnection.new(connection_options, database_name)
+	_connection.handle_window_close = handle_window_close
 	_connection.disconnected.connect(func(): disconnected.emit())
 	_connection.connection_error.connect(func(c, r): connection_error.emit(c, r))
 	_connection.message_received.connect(_on_websocket_message_received)

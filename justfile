@@ -121,12 +121,11 @@ test-access-cleanup:
 test-local-server-runner:
     scripts/internal/test-local-server-runner
 
-# Exercise the offline launch menu and its fake runner/session guards.
+# Exercise offline menu navigation, join-last guards, settings, and narrow layouts.
 test-main-menu:
     scripts/internal/test-main-menu
 
-# Exercise the production menu -> Docker publish -> readonly join flow twice.
-# This uses the existing local service and preserves its persistent state.
+# Exercise native first-use menu/start/join/ping/stop/reopen in a private PID namespace.
 test-menu-host-join-e2e:
     scripts/internal/test-menu-host-join-e2e
 
@@ -145,3 +144,14 @@ test-diagnostics:
 # Run the authenticated reducer-ack session diagnostics gate in private Docker resources.
 test-session-ping:
     scripts/internal/test-session-ping
+
+# Stage the module and bootstrap scripts before using the Linux/Windows export presets.
+prepare-native-export:
+    bash scripts/internal/prepare-native-export
+
+# Native ownership, cancellation and Windows pure-helper tests; no real host signals.
+test-native:
+    scripts/internal/test-native-server-manager
+    godot --headless --path client/godot --editor --quit
+    godot --headless --path client/godot --script res://tools/native_controller_test.gd
+    scripts/internal/test-native-server-windows
