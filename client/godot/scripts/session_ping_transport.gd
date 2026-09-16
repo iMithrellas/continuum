@@ -25,6 +25,7 @@ func _send_echo(probe_id: int) -> bool:
 		_sampler.reject(probe_id)
 		return false
 	_calls[probe_id] = call
+	_sampler.mark_sent(probe_id, call.transport_sent_at_usec)
 	call.on_ok.connect(func(_response): _respond(probe_id))
 	call.on_ok_empty.connect(func(_response): _respond(probe_id))
 	call.on_error.connect(func(_error): _reject(probe_id))
@@ -32,7 +33,13 @@ func _send_echo(probe_id: int) -> bool:
 	return true
 
 func _respond(probe_id: int) -> void:
-	_sampler.respond(probe_id, Time.get_ticks_usec())
+	var call: SpacetimeDBReducerCall = _calls.get(probe_id)
+	if call == null:
+		return
+	var received_at_usec := call.transport_received_at_usec
+	if received_at_usec < 0:
+		received_at_usec = Time.get_ticks_usec()
+	_sampler.respond(probe_id, received_at_usec)
 
 func _reject(probe_id: int) -> void:
 	_sampler.reject(probe_id)

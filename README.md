@@ -297,10 +297,11 @@ labels, tile inspection, the panel chooser (`Ctrl+F`), function-key panels, and
 the workspace dock for those access paths.
 Settings also exposes `Show diagnostics` and a subordinate `Show frame/RTT graph`
 toggle. Active-session RTT measures successful `diagnostic_echo` acknowledgements
-on the game's authenticated WebSocket, with latest and smoothed values. It is
-unavailable when disconnected or when the server lacks the reducer. Packet loss
-remains `N/A`: WebSocket/TCP does not expose it. Probe timeouts are reported
-separately, and HTTP health RTT never substitutes for session RTT.
+at the authenticated WebSocket transport boundary, excluding local SDK parsing
+and result-queue delay, with latest and smoothed values. It is unavailable when
+disconnected or when the server lacks the reducer. Packet loss remains `N/A`:
+WebSocket/TCP does not expose it. Probe timeouts are reported separately, and
+HTTP health RTT never substitutes for session RTT.
 
 To use the separate Docker development workflow, publish and regenerate bindings:
 

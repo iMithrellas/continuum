@@ -2,6 +2,10 @@ class_name SpacetimeDBReducerCall extends Resource
 
 var request_id: int = -1
 var error: Error = OK
+## Timestamps at the WebSocket transport boundary, excluding SDK serialization
+## and response deserialization/dispatch time.
+var transport_sent_at_usec: int = -1
+var transport_received_at_usec: int = -1
 
 var _client: SpacetimeDBClient
 
