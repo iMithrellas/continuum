@@ -1032,3 +1032,6 @@ fn step_haul(world: &mut World, colonist_index: usize, tuning: &Tuning) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod contracts;
