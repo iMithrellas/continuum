@@ -505,7 +505,8 @@ requires the authorized persistent publisher identity. A grant is allowed only w
 the target matches the configured `CONTINUUM_PUBLISHER_HOST`; a remote publisher
 may be used intentionally by setting that configuration to the same endpoint.
 
-After changing Rust tables, reducers, or types, publish and regenerate bindings:
+After changing public database tables, reducer signatures, or wire types, publish
+and regenerate bindings. Internal simulation composition does not require new bindings:
 
 ```bash
 just bindings
@@ -517,14 +518,18 @@ drives the vendored SDK's code generator headlessly. Generated files live in
 
 ## Architecture
 
-- `backend/spacetimedb/src/lib.rs`: reducers and scheduled tick entry points
+- `backend/spacetimedb/src/lib.rs`: initialization, role view, and scheduled tick entry points
+- `backend/spacetimedb/src/reducers/`: authorized player intents grouped by responsibility
 - `backend/spacetimedb/src/schema.rs`: database tables and shared types
 - `backend/spacetimedb/src/auth.rs`: authorization and membership checks
 - `backend/spacetimedb/src/persistence.rs`: world loading, saving, and seeding
 - `backend/spacetimedb/src/events.rs`: event logging and alerts
-- `backend/spacetimedb/src/sim.rs`: deterministic simulation logic
+- `backend/spacetimedb/src/sim.rs`: public simulation module boundary
+- `backend/spacetimedb/src/sim/components.rs`: composed internal actor state
+- `backend/spacetimedb/src/sim/schedule.rs`: deterministic per-actor system ordering
 - `backend/spacetimedb/src/sim/work_orders.rs`: standing orders and site selection
 - `backend/spacetimedb/src/sim/tests.rs`: simulation regression tests
+- `docs/simulation-architecture.md`: composition, identity, ordering, and persistence guardrails
 - `client/godot/`: Godot UI, map, SDK, and generated typed bindings
 - `justfile`: public project, client, backend, and database recipes
 - `scripts/internal/`: private helpers used by recipes; invoke recipes rather than

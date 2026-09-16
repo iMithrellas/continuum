@@ -1,3 +1,7 @@
+use super::decisions::destination_for;
+use super::logistics::{assign_haul_roles, step_haul, step_work};
+use super::needs::step_eat;
+use super::world::average;
 use super::*;
 
 #[test]
@@ -42,12 +46,12 @@ fn built_recreation_facility_is_used_by_needs_simulation() {
     tile.enabled = true;
     let built_at = (tile.x, tile.y);
     world.colonists.truncate(1);
-    world.colonists[0].x = 0;
-    world.colonists[0].y = 0;
-    world.colonists[0].recreation = 80.0;
-    world.colonists[0].hunger = 0.0;
-    world.colonists[0].fatigue = 0.0;
-    world.colonists[0].work = WorkType::None;
+    world.colonists[0].position.x = 0;
+    world.colonists[0].position.y = 0;
+    world.colonists[0].needs.recreation = 80.0;
+    world.colonists[0].needs.hunger = 0.0;
+    world.colonists[0].needs.fatigue = 0.0;
+    world.colonists[0].assignment.work = WorkType::None;
     let tuning = Tuning {
         hunger_per_hour: 0.0,
         fatigue_per_hour: 0.0,
@@ -55,9 +59,12 @@ fn built_recreation_facility_is_used_by_needs_simulation() {
         ..Tuning::default()
     };
     step(&mut world, &tuning, 1.0);
-    assert_eq!(world.colonists[0].goal, Goal::Recreate);
+    assert_eq!(world.colonists[0].task.goal, Goal::Recreate);
     assert_eq!(
-        (world.colonists[0].target_x, world.colonists[0].target_y),
+        (
+            world.colonists[0].movement.target.x,
+            world.colonists[0].movement.target.y
+        ),
         built_at
     );
 }
@@ -118,7 +125,7 @@ fn production_independently_rejects_missing_paused_and_malformed_orders() {
         assert!(world.stacks.is_empty(), "invalid case {invalid}");
         step(&mut world, &tuning, 120.0);
         assert!(world.stacks.is_empty());
-        assert!(world.colonists.iter().all(|c| c.goal == Goal::Nothing));
+        assert!(world.colonists.iter().all(|c| c.task.goal == Goal::Nothing));
     }
 }
 
@@ -143,21 +150,21 @@ fn work_priority_beats_distance_and_reprioritization_redirects_work_and_travel()
         // Keep pickups out of this test while production continues.
         world.tiles[1].enabled = false;
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].activity, Activity::Working);
+        assert_eq!(world.colonists[0].task.activity, Activity::Working);
         world.work_orders[1].priority = 1;
         let before = world.stack_amount(1, ResourceKind::Food);
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].target_x, 8);
-        assert_eq!(world.colonists[0].activity, Activity::Travelling);
+        assert_eq!(world.colonists[0].movement.target.x, 8);
+        assert_eq!(world.colonists[0].task.activity, Activity::Travelling);
         assert_eq!(world.stack_amount(1, ResourceKind::Food), before);
-        assert_eq!(world.colonists[0].move_progress, 0.25);
+        assert_eq!(world.colonists[0].movement.progress, 0.25);
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].move_progress, 0.5);
+        assert_eq!(world.colonists[0].movement.progress, 0.5);
         world.work_orders[0].priority = 1;
         world.work_orders[1].priority = 3;
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].target_x, 0);
-        assert_eq!(world.colonists[0].activity, Activity::Working);
+        assert_eq!(world.colonists[0].movement.target.x, 0);
+        assert_eq!(world.colonists[0].task.activity, Activity::Working);
     }
 }
 
@@ -168,7 +175,7 @@ fn work_and_pickup_ties_use_distance_then_id_independent_of_row_order() {
             for reverse in [false, true] {
                 let (mut world, tuning) = two_site_world(policy);
                 for c in &mut world.colonists {
-                    c.x = 4;
+                    c.position.x = 4;
                 }
                 if pickup {
                     world.add_to_stack(
@@ -194,10 +201,10 @@ fn work_and_pickup_ties_use_distance_then_id_independent_of_row_order() {
                     .unwrap();
                 let goal = if pickup { Goal::Haul } else { Goal::Work };
                 assert_eq!(destination_for(&world, index, &tuning, goal).unwrap().id, 1);
-                world.colonists[index].x = 5;
+                world.colonists[index].position.x = 5;
                 assert_eq!(destination_for(&world, index, &tuning, goal).unwrap().id, 3);
                 step(&mut world, &tuning, 60.0);
-                assert_eq!(world.colonists[index].target_x, 8);
+                assert_eq!(world.colonists[index].movement.target.x, 8);
             }
         }
     }
@@ -209,19 +216,19 @@ fn cancelling_work_preserves_travel_progress_when_cleanup_has_the_same_target() 
     tuning.move_tiles_per_hour = 15.0;
     world.colonists.truncate(1);
     let c = &mut world.colonists[0];
-    c.x = 4;
-    c.goal = Goal::Work;
-    c.activity = Activity::Travelling;
-    c.move_progress = 0.5;
+    c.position.x = 4;
+    c.task.goal = Goal::Work;
+    c.task.activity = Activity::Travelling;
+    c.movement.progress = 0.5;
     world.add_to_stack(&world.tiles[0].clone(), ResourceKind::Food, 1.0);
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Work);
-    assert_eq!(world.colonists[0].move_progress, 0.75);
+    assert_eq!(world.colonists[0].task.goal, Goal::Work);
+    assert_eq!(world.colonists[0].movement.progress, 0.75);
     world.work_orders.clear();
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Haul);
-    assert_eq!(world.colonists[0].x, 3);
-    assert_eq!(world.colonists[0].move_progress, 0.0);
+    assert_eq!(world.colonists[0].task.goal, Goal::Haul);
+    assert_eq!(world.colonists[0].position.x, 3);
+    assert_eq!(world.colonists[0].movement.progress, 0.0);
 }
 
 #[test]
@@ -235,9 +242,9 @@ fn cancel_and_pause_stop_moving_and_working_producers_and_release_partial_piles(
                 assert!(amount > 0.0 && amount < tuning.stack_food);
                 if moving {
                     for c in &mut world.colonists {
-                        c.x = 2;
-                        c.goal = Goal::Work;
-                        c.activity = Activity::Travelling;
+                        c.position.x = 2;
+                        c.task.goal = Goal::Work;
+                        c.task.activity = Activity::Travelling;
                     }
                 }
                 if cancel {
@@ -250,7 +257,7 @@ fn cancel_and_pause_stop_moving_and_working_producers_and_release_partial_piles(
                 assert_eq!(world.stack_amount(1, ResourceKind::Food), amount);
                 let before = world.resources.food;
                 step(&mut world, &tuning, 60.0);
-                assert!(world.colonists.iter().all(|c| c.goal != Goal::Work));
+                assert!(world.colonists.iter().all(|c| c.task.goal != Goal::Work));
                 step(&mut world, &tuning, 10.0 * 60.0);
                 assert!(world.stacks.is_empty());
                 assert!(world.colonists.iter().all(|c| !c.is_carrying()));
@@ -269,11 +276,11 @@ fn pickup_priorities_redirect_empty_travel_and_cleanup_defaults_to_low() {
             // Preserve the dedicated hauler's rank with an unproductive producer.
             if policy == HaulPolicy::DedicatedHaulers {
                 let mut producer = Colonist::new(1, "Producer", 0, 0);
-                producer.work = WorkType::Farming;
-                producer.carried_amount = 1.0;
+                producer.assignment.work = WorkType::Farming;
+                producer.cargo.amount = 1.0;
                 world.colonists.push(producer);
             }
-            world.colonists[0].x = 2;
+            world.colonists[0].position.x = 2;
             world.add_to_stack(
                 &world.tiles[0].clone(),
                 ResourceKind::Food,
@@ -285,12 +292,12 @@ fn pickup_priorities_redirect_empty_travel_and_cleanup_defaults_to_low() {
                 tuning.stack_food,
             );
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].target_x, 0);
+            assert_eq!(world.colonists[0].movement.target.x, 0);
             world.work_orders[1].priority = 1;
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].target_x, 8);
+            assert_eq!(world.colonists[0].movement.target.x, 8);
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].move_progress, 0.5);
+            assert_eq!(world.colonists[0].movement.progress, 0.5);
             match cleanup {
                 0 => {
                     world.work_orders.remove(1);
@@ -304,7 +311,7 @@ fn pickup_priorities_redirect_empty_travel_and_cleanup_defaults_to_low() {
                 1
             );
             world.work_orders[0].priority = 3;
-            world.colonists[0].x = 6;
+            world.colonists[0].position.x = 6;
             assert_eq!(
                 destination_for(&world, 0, &tuning, Goal::Haul).unwrap().id,
                 3
@@ -331,22 +338,22 @@ fn order_changes_preserve_needs_and_deliver_existing_cargo() {
                 enabled: true,
             });
             let c = &mut world.colonists[0];
-            c.carried_kind = ResourceKind::Wood;
-            c.carried_amount = 7.0;
+            c.cargo.kind = ResourceKind::Wood;
+            c.cargo.amount = 7.0;
             match goal {
-                Goal::Eat => c.hunger = 80.0,
-                Goal::Sleep => c.fatigue = 80.0,
-                _ => c.recreation = 80.0,
+                Goal::Eat => c.needs.hunger = 80.0,
+                Goal::Sleep => c.needs.fatigue = 80.0,
+                _ => c.needs.recreation = 80.0,
             }
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].goal, goal);
+            assert_eq!(world.colonists[0].task.goal, goal);
             world.work_orders[1].priority = 1;
             step(&mut world, &tuning, 4.0 * 60.0);
-            assert_eq!(world.colonists[0].activity, goal.activity());
+            assert_eq!(world.colonists[0].task.activity, goal.activity());
             world.work_orders.clear();
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].goal, goal);
-            assert_eq!(world.colonists[0].carried_amount, 7.0);
+            assert_eq!(world.colonists[0].task.goal, goal);
+            assert_eq!(world.colonists[0].cargo.amount, 7.0);
             step(&mut world, &tuning, 8.0 * 3600.0);
             assert_eq!(world.resources.wood, 7.0);
             assert!(!world.colonists[0].is_carrying());
@@ -369,7 +376,7 @@ fn forest_orders_rank_and_pause_logging_and_hunting_independently() {
         world.work_orders = default_work_orders(&world.tiles);
         for id in 3..=4 {
             let mut hunter = Colonist::new(id, "Hunter", 0, 0);
-            hunter.work = WorkType::Hunting;
+            hunter.assignment.work = WorkType::Hunting;
             world.colonists.push(hunter);
         }
         for order in &mut world.work_orders {
@@ -380,8 +387,8 @@ fn forest_orders_rank_and_pause_logging_and_hunting_independently() {
             };
         }
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].target_x, 8);
-        assert_eq!(world.colonists[2].target_x, 0);
+        assert_eq!(world.colonists[0].movement.target.x, 8);
+        assert_eq!(world.colonists[2].movement.target.x, 0);
         // Cancel only logging, leaving both hunting orders active.
         world
             .work_orders
@@ -397,13 +404,13 @@ fn forest_orders_rank_and_pause_logging_and_hunting_independently() {
         assert!(world
             .colonists
             .iter()
-            .filter(|c| c.work == WorkType::Logging)
-            .all(|c| c.goal != Goal::Work));
+            .filter(|c| c.assignment.work == WorkType::Logging)
+            .all(|c| c.task.goal != Goal::Work));
         assert!(world
             .colonists
             .iter()
             .filter(|c| c.is_carrying())
-            .all(|c| c.carried_kind == c.work.definition().unwrap().output));
+            .all(|c| c.cargo.kind == c.assignment.work.definition().unwrap().output));
     }
 }
 
@@ -425,8 +432,8 @@ fn hauling_world(work: WorkType, policy: HaulPolicy) -> (World, Tuning) {
     world.colonists = (1..=2)
         .map(|id| {
             let mut colonist = Colonist::new(id, "Worker", 0, 0);
-            colonist.work = work;
-            colonist.productivity = 100.0;
+            colonist.assignment.work = work;
+            colonist.wellbeing.productivity = 100.0;
             colonist
         })
         .collect();
@@ -459,12 +466,12 @@ fn each_job_produces_and_delivers_under_both_policies() {
             for _ in 0..360 {
                 step(&mut world, &tuning, 60.0);
                 for colonist in &world.colonists {
-                    assert!(colonist.carried_amount <= tuning.stack_size(kind));
+                    assert!(colonist.cargo.amount <= tuning.stack_size(kind));
                     if policy == HaulPolicy::DedicatedHaulers {
                         if colonist.id == 1 {
                             assert!(!colonist.is_carrying());
                         } else {
-                            assert_ne!(colonist.activity, Activity::Working);
+                            assert_ne!(colonist.task.activity, Activity::Working);
                         }
                     }
                 }
@@ -490,7 +497,7 @@ fn dedicated_roles_follow_ids_not_row_order() {
     assign_haul_roles(&mut world);
     for colonist in &world.colonists {
         assert_eq!(
-            colonist.haul_role,
+            colonist.assignment.haul_role,
             if colonist.id % 2 == 1 {
                 HaulRole::Producer
             } else {
@@ -504,27 +511,27 @@ fn dedicated_roles_follow_ids_not_row_order() {
 fn policy_changes_cancel_incompatible_work_and_empty_pickups() {
     let (mut world, tuning) = hauling_world(WorkType::Farming, HaulPolicy::SelfHaul);
     step(&mut world, &tuning, 60.0);
-    assert!(world.colonists.iter().all(|c| c.goal == Goal::Work));
+    assert!(world.colonists.iter().all(|c| c.task.goal == Goal::Work));
     world.haul_policy = HaulPolicy::DedicatedHaulers;
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[1].goal, Goal::Nothing);
+    assert_eq!(world.colonists[1].task.goal, Goal::Nothing);
     world.haul_policy = HaulPolicy::SelfHaul;
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[1].goal, Goal::Work);
+    assert_eq!(world.colonists[1].task.goal, Goal::Work);
 
     world.add_to_stack(
         &world.tiles[0].clone(),
         ResourceKind::Food,
         tuning.stack_food,
     );
-    world.colonists[0].goal = Goal::Haul;
-    world.colonists[0].activity = Activity::Travelling;
-    world.colonists[0].x = 1;
+    world.colonists[0].task.goal = Goal::Haul;
+    world.colonists[0].task.activity = Activity::Travelling;
+    world.colonists[0].position.x = 1;
     world.haul_policy = HaulPolicy::DedicatedHaulers;
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Work);
+    assert_eq!(world.colonists[0].task.goal, Goal::Work);
     assert!(!world.colonists[0].is_carrying());
-    assert_eq!(world.colonists[1].carried_amount, tuning.stack_food);
+    assert_eq!(world.colonists[1].cargo.amount, tuning.stack_food);
 }
 
 #[test]
@@ -533,16 +540,16 @@ fn carried_goods_survive_policy_changes_and_unassignment() {
         for work in [WorkType::Farming, WorkType::None] {
             let (mut world, tuning) = hauling_world(WorkType::Farming, policy);
             world.colonists.truncate(1);
-            world.colonists[0].carried_kind = ResourceKind::Wood;
-            world.colonists[0].carried_amount = tuning.stack_wood;
-            world.colonists[0].goal = Goal::Work;
+            world.colonists[0].cargo.kind = ResourceKind::Wood;
+            world.colonists[0].cargo.amount = tuning.stack_wood;
+            world.colonists[0].task.goal = Goal::Work;
             step(&mut world, &tuning, 60.0);
-            assert_eq!(world.colonists[0].goal, Goal::Haul);
+            assert_eq!(world.colonists[0].task.goal, Goal::Haul);
             world.haul_policy = match policy {
                 HaulPolicy::SelfHaul => HaulPolicy::DedicatedHaulers,
                 HaulPolicy::DedicatedHaulers => HaulPolicy::SelfHaul,
             };
-            world.colonists[0].work = work;
+            world.colonists[0].assignment.work = work;
             step(&mut world, &tuning, 3.0 * 60.0);
             assert_eq!(world.resources.wood, tuning.stack_wood);
             assert!(!world.colonists[0].is_carrying());
@@ -563,7 +570,7 @@ fn disabled_storage_blocks_pickup_but_not_production() {
     step(&mut world, &tuning, 60.0);
     assert!(world.stack_amount(1, ResourceKind::Food) > tuning.stack_food);
     assert!(world.colonists.iter().all(|c| !c.is_carrying()));
-    assert_eq!(world.colonists[1].goal, Goal::Nothing);
+    assert_eq!(world.colonists[1].task.goal, Goal::Nothing);
     assert_eq!(world.resources.food, before);
     world.tiles[1].enabled = true;
     step(&mut world, &tuning, 5.0 * 60.0);
@@ -574,14 +581,14 @@ fn disabled_storage_blocks_pickup_but_not_production() {
 fn carriers_wait_with_goods_and_retarget_enabled_storage() {
     let (mut world, tuning) = hauling_world(WorkType::Farming, HaulPolicy::SelfHaul);
     world.colonists.truncate(1);
-    world.colonists[0].carried_amount = 12.0;
+    world.colonists[0].cargo.amount = 12.0;
     let before = world.resources.food;
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].target_x, 3);
+    assert_eq!(world.colonists[0].movement.target.x, 3);
     world.tiles[1].enabled = false;
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Nothing);
-    assert_eq!(world.colonists[0].carried_amount, 12.0);
+    assert_eq!(world.colonists[0].task.goal, Goal::Nothing);
+    assert_eq!(world.colonists[0].cargo.amount, 12.0);
     assert!(world.stacks.is_empty());
     world.tiles.push(Tile {
         id: 3,
@@ -591,7 +598,7 @@ fn carriers_wait_with_goods_and_retarget_enabled_storage() {
         enabled: true,
     });
     step(&mut world, &tuning, 2.0 * 60.0);
-    assert_eq!(world.colonists[0].target_x, 2);
+    assert_eq!(world.colonists[0].movement.target.x, 2);
     assert_eq!(world.resources.food, before + 12.0);
     assert!(!world.colonists[0].is_carrying());
 }
@@ -610,7 +617,7 @@ fn disabled_work_tiles_stop_production_but_allow_partial_pickups() {
         assert!(world
             .colonists
             .iter()
-            .all(|c| c.activity != Activity::Working));
+            .all(|c| c.task.activity != Activity::Working));
     }
 }
 
@@ -618,7 +625,7 @@ fn disabled_work_tiles_stop_production_but_allow_partial_pickups() {
 fn dedicated_haulers_batch_active_output_and_collect_when_producer_rests() {
     let (mut world, tuning) = hauling_world(WorkType::Farming, HaulPolicy::DedicatedHaulers);
     step(&mut world, &tuning, 10.0 * 60.0);
-    assert_eq!(world.colonists[1].goal, Goal::Nothing);
+    assert_eq!(world.colonists[1].task.goal, Goal::Nothing);
     assert!(world.stack_amount(1, ResourceKind::Food) > 0.0);
     world.tiles.push(Tile {
         id: 3,
@@ -627,11 +634,11 @@ fn dedicated_haulers_batch_active_output_and_collect_when_producer_rests() {
         kind: TileKind::Sleep,
         enabled: true,
     });
-    world.colonists[0].fatigue = 80.0;
+    world.colonists[0].needs.fatigue = 80.0;
     let amount = world.stack_amount(1, ResourceKind::Food);
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Sleep);
-    assert_eq!(world.colonists[1].carried_amount, amount);
+    assert_eq!(world.colonists[0].task.goal, Goal::Sleep);
+    assert_eq!(world.colonists[1].cargo.amount, amount);
     assert!(world.stacks.is_empty());
 }
 
@@ -643,15 +650,15 @@ fn competing_pickups_conserve_goods_and_retarget_depleted_piles() {
         let before = world.resources.food;
         world.add_to_stack(&world.tiles[0].clone(), ResourceKind::Food, amount);
         for colonist in &mut world.colonists {
-            colonist.goal = Goal::Haul;
-            colonist.activity = Activity::Hauling;
+            colonist.task.goal = Goal::Haul;
+            colonist.task.activity = Activity::Hauling;
         }
         step(&mut world, &tuning, 60.0);
-        assert_eq!(world.colonists[0].carried_amount, 30.0);
-        assert_eq!(world.colonists[1].carried_amount, amount - 30.0);
+        assert_eq!(world.colonists[0].cargo.amount, 30.0);
+        assert_eq!(world.colonists[1].cargo.amount, amount - 30.0);
         assert!(world.stacks.is_empty());
         if amount == 30.0 {
-            assert_eq!(world.colonists[1].goal, Goal::Work);
+            assert_eq!(world.colonists[1].task.goal, Goal::Work);
         }
         step(&mut world, &tuning, 4.0 * 60.0);
         assert_eq!(world.resources.food, before + amount);
@@ -674,8 +681,8 @@ fn work_and_pickup_targets_follow_remaining_facilities_and_piles() {
     world.tiles[0].enabled = false;
     world.stacks.clear();
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Work);
-    assert_eq!(world.colonists[0].target_x, 6);
+    assert_eq!(world.colonists[0].task.goal, Goal::Work);
+    assert_eq!(world.colonists[0].movement.target.x, 6);
 
     world.add_to_stack(
         &world.tiles[0].clone(),
@@ -693,28 +700,28 @@ fn work_and_pickup_targets_follow_remaining_facilities_and_piles() {
         .iter_mut()
         .for_each(|order| order.priority = 3);
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Haul);
-    assert_eq!(world.colonists[0].target_x, 0);
+    assert_eq!(world.colonists[0].task.goal, Goal::Haul);
+    assert_eq!(world.colonists[0].movement.target.x, 0);
     world.take_from_stack(1, ResourceKind::Food, tuning.stack_food);
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].goal, Goal::Haul);
-    assert_eq!(world.colonists[0].target_x, 6);
+    assert_eq!(world.colonists[0].task.goal, Goal::Haul);
+    assert_eq!(world.colonists[0].movement.target.x, 6);
     assert!(!world.colonists[0].is_carrying());
 }
 
 #[test]
 fn shared_forest_piles_are_sorted_and_picked_up_by_resource() {
     let (mut world, tuning) = hauling_world(WorkType::Logging, HaulPolicy::SelfHaul);
-    world.colonists[1].work = WorkType::Hunting;
+    world.colonists[1].assignment.work = WorkType::Hunting;
     let tile = world.tiles[0].clone();
     world.add_to_stack(&tile, ResourceKind::Meat, tuning.stack_meat);
     world.add_to_stack(&tile, ResourceKind::Wood, tuning.stack_wood);
     assert!(world.stacks[0].id < world.stacks[1].id);
     step(&mut world, &tuning, 60.0);
-    assert_eq!(world.colonists[0].carried_kind, ResourceKind::Wood);
-    assert_eq!(world.colonists[0].carried_amount, tuning.stack_wood);
-    assert_eq!(world.colonists[1].carried_kind, ResourceKind::Meat);
-    assert_eq!(world.colonists[1].carried_amount, tuning.stack_meat);
+    assert_eq!(world.colonists[0].cargo.kind, ResourceKind::Wood);
+    assert_eq!(world.colonists[0].cargo.amount, tuning.stack_wood);
+    assert_eq!(world.colonists[1].cargo.kind, ResourceKind::Meat);
+    assert_eq!(world.colonists[1].cargo.amount, tuning.stack_meat);
     assert!(world.stacks.is_empty());
     world.add_to_stack(&tile, ResourceKind::Wood, 1.0);
     assert_eq!(world.stacks[0].id, stack_id(tile.id, ResourceKind::Wood));
@@ -731,12 +738,12 @@ fn needs_interrupt_hauling_without_losing_the_carried_stack() {
         kind: TileKind::Dining,
         enabled: true,
     });
-    world.colonists[0].carried_kind = ResourceKind::Wood;
-    world.colonists[0].carried_amount = tuning.stack_wood;
-    world.colonists[0].hunger = 80.0;
+    world.colonists[0].cargo.kind = ResourceKind::Wood;
+    world.colonists[0].cargo.amount = tuning.stack_wood;
+    world.colonists[0].needs.hunger = 80.0;
     step(&mut world, &tuning, 2.0 * 60.0);
-    assert_eq!(world.colonists[0].activity, Activity::Eating);
-    assert_eq!(world.colonists[0].carried_amount, tuning.stack_wood);
+    assert_eq!(world.colonists[0].task.activity, Activity::Eating);
+    assert_eq!(world.colonists[0].cargo.amount, tuning.stack_wood);
     step(&mut world, &tuning, 30.0 * 60.0);
     assert_eq!(world.resources.wood, tuning.stack_wood);
     assert!(!world.colonists[0].is_carrying());
@@ -746,8 +753,8 @@ fn needs_interrupt_hauling_without_losing_the_carried_stack() {
 fn idle_haulers_do_not_repeat_need_denials() {
     let (mut world, tuning) = hauling_world(WorkType::Farming, HaulPolicy::DedicatedHaulers);
     world.tiles[0].enabled = false;
-    world.colonists[1].recreation = 80.0;
-    world.colonists[1].goal = Goal::Recreate;
+    world.colonists[1].needs.recreation = 80.0;
+    world.colonists[1].task.goal = Goal::Recreate;
     let events = step(&mut world, &tuning, 60.0);
     assert!(events
         .iter()
@@ -796,7 +803,7 @@ fn run(recreation_enabled: bool, days: f64) -> Run {
         quality += average(
             w.colonists
                 .iter()
-                .map(|colonist| sleep_quality(colonist.mood, &t)),
+                .map(|colonist| sleep_quality(colonist.wellbeing.mood, &t)),
         ) as f64;
     }
 
@@ -836,7 +843,13 @@ fn colony_layout_has_all_zone_types() {
         WorkType::Mining,
         WorkType::Hunting,
     ] {
-        assert_eq!(w.colonists.iter().filter(|c| c.work == work).count(), 2);
+        assert_eq!(
+            w.colonists
+                .iter()
+                .filter(|c| c.assignment.work == work)
+                .count(),
+            2
+        );
     }
 }
 
@@ -877,9 +890,9 @@ fn producing_work_creates_only_its_declared_pile_not_stored_resources() {
             .find(|tile| tile.kind == work.definition().unwrap().facility)
             .unwrap()
             .clone();
-        world.colonists[0].work = work;
-        world.colonists[0].x = tile.x;
-        world.colonists[0].y = tile.y;
+        world.colonists[0].assignment.work = work;
+        world.colonists[0].position.x = tile.x;
+        world.colonists[0].position.y = tile.y;
         let before = world.resources.clone();
 
         step_work(&mut world, 0, &tuning, 1.0);
@@ -896,7 +909,7 @@ fn producing_work_creates_only_its_declared_pile_not_stored_resources() {
 fn non_producing_work_does_not_manufacture_resources() {
     let tuning = Tuning::default();
     let mut world = new_world();
-    world.colonists[0].work = WorkType::None;
+    world.colonists[0].assignment.work = WorkType::None;
     let before = world.resources.clone();
 
     step_work(&mut world, 0, &tuning, 1.0);
@@ -910,17 +923,16 @@ fn unassigned_colonists_do_not_work_or_produce() {
     let t = Tuning::default();
     let mut w = new_world();
     for colonist in &mut w.colonists {
-        colonist.work = WorkType::None;
+        colonist.assignment.work = WorkType::None;
     }
     let food = w.resources.food;
 
     step(&mut w, &t, 60.0);
 
     assert_eq!(w.resources.food, food);
-    assert!(w
-        .colonists
-        .iter()
-        .all(|colonist| { colonist.goal == Goal::Nothing && colonist.activity == Activity::Idle }));
+    assert!(w.colonists.iter().all(|colonist| {
+        colonist.task.goal == Goal::Nothing && colonist.task.activity == Activity::Idle
+    }));
 }
 
 #[test]
@@ -932,25 +944,25 @@ fn sleep_cap_wakes_a_still_critically_fatigued_colonist() {
     let mut w = new_world();
     w.colonists.truncate(1);
     let colonist = &mut w.colonists[0];
-    colonist.x = 19;
-    colonist.y = 2;
-    colonist.target_x = 19;
-    colonist.target_y = 2;
-    colonist.activity = Activity::Sleeping;
-    colonist.goal = Goal::Sleep;
-    colonist.fatigue = 100.0;
-    colonist.mood = 100.0;
-    colonist.sleep_hours = t.max_sleep_hours - 60.0 / 3600.0;
+    colonist.position.x = 19;
+    colonist.position.y = 2;
+    colonist.movement.target.x = 19;
+    colonist.movement.target.y = 2;
+    colonist.task.activity = Activity::Sleeping;
+    colonist.task.goal = Goal::Sleep;
+    colonist.needs.fatigue = 100.0;
+    colonist.wellbeing.mood = 100.0;
+    colonist.rest.hours = t.max_sleep_hours - 60.0 / 3600.0;
 
     step(&mut w, &t, 60.0);
     let colonist = &w.colonists[0];
-    assert_eq!(colonist.sleep_hours, t.max_sleep_hours);
-    assert!(colonist.fatigue < 100.0);
+    assert_eq!(colonist.rest.hours, t.max_sleep_hours);
+    assert!(colonist.needs.fatigue < 100.0);
 
     step(&mut w, &t, 60.0);
     let colonist = &w.colonists[0];
-    assert_ne!(colonist.goal, Goal::Sleep);
-    assert_ne!(colonist.activity, Activity::Sleeping);
+    assert_ne!(colonist.task.goal, Goal::Sleep);
+    assert_ne!(colonist.task.activity, Activity::Sleeping);
 }
 
 #[test]
@@ -967,20 +979,23 @@ fn disabled_target_retargets_an_enabled_facility_of_the_same_kind() {
         }
     }
     let colonist = &mut w.colonists[0];
-    colonist.x = 0;
-    colonist.y = 0;
-    colonist.target_x = 2;
-    colonist.target_y = 2;
-    colonist.activity = Activity::Travelling;
-    colonist.goal = Goal::Eat;
-    colonist.hunger = 80.0;
+    colonist.position.x = 0;
+    colonist.position.y = 0;
+    colonist.movement.target.x = 2;
+    colonist.movement.target.y = 2;
+    colonist.task.activity = Activity::Travelling;
+    colonist.task.goal = Goal::Eat;
+    colonist.needs.hunger = 80.0;
     let food = w.resources.food;
 
     step(&mut w, &t, 60.0);
 
     let colonist = &w.colonists[0];
-    assert_eq!((colonist.target_x, colonist.target_y), (3, 2));
-    assert_eq!(colonist.activity, Activity::Travelling);
+    assert_eq!(
+        (colonist.movement.target.x, colonist.movement.target.y),
+        (3, 2)
+    );
+    assert_eq!(colonist.task.activity, Activity::Travelling);
     assert_eq!(w.resources.food, food);
 }
 
@@ -998,20 +1013,20 @@ fn disabled_only_facility_falls_back_without_performing_the_activity() {
         }
     }
     let colonist = &mut w.colonists[0];
-    colonist.x = 2;
-    colonist.y = 2;
-    colonist.target_x = 2;
-    colonist.target_y = 2;
-    colonist.activity = Activity::Eating;
-    colonist.goal = Goal::Eat;
-    colonist.hunger = 80.0;
+    colonist.position.x = 2;
+    colonist.position.y = 2;
+    colonist.movement.target.x = 2;
+    colonist.movement.target.y = 2;
+    colonist.task.activity = Activity::Eating;
+    colonist.task.goal = Goal::Eat;
+    colonist.needs.hunger = 80.0;
     let food = w.resources.food;
 
     step(&mut w, &t, 60.0);
 
     let colonist = &w.colonists[0];
-    assert_eq!(colonist.goal, Goal::Work);
-    assert_ne!(colonist.activity, Activity::Eating);
+    assert_eq!(colonist.task.goal, Goal::Work);
+    assert_ne!(colonist.task.activity, Activity::Eating);
     assert_eq!(w.resources.food, food);
 }
 
@@ -1023,7 +1038,7 @@ fn colonists_cycle_through_all_activities() {
     for _ in 0..(3.0 * SECONDS_PER_DAY / 60.0) as usize {
         step(&mut w, &t, 60.0);
         for c in &w.colonists {
-            seen.insert(c.activity);
+            seen.insert(c.task.activity);
         }
     }
     for a in [
@@ -1059,14 +1074,20 @@ fn normal_meals_preserve_the_existing_eating_accounting() {
     let tuning = Tuning::default();
     let mut world = new_world();
     world.resources.food = 10.0;
-    world.colonists[0].hunger = 80.0;
-    world.colonists[0].activity = Activity::Eating;
-    world.colonists[0].goal = Goal::Eat;
+    world.colonists[0].needs.hunger = 80.0;
+    world.colonists[0].task.activity = Activity::Eating;
+    world.colonists[0].task.goal = Goal::Eat;
 
-    step_eat(&mut world, 0, &tuning, 0.25);
+    step_eat(
+        &mut world.colonists[0].needs,
+        &mut world.resources,
+        world.meal_policy,
+        &tuning,
+        0.25,
+    );
 
     assert_eq!(world.resources.food, 2.0);
-    assert_eq!(world.colonists[0].hunger, 30.0);
+    assert_eq!(world.colonists[0].needs.hunger, 30.0);
 }
 
 #[test]
@@ -1075,12 +1096,18 @@ fn rationed_meals_trade_half_food_cost_for_sixty_five_percent_recovery() {
     let mut world = new_world();
     world.meal_policy = MealPolicy::Rationed;
     world.resources.food = 10.0;
-    world.colonists[0].hunger = 80.0;
+    world.colonists[0].needs.hunger = 80.0;
 
-    step_eat(&mut world, 0, &tuning, 0.25);
+    step_eat(
+        &mut world.colonists[0].needs,
+        &mut world.resources,
+        world.meal_policy,
+        &tuning,
+        0.25,
+    );
 
     assert!((world.resources.food - 6.0).abs() < 1.0e-6);
-    assert!((world.colonists[0].hunger - 47.5).abs() < 1.0e-6);
+    assert!((world.colonists[0].needs.hunger - 47.5).abs() < 1.0e-6);
 }
 
 #[test]
@@ -1089,25 +1116,43 @@ fn eating_handles_low_and_zero_stock_without_negative_values_or_over_recovery() 
     let mut world = new_world();
     world.meal_policy = MealPolicy::Rationed;
     world.resources.food = 1.0;
-    world.colonists[0].hunger = 80.0;
+    world.colonists[0].needs.hunger = 80.0;
 
-    step_eat(&mut world, 0, &tuning, 0.25);
+    step_eat(
+        &mut world.colonists[0].needs,
+        &mut world.resources,
+        world.meal_policy,
+        &tuning,
+        0.25,
+    );
 
     assert_eq!(world.resources.food, 0.0);
-    assert!((world.colonists[0].hunger - 71.875).abs() < 1.0e-6);
+    assert!((world.colonists[0].needs.hunger - 71.875).abs() < 1.0e-6);
     assert!(world.resources.food >= 0.0);
-    assert!((0.0..=100.0).contains(&world.colonists[0].hunger));
+    assert!((0.0..=100.0).contains(&world.colonists[0].needs.hunger));
 
     world.resources.food = 0.0;
-    let hunger = world.colonists[0].hunger;
-    step_eat(&mut world, 0, &tuning, 0.25);
+    let hunger = world.colonists[0].needs.hunger;
+    step_eat(
+        &mut world.colonists[0].needs,
+        &mut world.resources,
+        world.meal_policy,
+        &tuning,
+        0.25,
+    );
     assert_eq!(world.resources.food, 0.0);
-    assert_eq!(world.colonists[0].hunger, hunger);
+    assert_eq!(world.colonists[0].needs.hunger, hunger);
 
     world.resources.food = 10.0;
-    world.colonists[0].hunger = 2.0;
-    step_eat(&mut world, 0, &tuning, 0.25);
-    assert_eq!(world.colonists[0].hunger, 0.0);
+    world.colonists[0].needs.hunger = 2.0;
+    step_eat(
+        &mut world.colonists[0].needs,
+        &mut world.resources,
+        world.meal_policy,
+        &tuning,
+        0.25,
+    );
+    assert_eq!(world.colonists[0].needs.hunger, 0.0);
     assert!(world.resources.food >= 0.0);
 }
 
@@ -1116,15 +1161,27 @@ fn meal_policy_changes_take_effect_and_simulation_remains_deterministic() {
     let tuning = Tuning::default();
     let mut world = new_world();
     world.resources.food = 100.0;
-    world.colonists[0].hunger = 80.0;
-    world.colonists[0].activity = Activity::Eating;
-    world.colonists[0].goal = Goal::Eat;
+    world.colonists[0].needs.hunger = 80.0;
+    world.colonists[0].task.activity = Activity::Eating;
+    world.colonists[0].task.goal = Goal::Eat;
     let mut normal = world.clone();
-    step_eat(&mut normal, 0, &tuning, 1.0);
+    step_eat(
+        &mut normal.colonists[0].needs,
+        &mut normal.resources,
+        normal.meal_policy,
+        &tuning,
+        1.0,
+    );
 
     world.meal_policy = MealPolicy::Rationed;
     let mut rationed = world.clone();
-    step_eat(&mut rationed, 0, &tuning, 1.0);
+    step_eat(
+        &mut rationed.colonists[0].needs,
+        &mut rationed.resources,
+        rationed.meal_policy,
+        &tuning,
+        1.0,
+    );
     assert_ne!(normal, rationed);
     assert!(rationed.resources.food > normal.resources.food);
 
@@ -1143,15 +1200,15 @@ fn meal_policy_changes_take_effect_and_simulation_remains_deterministic() {
 fn deliveries_have_no_storage_limit() {
     let t = Tuning::default();
     let mut w = new_world();
-    w.colonists[0].x = 10;
-    w.colonists[0].y = 10;
+    w.colonists[0].position.x = 10;
+    w.colonists[0].position.y = 10;
     for kind in RESOURCE_KINDS {
         let before = w.resources.amount(kind);
         for _ in 0..100 {
-            w.colonists[0].carried_kind = kind;
-            w.colonists[0].carried_amount = t.stack_size(kind);
+            w.colonists[0].cargo.kind = kind;
+            w.colonists[0].cargo.amount = t.stack_size(kind);
             step_haul(&mut w, 0, &t);
-            assert_eq!(w.colonists[0].carried_amount, 0.0);
+            assert_eq!(w.colonists[0].cargo.amount, 0.0);
         }
         assert_eq!(
             w.resources.amount(kind),
@@ -1173,16 +1230,16 @@ fn all_stats_stay_in_range() {
         step(&mut w, &t, 60.0);
         for c in &w.colonists {
             for (label, v) in [
-                ("hunger", c.hunger),
-                ("fatigue", c.fatigue),
-                ("recreation", c.recreation),
-                ("mood", c.mood),
-                ("productivity", c.productivity),
+                ("hunger", c.needs.hunger),
+                ("fatigue", c.needs.fatigue),
+                ("recreation", c.needs.recreation),
+                ("mood", c.wellbeing.mood),
+                ("productivity", c.wellbeing.productivity),
             ] {
                 assert!((0.0..=100.0).contains(&v), "{label} out of range: {v}");
             }
-            assert!(c.x >= 0 && c.x < GRID_W);
-            assert!(c.y >= 0 && c.y < GRID_H);
+            assert!(c.position.x >= 0 && c.position.x < GRID_W);
+            assert!(c.position.y >= 0 && c.position.y < GRID_H);
         }
         assert!(w.resources.food >= 0.0);
     }
@@ -1494,8 +1551,8 @@ fn colonists_do_not_move_in_lockstep() {
     let total = (4.0 * SECONDS_PER_DAY / 60.0) as usize;
     for _ in 0..total {
         step(&mut w, &t, 60.0);
-        let first = w.colonists[0].activity;
-        if w.colonists.iter().all(|c| c.activity == first) {
+        let first = w.colonists[0].task.activity;
+        if w.colonists.iter().all(|c| c.task.activity == first) {
             ticks_all_identical += 1;
         }
     }
