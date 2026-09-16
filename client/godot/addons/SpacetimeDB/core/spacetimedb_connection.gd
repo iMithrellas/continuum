@@ -29,6 +29,7 @@ signal connected
 signal disconnected
 signal connection_error(code: int, reason: String)
 signal message_received(data: PackedByteArray)
+signal message_received_timed(data: PackedByteArray, received_at_usec: int)
 signal total_messages(sent: int, received: int)
 signal total_bytes(sent: int, received: int)
 
@@ -185,6 +186,7 @@ func _process(delta: float) -> void:
 				if _websocket.get_available_packet_count() > 1:
 					_print_log("SpacetimeDBConnection: waiting packages " + str(_websocket.get_available_packet_count()))
 				var packet_bytes := _websocket.get_packet()
+				var received_at_usec := Time.get_ticks_usec()
 				if packet_bytes.is_empty(): continue
 
 				_total_bytes_received += packet_bytes.size()
@@ -192,6 +194,7 @@ func _process(delta: float) -> void:
 				_total_messages_received += 1
 				_second_messages_received += 1
 				message_received.emit(packet_bytes)
+				message_received_timed.emit(packet_bytes, received_at_usec)
 
 				total_messages.emit(_total_messages_send, _total_messages_received)
 				total_bytes.emit(_total_bytes_send, _total_bytes_received)

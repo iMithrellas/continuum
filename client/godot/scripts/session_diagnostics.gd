@@ -63,6 +63,16 @@ func pump(now_usec: int) -> bool:
 		reject(id)
 	return accepted is bool and accepted
 
+
+func mark_sent(request_id: int, sent_tick_usec: int) -> bool:
+	if sent_tick_usec < 0 or not _inflight.has(request_id):
+		return false
+	var probe: Dictionary = _inflight[request_id]
+	probe.started = sent_tick_usec
+	_inflight[request_id] = probe
+	return true
+
+
 func respond(request_id: int, response_tick_usec: int, response_epoch := -1) -> bool:
 	if response_epoch >= 0 and response_epoch != _epoch:
 		return false

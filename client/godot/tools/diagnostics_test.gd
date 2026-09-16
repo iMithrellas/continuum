@@ -11,6 +11,9 @@ class FakeReducers extends RefCounted:
 	func diagnostic_echo(_nonce: int):
 		var call := SpacetimeDBReducerCall.new()
 		call.request_id = calls.size() + 1
+		if calls.is_empty():
+			call.transport_sent_at_usec = 10
+			call.transport_received_at_usec = 30
 		calls.append(call)
 		return call
 
@@ -96,8 +99,9 @@ func _init() -> void:
 	var transport := PingTransport.new(fake_client, transport_session)
 	assert(transport_session.pump(0), "transport installs an authenticated sender")
 	fake_client.reducers.calls[0].on_ok_empty.emit(null)
-	var transport_ok := transport_session.snapshot(Time.get_ticks_usec())
-	assert(transport_ok.successful == 1 and transport_ok.timed_out == 0, "okEmpty is a successful probe")
+	var transport_ok := transport_session.snapshot(100)
+	assert(transport_ok.successful == 1 and transport_ok.timed_out == 0 and
+			is_equal_approx(transport_ok.rtt_ms, 0.02), "transport timestamps exclude local parser delay")
 	assert(transport_session.pump(1_000_000), "transport remains configured after success")
 	fake_client.reducers.calls[1].on_error.emit("missing reducer")
 	var transport_error := transport_session.snapshot(Time.get_ticks_usec())

@@ -293,7 +293,7 @@ rules, not a claim that the current slice already supports them.
 
 ### Network diagnostics contract
 
-- [x] Display application-level RTT using successful `diagnostic_echo` reducer acknowledgements on the active client connection; reject failed/late replies and cancel pending SDK calls on reset, timeout, or disconnect
+- [x] Display transport-observed RTT using successful `diagnostic_echo` reducer acknowledgements on the active client connection; timestamp at WebSocket send/packet observation, excluding SDK parse/dispatch delay, reject failed/late replies, and cancel pending SDK calls on reset, timeout, or disconnect
 - [ ] Confirm before implementation that the pinned SpacetimeDB/Flametime SDK currently has no application echo/heartbeat response for the active WebSocket path; `/v1/ping` is not an active-session RTT measurement. Validate the smallest backend/provider addition needed for the session echo, and show session RTT as `N/A` until it exists
 - [x] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
 - [x] Mark RTT unavailable when disconnected/stale and retain missing intervals as graph gaps

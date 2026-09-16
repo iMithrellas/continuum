@@ -17,9 +17,9 @@ class_name SpacetimeDBClient extends Node
 var handle_window_close := true
 
 var deserializer_worker: Thread
-var _packet_queue: Array[PackedByteArray] = []
+var _packet_queue: Array[Dictionary] = []
 var _packet_semaphore: Semaphore
-var _result_queue: Array[Resource] = []
+var _result_queue: Array[Dictionary] = []
 var _result_mutex: Mutex
 var _packet_mutex: Mutex
 var _thread_should_exit: bool = false
@@ -121,7 +121,7 @@ func initialize_and_connect():
 	_connection.handle_window_close = handle_window_close
 	_connection.disconnected.connect(func(): disconnected.emit())
 	_connection.connection_error.connect(func(c, r): connection_error.emit(c, r))
-	_connection.message_received.connect(_on_websocket_message_received)
+	_connection.message_received_timed.connect(_on_websocket_message_received)
 	_connection.name = "Connection"
 	add_child(_connection)
 
@@ -209,17 +209,17 @@ func _process(_delta: float) -> void:
 	if use_threading and is_connected_db():
 		_process_results_asynchronously()
 
-func _on_websocket_message_received(raw_bytes: PackedByteArray):
+func _on_websocket_message_received(raw_bytes: PackedByteArray, received_at_usec := -1):
 	if not _is_initialized: return
 	if use_threading:
 		_packet_mutex.lock()
-		_packet_queue.append(raw_bytes)
+		_packet_queue.append({"bytes": raw_bytes, "received_at_usec": received_at_usec})
 		_packet_mutex.unlock()
 		_packet_semaphore.post()
 	else:
 		var messages := _parse_packet_and_get_resource(_decompress_and_parse(raw_bytes))
 		for message: Resource in messages:
-			_handle_parsed_message(message)
+			_handle_parsed_message(message, received_at_usec)
 
 func _thread_loop() -> void:
 	while not _thread_should_exit:
@@ -233,17 +233,18 @@ func _thread_loop() -> void:
 			continue
 		if _packet_queue.size() >1:
 			print_log("BSATN-Thread: package_queue: " + str(_packet_queue.size()))
-		var packet_to_process: PackedByteArray = _packet_queue.pop_front()
+		var queued_packet: Dictionary = _packet_queue.pop_front()
 		_packet_mutex.unlock()
 
 		var message_resources: Array[Resource]
-		var payload := _decompress_and_parse(packet_to_process)
+		var payload := _decompress_and_parse(queued_packet.bytes)
 		message_resources = _parse_packet_and_get_resource(payload)
 
 		if message_resources.size() >= 1:
 			_result_mutex.lock()
 			for message in message_resources:
-				_result_queue.append(message)
+				_result_queue.append({"message": message,
+					"received_at_usec": int(queued_packet.received_at_usec)})
 			_result_mutex.unlock()
 
 
@@ -263,7 +264,8 @@ func _process_results_asynchronously():
 	if use_threading: _result_mutex.unlock()
 
 	while not result_queue_copy.is_empty():
-		_handle_parsed_message(result_queue_copy.pop_front())
+		var queued_result: Dictionary = result_queue_copy.pop_front()
+		_handle_parsed_message(queued_result.message, int(queued_result.received_at_usec))
 		if result_queue_copy.size() >= 1:
 			print_log("BSATN-Thread: result_queue: " + str(result_queue_copy.size()))
 
@@ -288,7 +290,7 @@ func _parse_packet_and_get_resource(bsatn_bytes: PackedByteArray) -> Array[Resou
 		return []
 	return result
 
-func _handle_parsed_message(message_resource: Resource):
+func _handle_parsed_message(message_resource: Resource, received_at_usec := -1):
 	if message_resource == null:
 		printerr("SpacetimeDBClient: Parser returned null message resource.")
 		return
@@ -381,6 +383,8 @@ func _handle_parsed_message(message_resource: Resource):
 		if _pending_reducer_call.has(message_resource.request_id):
 			var reducer_call := _pending_reducer_call[message_resource.request_id]
 			_pending_reducer_call.erase(message_resource.request_id)
+			if received_at_usec >= 0:
+				reducer_call.transport_received_at_usec = received_at_usec
 			reducer_call.on_response(message_resource)
 			reducer_call_response.emit(message_resource)
 		else:
@@ -627,6 +631,7 @@ func call_reducer(reducer_name: String, args: Array = [], types: Array = []) -> 
 			print("SpacetimeDBClient: Error sending CallReducer JSON message: ", err)
 			return SpacetimeDBReducerCall.fail(err)
 		var reducer_call = SpacetimeDBReducerCall.create(self, request_id)
+		reducer_call.transport_sent_at_usec = Time.get_ticks_usec()
 		_pending_reducer_call.set(request_id, reducer_call)
 		return reducer_call
 
