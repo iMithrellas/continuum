@@ -153,33 +153,7 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
         .collect();
     work_orders.sort_by_key(|order| order.id);
 
-    let mut colonists: Vec<sim::Colonist> = ctx
-        .db
-        .colonist()
-        .iter()
-        .map(|colonist| sim::Colonist {
-            id: colonist.id,
-            name: colonist.name,
-            x: colonist.x,
-            y: colonist.y,
-            move_progress: colonist.move_progress,
-            target_x: colonist.target_x,
-            target_y: colonist.target_y,
-            activity: colonist.activity,
-            work: colonist.work,
-            haul_role: colonist.haul_role,
-            carried_kind: colonist.carried_kind,
-            carried_amount: colonist.carried_amount,
-            goal: colonist.goal,
-            hunger: colonist.hunger,
-            fatigue: colonist.fatigue,
-            recreation: colonist.recreation,
-            mood: colonist.mood,
-            productivity: colonist.productivity,
-            sleep_hours: colonist.sleep_hours,
-            last_sleep_quality: colonist.last_sleep_quality,
-        })
-        .collect();
+    let mut colonists: Vec<sim::Colonist> = ctx.db.colonist().iter().map(colonist_state).collect();
     colonists.sort_by_key(|colonist| colonist.id);
 
     let mut stacks: Vec<sim::ItemStack> = ctx
@@ -269,28 +243,68 @@ fn ensure_terrain(ctx: &ReducerContext) -> u64 {
     seed
 }
 
+fn colonist_state(row: Colonist) -> sim::Colonist {
+    sim::Colonist {
+        id: row.id,
+        name: row.name,
+        position: sim::Position { x: row.x, y: row.y },
+        movement: sim::Movement {
+            target: sim::Position {
+                x: row.target_x,
+                y: row.target_y,
+            },
+            progress: row.move_progress,
+        },
+        task: sim::ActivityState {
+            activity: row.activity,
+            goal: row.goal,
+        },
+        assignment: sim::WorkAssignment {
+            work: row.work,
+            haul_role: row.haul_role,
+        },
+        cargo: sim::Cargo {
+            kind: row.carried_kind,
+            amount: row.carried_amount,
+        },
+        needs: sim::Needs {
+            hunger: row.hunger,
+            fatigue: row.fatigue,
+            recreation: row.recreation,
+        },
+        wellbeing: sim::Wellbeing {
+            mood: row.mood,
+            productivity: row.productivity,
+        },
+        rest: sim::Rest {
+            hours: row.sleep_hours,
+            last_quality: row.last_sleep_quality,
+        },
+    }
+}
+
 fn colonist_row(colonist: &sim::Colonist) -> Colonist {
     Colonist {
         id: colonist.id,
         name: colonist.name.clone(),
-        x: colonist.x,
-        y: colonist.y,
-        move_progress: colonist.move_progress,
-        target_x: colonist.target_x,
-        target_y: colonist.target_y,
-        activity: colonist.activity,
-        work: colonist.work,
-        haul_role: colonist.haul_role,
-        carried_kind: colonist.carried_kind,
-        carried_amount: colonist.carried_amount,
-        goal: colonist.goal,
-        hunger: colonist.hunger,
-        fatigue: colonist.fatigue,
-        recreation: colonist.recreation,
-        mood: colonist.mood,
-        productivity: colonist.productivity,
-        sleep_hours: colonist.sleep_hours,
-        last_sleep_quality: colonist.last_sleep_quality,
+        x: colonist.position.x,
+        y: colonist.position.y,
+        move_progress: colonist.movement.progress,
+        target_x: colonist.movement.target.x,
+        target_y: colonist.movement.target.y,
+        activity: colonist.task.activity,
+        work: colonist.assignment.work,
+        haul_role: colonist.assignment.haul_role,
+        carried_kind: colonist.cargo.kind,
+        carried_amount: colonist.cargo.amount,
+        goal: colonist.task.goal,
+        hunger: colonist.needs.hunger,
+        fatigue: colonist.needs.fatigue,
+        recreation: colonist.needs.recreation,
+        mood: colonist.wellbeing.mood,
+        productivity: colonist.wellbeing.productivity,
+        sleep_hours: colonist.rest.hours,
+        last_sleep_quality: colonist.rest.last_quality,
     }
 }
 
@@ -348,3 +362,6 @@ pub(crate) fn save_world(ctx: &ReducerContext, world: &World, config: Config) {
         },
     );
 }
+
+#[cfg(test)]
+mod tests;
