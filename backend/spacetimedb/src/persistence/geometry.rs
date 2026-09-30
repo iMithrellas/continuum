@@ -114,6 +114,29 @@ pub(super) fn load(ctx: &ReducerContext) -> Geometry {
     }
 }
 
+/// Geometry-only transaction: expansion must not repair actors, backfill terrain
+/// fields, save resources, rewrite intents or advance the clock as a side effect.
+pub(crate) fn expand(ctx: &ReducerContext, width: i32, height: i32) -> Result<(), String> {
+    let mut g = load(ctx);
+    g.expand(width, height)?;
+    for &key in &g.changed {
+        let chunk = &g.chunks[&key];
+        let row = chunk_row(key, chunk);
+        if ctx.db.terrain_chunk().id().find(chunk.id).is_some() {
+            ctx.db.terrain_chunk().id().update(row);
+        } else {
+            ctx.db.terrain_chunk().insert(row);
+        }
+    }
+    let mut row = ctx.db.world_geometry().id().find(0).unwrap();
+    if (row.width, row.height) != (width, height) {
+        row.width = width;
+        row.height = height;
+        ctx.db.world_geometry().id().update(row);
+    }
+    Ok(())
+}
+
 pub(crate) fn write_designation(ctx: &ReducerContext, d: &Designation) -> u64 {
     let row = designation_row(d);
     let id = if d.id != 0 && ctx.db.excavation_designation().id().find(d.id).is_some() {

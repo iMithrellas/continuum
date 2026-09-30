@@ -222,3 +222,162 @@ fn seeded_hillside_has_finite_reachable_six_cell_designation() {
     assert!(g.mine_reachable(Cell(21, 8, 0), Body::default(), d.cells[0].cell()));
     assert!(!g.supported(Cell(22, 8, 0), Body::default()));
 }
+
+#[test]
+fn fresh_default_is_128_squared_but_starter_and_flat_migration_remain_24_squared() {
+    let g = Geometry::seeded();
+    assert_eq!((g.width, g.height, g.min_z, g.max_z), (128, 128, -16, 15));
+    assert_eq!(g.chunks.len(), 128);
+    assert!(g.supported(Cell(127, 127, 0), Body::default()));
+    for c in [
+        Cell(128, 0, 0),
+        Cell(0, 128, 0),
+        Cell(-1, 0, 0),
+        Cell(0, 0, -17),
+        Cell(0, 0, 16),
+    ] {
+        assert_eq!(g.material(c), None, "{c:?}");
+    }
+    let w = crate::sim::new_world();
+    assert_eq!(w.tiles.len(), 576);
+    assert_eq!(w.colonists.len(), 8);
+    for tile in w
+        .tiles
+        .iter()
+        .filter(|t| t.kind != crate::sim::TileKind::Empty)
+    {
+        assert!(g.supported(tile.base(), tile.body()));
+    }
+    assert_eq!((Geometry::flat().width, Geometry::flat().height), (24, 24));
+}
+
+#[test]
+fn expansion_preserves_every_old_cell_and_job_and_seeds_former_padding() {
+    let mut g = Geometry::flat();
+    g.set(Cell(23, 23, -1), AIR); // an excavation at the old boundary
+    g.set(Cell(20, 21, 0), STONE); // a saved elevation, not flat land to regenerate
+    let mut d = g.designate(88, 2, 1, 2, 1, -4, 3, 1).unwrap();
+    d.cells[0].progress = 0.375;
+    d.cells[1].material = AIR;
+    d.cells[1].progress = 1.0;
+    d.enabled = false;
+    g.designations.push(d);
+    // Simulate stale non-air padding. It must not be imported as a new wall.
+    let (key, i) = chunk_address(Cell(24, 1, 3));
+    g.chunks.get_mut(&key).unwrap().materials[i] = STONE;
+    g.changed.clear();
+    let old = g.clone();
+    g.expand(128, 128).unwrap();
+    assert_eq!(g.designations, old.designations);
+    assert_eq!(g.dirty_jobs, old.dirty_jobs);
+    assert_eq!(g.dirty_designations, old.dirty_designations);
+    for z in -16..=15 {
+        for y in 0..128 {
+            for x in 0..128 {
+                let c = Cell(x, y, z);
+                if x < 24 && y < 24 {
+                    assert_eq!(g.material(c), old.material(c), "{c:?}");
+                } else {
+                    assert_eq!(
+                        g.material(c),
+                        Some(if z == -1 {
+                            SOIL
+                        } else if z < 0 {
+                            STONE
+                        } else {
+                            AIR
+                        }),
+                        "{c:?}"
+                    );
+                }
+            }
+        }
+    }
+    for (key, chunk) in &old.chunks {
+        let expanded = &g.chunks[key];
+        assert_eq!(expanded.id, chunk.id);
+        assert_eq!(
+            expanded.revision,
+            chunk.revision + u32::from(expanded.materials != chunk.materials)
+        );
+    }
+    let old_max = old.chunks.values().map(|c| c.id).max().unwrap();
+    assert!(g
+        .chunks
+        .iter()
+        .filter(|(k, _)| !old.chunks.contains_key(k))
+        .all(|(_, c)| c.id > old_max));
+    assert!(g.supported(Cell(24, 1, 0), Body::default()));
+    assert!(g.can_step(Cell(23, 1, 0), Cell(24, 1, 0), Body::default()));
+}
+
+#[test]
+fn expansion_is_bounded_atomic_idempotent_and_never_shrinks() {
+    let mut g = Geometry::flat();
+    let original = g.clone();
+    for (w, h) in [
+        (0, 128),
+        (128, 0),
+        (-1, 128),
+        (257, 128),
+        (128, 257),
+        (i32::MAX, 1),
+        (23, 128),
+        (128, 23),
+    ] {
+        assert!(g.expand(w, h).is_err());
+        assert_eq!(g, original);
+    }
+    g.expand(24, 24).unwrap();
+    assert_eq!(g, original);
+    g.expand(25, 24).unwrap(); // inside an existing padded chunk
+    assert_eq!(g.chunks.len(), 8);
+    assert_eq!(g.material(Cell(25, 0, -1)), None);
+    assert!(!g.supported(
+        Cell(24, 0, 0),
+        Body {
+            width: 2,
+            ..Body::default()
+        }
+    ));
+    g.changed.clear();
+    g.expand(33, 31).unwrap();
+    assert_eq!(g.material(Cell(32, 30, -1)), Some(SOIL));
+    assert_eq!(g.material(Cell(33, 30, -1)), None);
+    g.changed.clear();
+    let grown = g.clone();
+    g.expand(33, 31).unwrap();
+    assert_eq!(g, grown);
+    assert!(g.changed.is_empty());
+    g.chunks.get_mut(&Cell(0, 0, -1)).unwrap().id = u64::MAX;
+    let exhausted = g.clone();
+    assert!(g.expand(128, 128).is_err());
+    assert_eq!(g, exhausted);
+}
+
+#[test]
+fn maximum_bounded_world_has_exact_chunk_and_padding_limits() {
+    let g = Geometry::flat_with_dimensions(MAX_WORLD_EDGE, MAX_WORLD_EDGE).unwrap();
+    assert_eq!(g.chunks.len(), 512);
+    assert!(g.supported(Cell(255, 255, 0), Body::default()));
+    assert_eq!(g.material(Cell(256, 255, -1)), None);
+    assert!(Geometry::flat_with_dimensions(257, 128).is_err());
+}
+
+#[test]
+fn expansion_rejects_incomplete_old_chunks_instead_of_regenerating_old_land() {
+    let mut g = Geometry::flat();
+    g.chunks.remove(&Cell(1, 1, -1));
+    let original = g.clone();
+    assert!(g.expand(128, 128).is_err());
+    assert_eq!(g, original);
+    let mut g = Geometry::flat();
+    g.chunks
+        .get_mut(&Cell(1, 1, -1))
+        .unwrap()
+        .materials
+        .truncate(8);
+    let original = g.clone();
+    assert!(g.expand(128, 128).is_err());
+    assert_eq!(g, original);
+}

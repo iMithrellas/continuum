@@ -13,8 +13,9 @@ mod definitions;
 mod tuning;
 mod work_orders;
 pub use definitions::{
-    validate_facility_build, Activity, Goal, HaulPolicy, HaulRole, MealPolicy, ResourceKind,
-    TileKind, WorkDefinition, WorkType, FACILITY_BUILD_WOOD_COST, RESOURCE_KINDS,
+    validate_facility_build, validate_facility_build_in_bounds, Activity, Goal, HaulPolicy,
+    HaulRole, MealPolicy, ResourceKind, TileKind, WorkDefinition, WorkType,
+    FACILITY_BUILD_WOOD_COST, RESOURCE_KINDS,
 };
 pub use tuning::Tuning;
 pub use work_orders::{default_work_orders, WorkOrder};
@@ -23,6 +24,7 @@ pub mod navigation;
 pub mod terrain;
 mod vertical;
 
+/// Historical starter/flat fixture extent, not authoritative live world bounds.
 pub const GRID_W: i32 = 24;
 pub const GRID_H: i32 = 24;
 

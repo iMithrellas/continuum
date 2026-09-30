@@ -7,6 +7,11 @@ pub const DEFAULT_EXCAVATION_HEIGHT: u16 = 6;
 pub const AIR: u16 = 0;
 pub const SOIL: u16 = 1;
 pub const STONE: u16 = 2;
+pub const DEFAULT_WORLD_WIDTH: i32 = 128;
+pub const DEFAULT_WORLD_HEIGHT: i32 = 128;
+pub const MAX_WORLD_EDGE: i32 = 256;
+
+mod expansion;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cell(pub i32, pub i32, pub i32);
@@ -112,11 +117,18 @@ pub fn chunk_address(c: Cell) -> (Cell, usize) {
 }
 
 impl Geometry {
-    /// Additive flat migration. Every old z=0 position retains solid support.
+    /// Historical 24x24 additive migration, deliberately NOT the fresh default.
+    /// Every old z=0 position retains solid support; upgrades never enlarge land.
     pub fn flat() -> Self {
+        Self::flat_with_dimensions(super::GRID_W, super::GRID_H).unwrap()
+    }
+
+    /// Bounded physical geometry without operational/environment rows per cell.
+    pub fn flat_with_dimensions(width: i32, height: i32) -> Result<Self, String> {
+        expansion::validate_dimensions(width, height)?;
         let mut g = Self {
-            width: 24,
-            height: 24,
+            width,
+            height,
             min_z: -16,
             max_z: 15,
             chunks: BTreeMap::new(),
@@ -128,34 +140,28 @@ impl Geometry {
         };
         let mut id = 1;
         for cz in -1..=0 {
-            for cy in 0..=1 {
-                for cx in 0..=1 {
+            for cy in 0..(height + EDGE - 1) / EDGE {
+                for cx in 0..(width + EDGE - 1) / EDGE {
+                    let key = Cell(cx, cy, cz);
                     g.chunks.insert(
-                        Cell(cx, cy, cz),
+                        key,
                         Chunk {
                             id,
-                            materials: vec![AIR; 4096],
-                            revision: 0,
+                            materials: expansion::flat_chunk(key, width, height, g.min_z, g.max_z),
+                            // Preserve the historical flat fixture's revisions.
+                            revision: u32::from(cz < 0),
                         },
                     );
                     id += 1;
                 }
             }
         }
-        for z in g.min_z..0 {
-            for y in 0..g.height {
-                for x in 0..g.width {
-                    g.set(Cell(x, y, z), if z == -1 { SOIL } else { STONE });
-                }
-            }
-        }
-        g.changed.clear();
-        g
+        Ok(g)
     }
 
     /// Fresh worlds get a finite six-cell hillside, away from seeded facilities.
     pub fn seeded() -> Self {
-        let mut g = Self::flat();
+        let mut g = Self::flat_with_dimensions(DEFAULT_WORLD_WIDTH, DEFAULT_WORLD_HEIGHT).unwrap();
         for z in 0..6 {
             for y in 8..12 {
                 for x in 22..24 {

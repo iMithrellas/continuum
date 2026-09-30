@@ -118,6 +118,13 @@ pub fn reset_colony(ctx: &ReducerContext) -> Result<(), String> {
     Ok(())
 }
 
+/// Explicit, non-destructive horizontal growth; never an automatic upgrade.
+#[reducer]
+pub fn expand_world(ctx: &ReducerContext, width: i32, height: i32) -> Result<(), String> {
+    authorize(ctx, RequiredRole::Admin)?;
+    crate::persistence::expand_world(ctx, width, height)
+}
+
 /// Admin-only membership management; the bootstrap admin cannot be removed.
 #[reducer]
 pub fn set_operator(

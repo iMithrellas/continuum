@@ -2,8 +2,8 @@
 
 use crate::auth::{authorize, RequiredRole};
 use crate::events::log_event;
-use crate::schema::{colony, tile, work_order, Severity, Tile, WorkOrder};
-use crate::sim::{self, TileKind, WorkType, FACILITY_BUILD_WOOD_COST, GRID_H, GRID_W};
+use crate::schema::{tile, work_order, world_geometry, Severity, Tile, WorkOrder};
+use crate::sim::{self, TileKind, WorkType, FACILITY_BUILD_WOOD_COST};
 use spacetimedb::{reducer, ReducerContext, Table};
 
 /// Existing `WorkType` is the wire-level work-kind primitive.
@@ -17,11 +17,13 @@ pub(crate) struct Rect {
     pub max_y: i32,
 }
 
-pub(crate) fn normalize_rect(
+fn normalize_rect_in_bounds(
     start_x: i32,
     start_y: i32,
     end_x: i32,
     end_y: i32,
+    width: i32,
+    height: i32,
 ) -> Result<Rect, String> {
     let rect = Rect {
         min_x: start_x.min(end_x),
@@ -29,10 +31,52 @@ pub(crate) fn normalize_rect(
         max_x: start_x.max(end_x),
         max_y: start_y.max(end_y),
     };
-    if rect.min_x < 0 || rect.max_x >= GRID_W || rect.min_y < 0 || rect.max_y >= GRID_H {
+    if rect.min_x < 0 || rect.max_x >= width || rect.min_y < 0 || rect.max_y >= height {
         return Err("rectangle must be inside the colony grid".into());
     }
     Ok(rect)
+}
+
+pub(crate) fn reducer_rect(
+    ctx: &ReducerContext,
+    start_x: i32,
+    start_y: i32,
+    end_x: i32,
+    end_y: i32,
+) -> Result<Rect, String> {
+    let (width, height) = ctx
+        .db
+        .world_geometry()
+        .id()
+        .find(0)
+        .map(|g| (g.width, g.height))
+        .unwrap_or((sim::GRID_W, sim::GRID_H));
+    normalize_rect_in_bounds(start_x, start_y, end_x, end_y, width, height)
+}
+
+pub(crate) fn validate_elevation(ctx: &ReducerContext, z: i32) -> Result<(), String> {
+    let (min_z, max_z) = ctx
+        .db
+        .world_geometry()
+        .id()
+        .find(0)
+        .map(|g| (g.min_z, g.max_z))
+        .unwrap_or((-16, 15));
+    if !(min_z..=max_z).contains(&z) {
+        return Err("elevation outside world bounds".into());
+    }
+    Ok(())
+}
+
+/// Historical rectangle fixtures are intentionally still 24x24.
+#[cfg(test)]
+pub(crate) fn normalize_rect(
+    start_x: i32,
+    start_y: i32,
+    end_x: i32,
+    end_y: i32,
+) -> Result<Rect, String> {
+    normalize_rect_in_bounds(start_x, start_y, end_x, end_y, sim::GRID_W, sim::GRID_H)
 }
 
 pub(crate) fn rect_area(rect: Rect) -> u64 {
@@ -57,6 +101,7 @@ fn to_sim_tile(tile: &Tile) -> sim::Tile {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn validate_empty_block(
     tiles: &[sim::Tile],
     rect: Rect,
@@ -130,38 +175,11 @@ pub fn build_tile_block(
     kind: TileKind,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = normalize_rect(start_x, start_y, end_x, end_y)?;
-    let colony = ctx
-        .db
-        .colony()
-        .id()
-        .find(0)
-        .ok_or_else(|| "colony is not initialised".to_string())?;
-    let tiles: Vec<_> = ctx.db.tile().iter().collect();
-    let sim_tiles: Vec<_> = tiles.iter().map(to_sim_tile).collect();
-    let ids = validate_empty_block(&sim_tiles, rect, kind, colony.wood)?;
-    let world = crate::persistence::load_world(ctx);
-    for id in &ids {
-        let mut tile = world.tiles.iter().find(|t| t.id == *id).unwrap().clone();
-        tile.kind = kind;
-        world.validate_placement(&tile)?;
-    }
+    let rect = reducer_rect(ctx, start_x, start_y, end_x, end_y)?;
+    // Empty physical cells need not have inert operational rows. The same
+    // atomic planner allocates durable IDs on demand at the legacy z=0 layer.
+    crate::reducers::vertical::build_tile_block_at(ctx, start_x, start_y, end_x, end_y, 0, kind)?;
     let cost = block_cost(rect);
-
-    let mut updated_colony = colony;
-    updated_colony.wood -= cost;
-    ctx.db.colony().id().update(updated_colony);
-    for id in ids {
-        let mut tile = ctx
-            .db
-            .tile()
-            .id()
-            .find(id)
-            .expect("validated tile disappeared");
-        tile.kind = kind;
-        tile.enabled = true;
-        ctx.db.tile().id().update(tile);
-    }
     log_event(
         ctx,
         Severity::Info,
@@ -187,7 +205,7 @@ pub fn set_tile_block_enabled(
     enabled: bool,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = normalize_rect(start_x, start_y, end_x, end_y)?;
+    let rect = reducer_rect(ctx, start_x, start_y, end_x, end_y)?;
     let tiles: Vec<_> = ctx.db.tile().iter().collect();
     let ids: Vec<_> = tiles
         .iter()
@@ -249,7 +267,7 @@ pub fn set_block_work_order(
     enabled: bool,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = normalize_rect(start_x, start_y, end_x, end_y)?;
+    let rect = reducer_rect(ctx, start_x, start_y, end_x, end_y)?;
     validate_priority(priority)?;
     let tiles: Vec<_> = ctx.db.tile().iter().collect();
     let sim_tiles: Vec<_> = tiles.iter().map(to_sim_tile).collect();
@@ -334,9 +352,21 @@ mod tests {
     }
 
     #[test]
+    fn rectangle_bounds_follow_persisted_geometry_not_the_starter_extent() {
+        assert!(normalize_rect_in_bounds(24, 24, 127, 127, 128, 128).is_ok());
+        assert!(normalize_rect_in_bounds(24, 24, 127, 127, 24, 24).is_err());
+        assert!(normalize_rect_in_bounds(0, 0, 128, 0, 128, 128).is_err());
+        assert!(normalize_rect_in_bounds(0, -1, 0, 127, 128, 128).is_err());
+        assert!(normalize_rect_in_bounds(i32::MIN, 0, i32::MAX, 0, 128, 128).is_err());
+        assert!(normalize_rect_in_bounds(0, 0, 255, 255, 256, 256).is_ok());
+        assert!(normalize_rect_in_bounds(32, 30, 0, 0, 33, 31).is_ok());
+        assert!(normalize_rect_in_bounds(32, 31, 0, 0, 33, 31).is_err());
+    }
+
+    #[test]
     fn rejects_invalid_rectangles_and_empty_builds() {
         assert!(normalize_rect(-1, 0, 1, 1).is_err());
-        assert!(normalize_rect(0, 0, GRID_W, 0).is_err());
+        assert!(normalize_rect(0, 0, sim::GRID_W, 0).is_err());
         let tiles = vec![tile(1, 0, 0, TileKind::Empty)];
         let rect = normalize_rect(0, 0, 0, 0).unwrap();
         assert!(validate_empty_block(&tiles, rect, TileKind::Empty, 20.0).is_err());

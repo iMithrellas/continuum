@@ -1,7 +1,7 @@
 use crate::auth::{authorize, identity_hex, RequiredRole};
 use crate::events::log_event;
 use crate::schema::*;
-use crate::sim::{validate_facility_build, TileKind, FACILITY_BUILD_WOOD_COST};
+use crate::sim::{validate_facility_build_in_bounds, TileKind, FACILITY_BUILD_WOOD_COST};
 use spacetimedb::{reducer, ReducerContext, Table};
 
 /// Enable or disable a single tile. Disabling recreation starts the failure chain.
@@ -65,7 +65,8 @@ pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Res
         .clone();
     placement.kind = kind;
     world.validate_placement(&placement)?;
-    validate_facility_build(
+    let geometry = world.geometry.as_ref().unwrap();
+    validate_facility_build_in_bounds(
         &crate::sim::Tile {
             id: tile.id,
             x: tile.x,
@@ -79,6 +80,8 @@ pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Res
         },
         kind,
         colony.wood,
+        geometry.width,
+        geometry.height,
     )?;
     colony.wood -= FACILITY_BUILD_WOOD_COST;
     tile.kind = kind;

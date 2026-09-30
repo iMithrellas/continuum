@@ -29,10 +29,20 @@ pub fn validate_facility_build(
     kind: TileKind,
     stored_wood: f32,
 ) -> Result<(), String> {
+    validate_facility_build_in_bounds(tile, kind, stored_wood, GRID_W, GRID_H)
+}
+
+pub fn validate_facility_build_in_bounds(
+    tile: &Tile,
+    kind: TileKind,
+    stored_wood: f32,
+    width: i32,
+    height: i32,
+) -> Result<(), String> {
     if !kind.is_buildable() {
         return Err("only dining, sleep, or recreation facilities can be built".into());
     }
-    if tile.x < 0 || tile.x >= GRID_W || tile.y < 0 || tile.y >= GRID_H {
+    if tile.x < 0 || tile.x >= width || tile.y < 0 || tile.y >= height {
         return Err("facility must be built inside the colony grid".into());
     }
     if tile.kind != TileKind::Empty {
