@@ -11,7 +11,7 @@ pub const STONE: u16 = 2;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Cell(pub i32, pub i32, pub i32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Body {
     pub width: u16,
     pub depth: u16,
@@ -97,6 +97,10 @@ pub struct Geometry {
     pub chunks: BTreeMap<Cell, Chunk>,
     pub changed: BTreeSet<Cell>,
     pub designations: Vec<Designation>,
+    /// Transaction-local invalidation, NOT the once-per-chunk public revision.
+    pub(crate) nav_epoch: u64,
+    pub dirty_jobs: BTreeSet<u64>,
+    pub dirty_designations: BTreeSet<u64>,
 }
 
 pub fn chunk_address(c: Cell) -> (Cell, usize) {
@@ -118,6 +122,9 @@ impl Geometry {
             chunks: BTreeMap::new(),
             changed: BTreeSet::new(),
             designations: Vec::new(),
+            nav_epoch: 0,
+            dirty_jobs: BTreeSet::new(),
+            dirty_designations: BTreeSet::new(),
         };
         let mut id = 1;
         for cz in -1..=0 {
@@ -196,6 +203,10 @@ impl Geometry {
             return false;
         }
         chunk.materials[i] = material;
+        self.nav_epoch = self
+            .nav_epoch
+            .checked_add(1)
+            .expect("terrain mutation epoch exhausted");
         if self.changed.insert(key) {
             chunk.revision = chunk.revision.wrapping_add(1);
         }

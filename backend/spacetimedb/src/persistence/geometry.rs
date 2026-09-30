@@ -35,6 +35,14 @@ fn install(ctx: &ReducerContext, g: &Geometry) {
     }
 }
 
+fn designation_write_plan(g: &Geometry) -> impl Iterator<Item = (&Designation, bool, bool)> {
+    g.designations.iter().filter_map(|d| {
+        let public = g.dirty_designations.contains(&d.id);
+        let private = g.dirty_jobs.contains(&d.id);
+        (public || private).then_some((d, public, private))
+    })
+}
+
 pub(super) fn reset(ctx: &ReducerContext) {
     for row in ctx.db.world_geometry().iter() {
         ctx.db.world_geometry().id().delete(row.id);
@@ -100,6 +108,9 @@ pub(super) fn load(ctx: &ReducerContext) -> Geometry {
         chunks,
         changed: BTreeSet::new(),
         designations,
+        nav_epoch: 0,
+        dirty_jobs: BTreeSet::new(),
+        dirty_designations: BTreeSet::new(),
     }
 }
 
@@ -127,8 +138,19 @@ pub(super) fn save(ctx: &ReducerContext, g: &Geometry) {
         let chunk = &g.chunks[&key];
         ctx.db.terrain_chunk().id().update(chunk_row(key, chunk));
     }
-    for d in &g.designations {
-        write_designation(ctx, d);
+    for (d, public, private) in designation_write_plan(g) {
+        if public {
+            ctx.db
+                .excavation_designation()
+                .id()
+                .update(designation_row(d));
+        }
+        if private {
+            ctx.db.excavation_jobs().id().update(ExcavationJobs {
+                id: d.id,
+                cells: d.cells.clone(),
+            });
+        }
     }
 }
 
@@ -192,6 +214,47 @@ fn designation_state(
 mod tests {
     use super::*;
     use spacetimedb::sats::bsatn;
+    #[test]
+    fn designation_write_plan_omits_unchanged_paused_and_completed_vectors() {
+        let mut w = sim::new_world();
+        w.geometry = Some(Geometry::seeded());
+        w.colonists.truncate(1);
+        w.colonists[0].assignment.work = sim::WorkType::None;
+        let g = w.geometry.as_mut().unwrap();
+        g.designations[0].enabled = false;
+        assert_eq!(designation_write_plan(g).count(), 0);
+        sim::step(&mut w, &sim::Tuning::default(), 0.0);
+        assert_eq!(
+            designation_write_plan(w.geometry.as_ref().unwrap()).count(),
+            0
+        );
+        sim::step(&mut w, &sim::Tuning::default(), 60.0);
+        assert_eq!(
+            designation_write_plan(w.geometry.as_ref().unwrap()).count(),
+            0
+        );
+        let g = w.geometry.as_mut().unwrap();
+        for c in &mut g.designations[0].cells {
+            c.material = 0;
+            c.progress = 1.0;
+        }
+        // Loaded completed rows also have empty dirty sets.
+        g.dirty_jobs.clear();
+        g.dirty_designations.clear();
+        assert_eq!(designation_write_plan(g).count(), 0);
+        g.dirty_jobs.insert(g.designations[0].id);
+        let plan: Vec<_> = designation_write_plan(g)
+            .map(|(d, p, j)| (d.id, p, j))
+            .collect();
+        assert_eq!(plan, vec![(1, false, true)]);
+        g.dirty_designations.insert(1);
+        assert_eq!(
+            designation_write_plan(g)
+                .map(|(d, p, j)| (d.id, p, j))
+                .collect::<Vec<_>>(),
+            vec![(1, true, true)]
+        );
+    }
     #[test]
     fn chunk_mapping_and_wire_roundtrip_preserve_negative_origin_and_every_cell() {
         let key = Cell(1, 0, -1);

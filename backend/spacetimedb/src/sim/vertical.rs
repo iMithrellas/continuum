@@ -37,10 +37,11 @@ impl World {
     /// Validate saved interpolation independently of the clock. In particular,
     /// zero is a valid neighbour, not a sentinel indicating an unmigrated actor.
     pub fn repair_navigation_hops(&mut self) {
-        let Some(g) = &self.geometry else {
+        let Some(_) = &self.geometry else {
             return;
         };
-        for actor in &mut self.colonists {
+        for index in 0..self.colonists.len() {
+            let actor = &self.colonists[index];
             let start = Cell(actor.position.x, actor.position.y, actor.spatial.z);
             let target = Cell(
                 actor.movement.target.x,
@@ -48,22 +49,22 @@ impl World {
                 actor.spatial.target_z,
             );
             if actor.task.activity != Activity::Travelling || start == target {
+                let actor = &mut self.colonists[index];
                 actor.spatial.next = start;
                 actor.movement.progress = 0.0;
                 continue;
             }
-            let reached = g.reachable(start, actor.spatial.body);
-            let Some(&(distance, hop)) = reached.get(&target) else {
+            let reached = self.actor_reachability(index);
+            let Some((_, hop)) = reached.get(&target) else {
+                let actor = &mut self.colonists[index];
                 actor.spatial.next = start;
                 actor.movement.progress = 0.0;
                 continue;
             };
             let saved = actor.spatial.next;
-            let valid = g.can_step(start, saved, actor.spatial.body)
-                && g.reachable(saved, actor.spatial.body)
-                    .get(&target)
-                    .is_some_and(|(remaining, _)| *remaining + 1 == distance);
+            let valid = reached.serves(saved, target);
             if !valid {
+                let actor = &mut self.colonists[index];
                 // Old flat movement used this exact hop. Keep its fractional
                 // progress when only the appended/default next field was missing.
                 let legacy = if start.0 != target.0 {
@@ -71,10 +72,14 @@ impl World {
                 } else {
                     Cell(start.0, start.1 + (target.1 - start.1).signum(), start.2)
                 };
-                if saved != Cell(0, 0, 0) || legacy != hop {
+                if saved == Cell(0, 0, 0) && reached.serves(legacy, target) {
+                    // A legacy x-first hop can differ from the BFS tie-breaker
+                    // while still being an equally short, physically valid route.
+                    actor.spatial.next = legacy;
+                } else {
                     actor.movement.progress = 0.0;
+                    actor.spatial.next = hop;
                 }
-                actor.spatial.next = hop;
             }
         }
     }
@@ -169,33 +174,64 @@ impl World {
     pub fn mining_job(&self, index: usize) -> Option<(usize, usize, Cell)> {
         let g = self.geometry.as_ref()?;
         let body = self.colonists[index].spatial.body;
-        let reachable = g.reachable(self.actor_cell(index), body);
-        let mut best = None;
-        for (di, d) in g.designations.iter().enumerate().filter(|(_, d)| d.enabled) {
+        let reachable = self.actor_reachability(index);
+        let mut intents: Vec<_> = g
+            .designations
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.enabled)
+            .collect();
+        intents.sort_unstable_by_key(|(_, d)| (d.priority, d.id));
+        for (di, d) in intents {
             for (ci, c) in d
                 .cells
                 .iter()
                 .enumerate()
                 .filter(|(_, c)| c.material != AIR)
             {
-                // Plan a move away from our own support, but never remove it
-                // until the acting colonist has actually reached that position.
-                if self.cell_protected_except(c.cell(), Some(index)) {
-                    continue;
-                }
-                for (&p, &(distance, _)) in &reachable {
-                    if g.mine_reachable(p, body, c.cell()) {
-                        // Finish reachable upper jobs before consuming the base
-                        // step that may be the only access to a taller ceiling.
-                        let key = (d.priority, d.id, ci, distance, p);
-                        if best.as_ref().is_none_or(|(old, _)| key < *old) {
-                            best = Some((key, (di, ci, p)));
+                // Invert the work-face/footprint relation: at most a narrow
+                // perimeter and ceiling range, NOT all reachable nodes per job.
+                let cell = c.cell();
+                let mut best = None;
+                let mut consider = |p: Cell| {
+                    if let Some((distance, _)) = reachable.get(&p) {
+                        if g.mine_reachable(p, body, cell) {
+                            let key = (distance, p);
+                            if best.is_none_or(|old| key < old) {
+                                best = Some(key);
+                            }
                         }
+                    }
+                };
+                let w = i32::from(body.width).min(g.width);
+                let depth = i32::from(body.depth).min(g.height);
+                for z in cell.2 - 5..=cell.2 + 1 {
+                    for y in cell.1 - depth + 1..=cell.1 {
+                        consider(Cell(cell.0 - w, y, z));
+                        consider(Cell(cell.0 + 1, y, z));
+                    }
+                    for x in cell.0 - w + 1..=cell.0 {
+                        consider(Cell(x, cell.1 - depth, z));
+                        consider(Cell(x, cell.1 + 1, z));
+                    }
+                }
+                for z in cell.2 - 5..=cell.2 - i32::from(body.height) {
+                    for y in cell.1 - depth + 1..=cell.1 {
+                        for x in cell.0 - w + 1..=cell.0 {
+                            consider(Cell(x, y, z));
+                        }
+                    }
+                }
+                // Re-evaluate dynamic reservations on every decision; actor,
+                // facility and goods protection is not cached with terrain.
+                if let Some((_, p)) = best {
+                    if !self.cell_protected_except(cell, Some(index)) {
+                        return Some((di, ci, p));
                     }
                 }
             }
         }
-        best.map(|(_, job)| job)
+        None
     }
 
     pub(super) fn live_destination(
@@ -204,6 +240,7 @@ impl World {
         tuning: &Tuning,
         goal: Goal,
     ) -> Option<Tile> {
+        self.geometry.as_ref()?;
         let actor = &self.colonists[index];
         if goal == Goal::Work && actor.assignment.work == WorkType::Mining {
             let (_, _, p) = self.mining_job(index)?;
@@ -219,22 +256,22 @@ impl World {
                 clearance_height: 4,
             });
         }
-        let g = self.geometry.as_ref()?;
-        let reachable = g.reachable(self.actor_cell(index), actor.spatial.body);
+        let reachable = self.actor_reachability(index);
         let kind = goal.tile_kind(actor.assignment.work, actor.is_carrying())?;
         self.tiles
             .iter()
             .filter(|t| {
-                if !reachable.contains_key(&t.base()) {
-                    return false;
-                }
                 if goal == Goal::Haul
                     && !actor.is_carrying()
                     && actor.assignment.work == WorkType::Mining
                 {
-                    return self.stack_amount(t.id, ResourceKind::Stone) > 0.0;
+                    return self.stack_amount(t.id, ResourceKind::Stone) > 0.0
+                        && reachable.contains_key(&t.base());
                 }
                 if t.kind != kind {
+                    return false;
+                }
+                if !reachable.contains_key(&t.base()) {
                     return false;
                 }
                 if goal == Goal::Work {
@@ -253,7 +290,7 @@ impl World {
                 } else {
                     0
                 };
-                (priority, reachable[&t.base()].0, t.id)
+                (priority, reachable.get(&t.base()).unwrap().0, t.id)
             })
             .cloned()
     }
@@ -261,26 +298,30 @@ impl World {
     pub(super) fn step_live_travel(&mut self, index: usize, tuning: &Tuning, dt_hours: f32) {
         let mut steps =
             self.colonists[index].movement.progress + tuning.move_tiles_per_hour * dt_hours;
+        let actor = &self.colonists[index];
+        let id = actor.id;
+        let target = Cell(
+            actor.movement.target.x,
+            actor.movement.target.y,
+            actor.spatial.target_z,
+        );
+        let mut path = self.navigation.borrow_mut().route(
+            self.geometry.as_ref().unwrap(),
+            id,
+            self.actor_cell(index),
+            actor.spatial.body,
+            target,
+            actor.spatial.next,
+        );
+        let mut consumed = 0;
         loop {
-            let actor = &self.colonists[index];
             let start = self.actor_cell(index);
-            let target = Cell(
-                actor.movement.target.x,
-                actor.movement.target.y,
-                actor.spatial.target_z,
-            );
-            let next = self
-                .geometry
-                .as_ref()
-                .unwrap()
-                .reachable(start, actor.spatial.body)
-                .get(&target)
-                .map(|(_, hop)| *hop);
-            let Some(next) = next else {
+            if path.front() != Some(&start) {
                 self.colonists[index].movement.progress = 0.0;
                 self.colonists[index].spatial.next = start;
                 return;
-            };
+            }
+            let next = path.get(1).copied().unwrap_or(start);
             self.colonists[index].spatial.next = next;
             if start == target {
                 steps = 0.0;
@@ -294,7 +335,10 @@ impl World {
             actor.position.x = next.0;
             actor.position.y = next.1;
             actor.spatial.z = next.2;
+            path.pop_front();
+            consumed += 1;
         }
+        self.navigation.borrow_mut().consume_route(id, consumed);
         self.colonists[index].movement.progress = steps;
     }
 
@@ -313,10 +357,15 @@ impl World {
             * self.colonists[index].wellbeing.productivity
             / 100.0
             * dt_hours;
-        let job = &mut self.geometry.as_mut().unwrap().designations[di].cells[ci];
-        job.progress += amount.max(0.0);
+        let g = self.geometry.as_mut().unwrap();
+        let job = &mut g.designations[di].cells[ci];
+        let progress = (job.progress + amount.max(0.0)).min(1.0);
+        if job.progress != progress {
+            job.progress = progress;
+            g.dirty_jobs.insert(g.designations[di].id);
+        }
         // One resource unit per atomic solid cell, never continuous/infinite ore.
-        if job.progress < 1.0 {
+        if progress < 1.0 {
             return;
         }
         let Ok(tile) = self.allocate_tile(p, TileKind::Empty) else {
@@ -329,6 +378,8 @@ impl World {
         }
         g.designations[di].cells[ci].material = AIR;
         g.designations[di].cells[ci].progress = 1.0;
+        g.dirty_designations.insert(g.designations[di].id);
+        g.dirty_jobs.insert(g.designations[di].id);
         self.add_to_stack(&tile, ResourceKind::Stone, 1.0);
     }
 }

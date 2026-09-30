@@ -41,6 +41,17 @@ fn paused_additive_load_repairs_default_hops_without_advancing_legacy_state() {
             sim::geometry::Cell(c.position.x, c.position.y, c.spatial.z)
         );
     }
+    // Original colonists also travel towards decreasing x. X-first legacy
+    // progress remains meaningful even if the BFS tie-breaker prefers y first.
+    let c = &mut world.colonists[0];
+    c.movement.target = sim::Position { x: 3, y: 17 };
+    c.spatial.next = sim::geometry::Cell(0, 0, 0);
+    world.repair_navigation_hops();
+    assert_eq!(
+        world.colonists[0].spatial.next,
+        sim::geometry::Cell(6, 9, 0)
+    );
+    assert_eq!(world.colonists[0].movement.progress, 0.375);
 }
 
 #[test]
