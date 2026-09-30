@@ -19,6 +19,9 @@ func _initialize() -> void:
 		return
 
 	var uri := String(config.get(&"uri")).trim_suffix("/")
+	for argument: String in OS.get_cmdline_user_args():
+		if argument.begins_with("--stdb-host="):
+			uri = argument.trim_prefix("--stdb-host=").trim_suffix("/")
 
 	var http := HTTPRequest.new()
 	http.timeout = REQUEST_TIMEOUT_SECONDS
@@ -57,8 +60,34 @@ func _initialize() -> void:
 	if generated.is_empty():
 		_die("codegen produced no files")
 		return
+	for generated_path: String in generated:
+		var input := FileAccess.open(generated_path, FileAccess.READ)
+		if input == null:
+			_die("could not read generated file %s" % generated_path)
+			return
+		var contents := input.get_as_text()
+		if input.get_error() != OK and input.get_error() != ERR_FILE_EOF:
+			input.close()
+			_die("could not read generated contents %s" % generated_path)
+			return
+		input.close()
+		while contents.ends_with("\n"):
+			contents = contents.trim_suffix("\n")
+		var output := FileAccess.open(generated_path, FileAccess.WRITE)
+		if output == null:
+			_die("could not normalize generated file %s" % generated_path)
+			return
+		output.store_string(contents + "\n")
+		var write_error := output.get_error()
+		output.close()
+		if write_error != OK:
+			_die("could not write generated file %s" % generated_path)
+			return
 
-	ResourceSaver.save(config, CONFIG_PATH)
+	var save_error := ResourceSaver.save(config, CONFIG_PATH)
+	if save_error != OK:
+		_die("could not save cached schema (error %d)" % save_error)
+		return
 
 	print("==> generated %d files" % generated.size())
 	quit(0)

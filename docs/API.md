@@ -80,6 +80,10 @@ the operational schema:
 | `terrain_material` | Material `id`, `name`, `opaque`, and SI-valued `density`, `strength`, `thermal_conductivity`, `specific_heat_capacity`. ID zero is air. |
 | `excavation_designation` | Durable `id`; inclusive `x0`, `y0`, `x1`, `y1`; `bottom_z`, integer `height`; `priority`, `enabled`; `total_cells`, `completed_cells`. Intent targets whole cells, not floor slabs. |
 
+SpacetimeDB canonicalizes the Rust digit-suffixed rectangle names: SQL and the
+generated Godot rows expose `x_0`, `y_0`, `x_1`, `y_1`. Reducer calls use the
+positional argument order shown below.
+
 `tile` appends `z`, `width`, `depth`, and `clearance_height`. `colonist` appends
 `z`, `target_z`, configurable `body_width`, `body_depth`, `clearance_height`,
 `max_step_height`, and authoritative next-hop `next_x`, `next_y`, `next_z`.
@@ -175,6 +179,7 @@ before changing goods or facilities.
 | `place_facility` | `(x: i32, y: i32, z: i32, kind: TileKind, width: u16, depth: u16, clearance_height: u16)` |
 | `set_tile_block_enabled_at` | `(x0: i32, y0: i32, x1: i32, y1: i32, z: i32, enabled: bool)` |
 | `set_block_work_order_at` | `(x0: i32, y0: i32, x1: i32, y1: i32, z: i32, work: WorkType, priority: u8, enabled: bool)` |
+| `configure_colonist_body` | `(id: u64, width: u16, depth: u16, clearance_height: u16, max_step_height: u16)` |
 
 Excavation heights are positive arbitrary integers within world bounds; the UI
 default is six cells (3 m). Designations normalize reversed horizontal endpoints
@@ -182,6 +187,27 @@ and target `bottom_z .. bottom_z + height - 1`. A designation is not an immediat
 remote geometry deletion: miners must reach a supported, clear work position.
 Mined cells become air and cannot yield again. Pausing or cancelling intent does
 not refill excavated space or discard goods already produced.
+
+The current resource abstraction yields one stone unit per excavated block,
+including soil; no separate soil resource or mass-limited hauling is introduced.
+Facilities reserve supported clear volumes and remain traversable room/work
+capabilities, not blocking furniture colliders.
+
+### Vertical schema migration
+
+All appended fields have SpacetimeDB 2.10 schema defaults and the new geometry
+tables are additive. A normal publish with matching regenerated client bindings
+is sufficient; **do not delete existing database state**. On first live load of
+an old colony, geometry initializes to a flat supported world (soil at `z = -1`,
+stone below, air from `z = 0`), preserving old identities, resource quantities,
+work orders, positions, and environmental rows. No hillside or excavation orders
+are imposed on old colonies, and missing chunks in an already initialized world
+are not a reason to regenerate excavated terrain.
+
+Fresh initialization or explicit reset adds a reachable 48-cell hillside
+excavation. Old Mine orders remain intent but do not produce indefinitely:
+operators on upgraded colonies must designate actual terrain to resume mining.
+Default world bounds are 24 × 24 cells and `z = -16 .. 15`, inclusive.
 
 Work-order IDs are deterministic tuples in the current implementation: the
 server derives the ID from `(tile_id, output resource)`, so priority and enabled

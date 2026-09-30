@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Real module/API gate with disposable native SpacetimeDB state; no shared server.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+NATIVE="${XDG_DATA_HOME:-$HOME/.local/share}/Continuum/native/spacetimedb/2.10.0"
+CLI="${SPACETIME_CLI:-$NATIVE/spacetimedb-cli}"
+RUNTIME="${SPACETIME_RUNTIME:-$NATIVE/spacetimedb-standalone}"
+[[ -x "$CLI" && -x "$RUNTIME" ]] || {
+    echo 'Set SPACETIME_CLI and SPACETIME_RUNTIME to the SpacetimeDB 2.10 executables.' >&2
+    exit 1
+}
+TMP="$(mktemp -d /tmp/opencode/continuum-terrain-test.XXXXXX)"
+PID=""
+cleanup() {
+    if [[ -n "$PID" ]]; then
+        kill -INT "$PID" 2>/dev/null || true
+        for _ in {1..50}; do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -TERM "$PID" 2>/dev/null || true
+        for _ in {1..20}; do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 0.1
+        done
+        kill -KILL "$PID" 2>/dev/null || true
+        wait "$PID" 2>/dev/null || true
+    fi
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+PORT="$(python3 - <<'PY'
+import socket
+with socket.socket() as sock:
+    sock.bind(('127.0.0.1', 0))
+    print(sock.getsockname()[1])
+PY
+)"
+mkdir -p "$TMP/data" "$TMP/keys"
+"$RUNTIME" start --listen-addr "127.0.0.1:$PORT" --data-dir "$TMP/data" \
+    --jwt-pub-key-path "$TMP/keys/id.pub" --jwt-priv-key-path "$TMP/keys/id" \
+    --non-interactive >"$TMP/server.log" 2>&1 &
+PID=$!
+cargo build --manifest-path "$ROOT/backend/spacetimedb/Cargo.toml" \
+    --release --target wasm32-unknown-unknown
+export TERRAIN_TEST_CLI="$CLI" TERRAIN_TEST_TMP="$TMP" TERRAIN_TEST_PORT="$PORT"
+export TERRAIN_TEST_WASM="$ROOT/backend/spacetimedb/target/wasm32-unknown-unknown/release/continuum_module.wasm"
+if ! python3 "$ROOT/scripts/internal/vertical-terrain-check.py"; then
+    tail -100 "$TMP/server.log" >&2
+    exit 1
+fi
