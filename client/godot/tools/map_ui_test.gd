@@ -117,7 +117,7 @@ func _test_controller_surface() -> void:
 			main._haul_button.get_theme_font_size("font_size") == 12,
 		"runtime scaling returns to small metrics without compounding")
 	main.apply_font_size(13, false)
-	_assert(main._mode_buttons.size() == 2, "select and build mode buttons are reachable")
+	_assert(main._mode_buttons.size() == 4, "select, build, excavate, and facility mode buttons are reachable")
 	_set_role(main, "operator", true, false)
 	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
 	main._build_menu.select(1)
@@ -161,7 +161,7 @@ func _test_workspace_surface(main: Control) -> void:
 	_set_role(main, "viewer", false, false)
 	_assert(not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"],
 		"viewer workspace authorization fails closed")
-	_assert(not main._mode_buttons[&"build"].visible and
+	_assert(not main._mode_buttons[&"build"].visible and not main._mode_buttons[&"excavate"].visible and not main._mode_buttons[&"facility"].visible and
 			not main._build_menu.visible and not main._block_box.visible,
 		"viewer cannot see mutation controls")
 	main.map_intent_override = _record_reducer_call
@@ -171,10 +171,11 @@ func _test_workspace_surface(main: Control) -> void:
 	_set_role(main, "operator", true, false)
 	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"],
 		"operator inherits policy and operations workspace access")
-	main._set_mode(&"build")
-	_set_role(main, "viewer", false, false)
-	_assert(main.map.interaction_mode == &"select", "permission loss cancels armed Build mode")
-	_set_role(main, "operator", true, false)
+	for mode: StringName in [&"build", &"excavate", &"facility"]:
+		main._set_mode(mode)
+		_set_role(main, "viewer", false, false)
+		_assert(main.map.interaction_mode == &"select" and not main.map._dragging, "permission loss cancels armed %s mode and paint" % mode)
+		_set_role(main, "operator", true, false)
 	var ack_probe := Button.new()
 	ack_probe.text = "Ack"
 	main._alert_box.add_child(ack_probe)
@@ -226,13 +227,15 @@ func _refresh_real_tiles(main: Control) -> void:
 		return
 	var occupied: ContinuumTile = null
 	var empty: ContinuumTile = null
-	for tile: ContinuumTile in client.db.tile.iter():
+	main.map.refresh()
+	_assert(main.map.layered, "real subscription contains matching authoritative terrain bindings")
+	for tile: ContinuumTile in main.map.visible_tiles():
 		if tile.kind.value == ContinuumTileKind.Options.empty and empty == null:
 			empty = tile
 		if tile.kind.value != ContinuumTileKind.Options.empty and occupied == null:
 			occupied = tile
 	_assert(occupied != null and empty != null, "fixture has occupied and empty tiles")
-	main._selected_rect = Rect2i(Vector2i(occupied.x, occupied.y), Vector2i.ONE)
+	main._on_rectangle_selected(ColonyMap.tile_footprint(occupied))
 	main._selected_tile_id = occupied.id
 	main._refresh_controls()
 	_assert(main._block_box.visible and main._tile_info.text.contains("Selected:"),
@@ -241,7 +244,7 @@ func _refresh_real_tiles(main: Control) -> void:
 	if not compatible.is_empty():
 		_assert(not main._block_controls[compatible[0]].set.disabled,
 			"occupied refresh enables compatible block work control")
-	main._selected_rect = Rect2i(Vector2i(empty.x, empty.y), Vector2i.ONE)
+	main._on_rectangle_selected(ColonyMap.tile_footprint(empty))
 	main._selected_tile_id = empty.id
 	main._refresh_controls()
 	_assert(main._block_box.visible and main._tile_info.text.contains("Selected:"),
@@ -251,9 +254,9 @@ func _refresh_real_tiles(main: Control) -> void:
 			"empty refresh disables incompatible block work control")
 	main._dispatch_build_block(Rect2i(7, 4, 2, 3), ContinuumTileKind.create_farm())
 	_assert(reducer_calls.size() == 1, "controller dispatches one reducer invocation")
-	_assert(reducer_calls[0][0] == "build_tile_block" and
-			reducer_calls[0][1].slice(0, 4) == [7, 4, 8, 6],
-		"reducer receives normalized inclusive rectangle payload")
+	_assert(reducer_calls[0][0] == "build_tile_block_at" and
+			reducer_calls[0][1].slice(0, 4) == [7, 4, 8, 6] and reducer_calls[0][1][4] == main.map.terrain_model.uniform_base(Rect2i(7, 4, 2, 3)),
+		"reducer receives normalized inclusive rectangle and actual visible floor z")
 	main._dispatch_build_block(Rect2i(3, 3, 1, 1), ContinuumTileKind.create_mine())
 	_assert(reducer_calls.size() == 2, "each completed block maps to one reducer invocation")
 

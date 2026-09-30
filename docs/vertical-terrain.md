@@ -82,5 +82,25 @@ one slice per occupied layer. Solid terrain between an entity and the cut
 occludes it. Render interpolation uses the authoritative next navigation hop,
 not an assumed X-first path toward the final destination.
 
+The layered presentation uses compact entity/resource icons. The historical flat
+view's persistent captions, numeric crate labels, work-order badges, and delivery
+guides are not duplicated into the cut-height renderer; use tooltips, inspection,
+and colony panels for detailed values and task state.
+
 Floor-to-floor shortcuts, if added later, are a separate convenience from exact
 single-layer navigation.
+
+## Verification
+
+- `just test`, `just fmt-check`, and `just wasm`: backend simulation/module gates.
+- `just test-terrain-view`: backend-free cut visibility, picking, navigation
+  controls, footprint/height interaction, permission, and font/layout tests.
+- `just test-terrain-render`: real GPU blur/darkening, whole-entity rendering,
+  near-floor occlusion, and sharp-overlay tests in the composed map.
+  This opens a short-lived window and requires a display; the headless dummy
+  renderer cannot validate shader output.
+- `just test-vertical-terrain`: real mining, viewer authorization, conservation,
+  and failed-intent rollback against an exclusively owned native server. Set
+  `SPACETIME_CLI`/`SPACETIME_RUNTIME` if the pinned native executables are not
+  installed in Continuum's normal cache. Set `CONTINUUM_BASELINE_WASM` to a
+  previous module artifact to additionally check a non-destructive upgrade.

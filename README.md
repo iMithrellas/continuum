@@ -72,15 +72,14 @@ Food must reach storage before colonists can eat it; wood, stone, and meat are
 tracked stocks with no consumer in this slice. Disabling storage blocks
 deliveries, but does not delete stored goods or cargo.
 
-The custom-drawn map uses labeled resource-colored boxes for ground piles and
-attached boxes for cargo. Dashed arrows point to active delivery destinations;
-they are guides, not predicted paths. A shared-stock display sits over storage
-and briefly highlights replicated stock increases. There is no separate bottom
-resource legend/footer: read stored totals from the storage stock overlay and
-resource identity from the map labels and colored pile/cargo boxes. Hover or
-select a pile's tile for its amounts; compact storage and cargo amounts may be
-rounded. The roster shows each worker's job, hauling role, activity, and cargo
-alongside their needs.
+The layered map uses complete colonist/facility sprites and resource-colored
+ground and cargo icons. Hover or inspect a visible cell for its actual position,
+material, occupants, and resource amounts. The roster shows each worker's job,
+hauling role, activity, cargo, and needs. There is no separate bottom resource
+legend/footer. The cut-height renderer intentionally uses compact icons rather
+than the old flat map's persistent captions, numeric crate labels, work-order
+badges, and dashed delivery guides; detailed state remains available through
+inspection, tooltips, and colony panels.
 
 ## Terrain And Block Operations
 

@@ -1,4 +1,4 @@
-## Draws the abstract colony grid and the sprite-backed colonist markers.
+## Layered voxel cuts and complete facility/colonist icons, with legacy map fallback.
 ##
 ## Purely a view: it reads typed rows out of the generated `SpacetimeDB.Continuum`
 ## bindings and never mutates anything. Clicking a tile only emits
@@ -9,6 +9,25 @@ extends Control
 signal tile_selected(tile_id: int)
 signal rectangle_selected(rect: Rect2i)
 signal build_rectangle_requested(rect: Rect2i)
+signal excavation_requested(rect: Rect2i, bottom_z: int, height: int)
+signal facility_requested(cell: Vector3i)
+signal cut_changed(layer: int)
+signal cell_selected(cell: Vector3i)
+signal selection_invalidated
+
+var terrain_model := LayeredTerrainModel.new()
+var terrain_view := LayeredTerrainView.new()
+var layered := false
+var excavation_height := 6
+var facility_width := 1
+var facility_depth := 1
+var facility_height := 6
+var selected_base := 0
+var _drag_layer := 0
+var _visual_feet: Dictionary[int, Vector3] = {}
+var _visual_motion: Dictionary[int, Dictionary] = {}
+var _frozen_selection: Dictionary = {}
+var _source_db: Object
 
 const TILE_COLORS: Dictionary[int, Color] = {
 	ContinuumTileKind.Options.empty: Color("2a2e37"),
@@ -75,6 +94,97 @@ func _ready() -> void:
 	set_process(true)
 	set_process_input(true)
 	mouse_default_cursor_shape = Control.CURSOR_CROSS
+	focus_mode = Control.FOCUS_CLICK
+	terrain_view.attach(self)
+	terrain_view.set_visible(false)
+	resized.connect(_layout_terrain)
+
+
+func _layout_terrain() -> void:
+	terrain_view.layout(_origin(), Vector2(_grid) * _cell_size())
+
+
+func set_cut(layer: int) -> void:
+	if not terrain_model.set_cut(layer):
+		return
+	_dragging = false
+	_drag_inside = false
+	selected_tile_id = -1
+	_selection_rect = Rect2i()
+	_frozen_selection = {}
+	if layered:
+		terrain_view.rebuild(terrain_model)
+		terrain_view.update_entities(entity_descriptors())
+	cut_changed.emit(terrain_model.cut)
+	queue_redraw()
+
+
+func row_visible(row: Variant) -> bool:
+	if layered and row is ContinuumColonist:
+		return terrain_model.position_visible(_visual_feet.get(row.id, LayeredTerrainModel.movement_position(row)), row.body_width, row.body_depth)
+	return not layered or terrain_model.entity_visible(row)
+
+
+func reset_world() -> void:
+	_source_db = null
+	terrain_model.reset()
+	terrain_view.reset()
+	_visual_feet.clear()
+	_visual_motion.clear()
+	_visual_positions.clear()
+	_stored_amounts.clear()
+	_stock_pulses.clear()
+	_generation = -1
+	_has_state = false
+	layered = false
+	_dragging = false
+	clear_selection()
+	queue_redraw()
+
+
+func bind_world_source(source: Object) -> void:
+	if _source_db != source:
+		reset_world()
+		_source_db = source
+
+
+func clear_selection() -> void:
+	selected_tile_id = -1
+	_selection_rect = Rect2i()
+	_frozen_selection = {}
+	selection_invalidated.emit()
+
+
+static func designation_rect(row: Variant) -> Rect2i:
+	return Rect2i(Vector2i(row.x_0, row.y_0), Vector2i(row.x_1 - row.x_0 + 1, row.y_1 - row.y_0 + 1))
+
+
+func visible_tiles() -> Array[ContinuumTile]:
+	var rows: Array[ContinuumTile] = []
+	if SpacetimeDB.Continuum.db == null:
+		return rows
+	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+		if row_visible(tile):
+			rows.append(tile)
+	return rows
+
+
+func tile_at(xy: Vector2i) -> ContinuumTile:
+	for tile: ContinuumTile in visible_tiles():
+		var footprint := tile_footprint(tile)
+		if footprint.has_point(xy) and (not layered or int(LayeredTerrainModel.field(tile, "z", 0)) == terrain_model.base_at(xy)):
+			return tile
+	return null
+
+
+static func tile_footprint(tile: ContinuumTile) -> Rect2i:
+	return Rect2i(Vector2i(tile.x, tile.y), Vector2i(
+		LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1)))
+
+
+static func table_rows(db: Object, name: String) -> Array:
+	var table: Variant = LayeredTerrainModel.field(db, name)
+	return table.iter() if table != null else []
 
 
 func set_interaction_mode(mode: StringName) -> void:
@@ -90,6 +200,7 @@ func set_build_kind(kind: int) -> void:
 
 func set_selected_rect(rect: Rect2i) -> void:
 	_selection_rect = rect
+	_frozen_selection = terrain_model.capture_selection(rect) if layered else {}
 	queue_redraw()
 
 
@@ -106,7 +217,7 @@ func selected_rect() -> Rect2i:
 	if selected_tile_id < 0:
 		return Rect2i()
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(selected_tile_id)
-	return Rect2i(Vector2i(tile.x, tile.y), Vector2i.ONE) if tile != null else Rect2i()
+	return tile_footprint(tile) if tile != null else Rect2i()
 
 
 static func compatible_work(kind: int) -> Array[int]:
@@ -134,6 +245,12 @@ func _process(delta: float) -> void:
 		if _stock_pulses[kind] <= 0.0:
 			_stock_pulses.erase(kind)
 	for colonist: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
+		if layered:
+			var sample := LayeredTerrainModel.sample_movement(colonist, _visual_motion.get(colonist.id, {}), delta * 8.0)
+			changed = changed or _visual_feet.get(colonist.id) != sample.position
+			_visual_motion[colonist.id] = sample
+			_visual_feet[colonist.id] = sample.position
+			continue
 		var target := _colonist_render_position(colonist)
 		if not _visual_positions.has(colonist.id):
 			_visual_positions[colonist.id] = target
@@ -146,12 +263,17 @@ func _process(delta: float) -> void:
 			_visual_positions[colonist.id] = current.lerp(target, clampf(delta * 8.0, 0.0, 1.0))
 			changed = true
 	if changed:
+		if layered:
+			terrain_view.update_entities(entity_descriptors())
 		queue_redraw()
 
 
 func _colonist_render_position(colonist: ContinuumColonist) -> Vector2:
 	var position := Vector2(colonist.x, colonist.y)
 	var progress := clampf(colonist.move_progress, 0.0, 1.0)
+	if layered:
+		var hop := LayeredTerrainModel.movement_position(colonist)
+		return Vector2(hop.x, hop.y)
 	if progress <= 0.0:
 		return position
 	if colonist.x != colonist.target_x:
@@ -166,12 +288,18 @@ func _colonist_render_position(colonist: ContinuumColonist) -> Vector2:
 ## Called by [Main] after subscribed world rows change. Stock flashes show only
 ## replicated increases, never predicted production or inferred delivery amounts.
 func refresh() -> void:
+	bind_world_source(SpacetimeDB.Continuum.db)
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	if config != null and config.generation != _generation:
 		_generation = config.generation
 		_visual_positions.clear()
 		_stored_amounts.clear()
 		_stock_pulses.clear()
+		_visual_feet.clear()
+		_visual_motion.clear()
+		terrain_model.reset()
+		clear_selection()
+		_dragging = false
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	if colony != null:
 		for kind: int in RESOURCE_COLORS:
@@ -187,6 +315,21 @@ func refresh() -> void:
 			extent.x = maxi(extent.x, tile.x + 1)
 			extent.y = maxi(extent.y, tile.y + 1)
 		_grid = extent
+	var geometry_rows := table_rows(SpacetimeDB.Continuum.db, "world_geometry")
+	layered = not geometry_rows.is_empty()
+	if layered:
+		var changed := terrain_model.sync(geometry_rows[0], table_rows(SpacetimeDB.Continuum.db, "terrain_chunk"),
+			table_rows(SpacetimeDB.Continuum.db, "terrain_material"))
+		_grid = Vector2i(terrain_model.width, terrain_model.height)
+		_has_state = true
+		if changed:
+			terrain_view.rebuild(terrain_model)
+			if not _frozen_selection.is_empty() and not terrain_model.selection_valid(_frozen_selection):
+				clear_selection()
+	terrain_view.set_visible(layered)
+	if layered:
+		terrain_view.update_entities(entity_descriptors())
+	_layout_terrain()
 	queue_redraw()
 
 
@@ -206,15 +349,24 @@ func _draw() -> void:
 		return
 	var origin := _origin()
 
-	draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), Color("1a1d23"))
+	if not layered:
+		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), Color("1a1d23"))
 
 	if not _has_state or SpacetimeDB.Continuum.db == null:
 		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "waiting for colony state...",
 				HORIZONTAL_ALIGNMENT_CENTER, size.x, metrics.font(14), Color(1, 1, 1, 0.5))
 		return
 
-	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-		var rect := Rect2(origin + Vector2(tile.x * cell, tile.y * cell), Vector2(cell, cell))
+	for tile: ContinuumTile in visible_tiles():
+		if layered:
+			if tile.id == selected_tile_id:
+				var selection := tile_footprint(tile)
+				draw_rect(Rect2(origin + Vector2(selection.position) * cell, Vector2(selection.size) * cell).grow(-1), SELECTION_COLOR, false, 2)
+			continue
+		if layered and tile.kind.value == ContinuumTileKind.Options.empty:
+			continue
+		var footprint := Vector2(LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1))
+		var rect := Rect2(origin + Vector2(tile.x * cell, tile.y * cell), footprint * cell)
 		var colour: Color = TILE_COLORS.get(tile.kind.value, Color("2a2e37"))
 		var terrain: Resource = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
 		if tile.kind.value == ContinuumTileKind.Options.empty:
@@ -244,12 +396,14 @@ func _draw() -> void:
 		var y := origin.y + i * cell
 		draw_line(Vector2(origin.x, y), Vector2(origin.x + cell * _grid.x, y), GRID_LINE_COLOR)
 
-	_draw_zone_labels(origin, cell)
-	_draw_work_orders(origin, cell)
-	_draw_delivery_routes(origin, cell)
-	_draw_storage(origin, cell)
-	_draw_colonists(origin, cell)
-	_draw_ground_items(origin, cell)
+	if not layered:
+		_draw_zone_labels(origin, cell)
+		_draw_work_orders(origin, cell)
+		_draw_delivery_routes(origin, cell)
+		_draw_storage(origin, cell)
+		_draw_colonists(origin, cell)
+		_draw_ground_items(origin, cell)
+	_draw_excavations(origin, cell)
 	if _selection_rect.size != Vector2i.ZERO and not _dragging:
 		var selection_rect := Rect2(origin + Vector2(_selection_rect.position) * cell,
 			Vector2(_selection_rect.size) * cell)
@@ -285,13 +439,18 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 	if not _dragging:
 		return
 	var rect := MapUiModel.normalize_rect(_drag_start, _drag_current)
+	if interaction_mode == &"facility":
+		rect = Rect2i(_drag_start, Vector2i(facility_width, facility_depth))
 	var colour := Color("d39a68") if interaction_mode == &"select" else Color("d8b06e")
+	if interaction_mode == &"facility" and layered and (terrain_model.uniform_base(rect) != selected_base \
+		or not terrain_model.placement_clear(rect, selected_base, facility_height)):
+		colour = Color("ff5c6c")
 	colour.a = 0.22
 	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour)
 	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour.lightened(0.3), false, 2.0)
 	var occupied := 0
-	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-		if rect.has_point(Vector2i(tile.x, tile.y)) and tile.kind.value != ContinuumTileKind.Options.empty:
+	for tile: ContinuumTile in visible_tiles():
+		if rect.intersects(tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
 			occupied += 1
 	var text := "%dx%d  %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
 	if interaction_mode == &"build":
@@ -301,6 +460,12 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 		if colony == null or colony.wood < rect.size.x * rect.size.y * 20.0:
 			text += "  NOT ENOUGH WOOD"
+		if layered and terrain_model.uniform_base(rect) == null:
+			text += "  MIXED / UNKNOWN ELEVATIONS"
+	elif interaction_mode == &"excavate":
+		text += "  z=%d..%d (%.1fm)" % [selected_base, selected_base + excavation_height - 1, excavation_height * 0.5]
+	elif interaction_mode == &"facility":
+		text = "%dx%d facility at z=%d; clearance %.1fm" % [facility_width, facility_depth, selected_base, facility_height * 0.5]
 	draw_string(_font, origin + Vector2(rect.position.x * cell + 4.0, rect.position.y * cell - 5.0),
 			text, HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(clampf(cell * 0.34, 10, 15)), Color("f1f4f8"))
 
@@ -312,7 +477,7 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 		if kind in [ContinuumTileKind.Options.empty, ContinuumTileKind.Options.storage]:
 			continue
 		var zone: Array[ContinuumTile] = []
-		for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+		for tile: ContinuumTile in visible_tiles():
 			if tile.kind.value == kind:
 				zone.append(tile)
 		if zone.is_empty():
@@ -330,7 +495,7 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 func _draw_work_orders(origin: Vector2, cell: float) -> void:
 	for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
 		var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(order.tile_id)
-		if tile == null or not tile.enabled or not order.enabled:
+		if tile == null or not row_visible(tile) or not tile.enabled or not order.enabled:
 			continue
 		var column := 0.5 if order.work.value == ContinuumWorkType.Options.hunting else 0.0
 		var rect := Rect2(origin + Vector2(tile.x + column, tile.y) * cell,
@@ -351,6 +516,8 @@ static func format_amount(amount: float) -> String:
 
 func _draw_ground_items(origin: Vector2, cell: float) -> void:
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
+		if not row_visible(stack):
+			continue
 		if stack.amount <= 0.0:
 			continue
 		# Ground crates stay at the tile's feet, visible even under a working colonist.
@@ -369,9 +536,14 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 
 func _draw_delivery_routes(origin: Vector2, cell: float) -> void:
 	for colonist: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
+		if not row_visible(colonist):
+			continue
 		if colonist.carried_amount <= 0.0 or colonist.goal.value != ContinuumGoal.Options.haul:
 			continue
 		if colonist.activity.value not in [ContinuumActivity.Options.travelling, ContinuumActivity.Options.hauling]:
+			continue
+		if layered and not terrain_model.entity_visible({"x": colonist.target_x, "y": colonist.target_y,
+			"z": LayeredTerrainModel.field(colonist, "target_z", 0)}):
 			continue
 		var start: Vector2 = origin + (_visual_positions.get(colonist.id,
 				Vector2(colonist.x, colonist.y)) + Vector2(0.5, 0.5)) * cell
@@ -393,7 +565,7 @@ func _draw_storage(origin: Vector2, cell: float) -> void:
 		return
 	var anchor := Vector2i(9999, 9999)
 	var storage_open := false
-	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
+	for tile: ContinuumTile in visible_tiles():
 		if tile.kind.value == ContinuumTileKind.Options.storage:
 			storage_open = storage_open or tile.enabled
 			if tile.y < anchor.y or (tile.y == anchor.y and tile.x < anchor.x):
@@ -435,6 +607,8 @@ func _draw_colonists(origin: Vector2, cell: float) -> void:
 
 	for index in colonists.size():
 		var colonist: ContinuumColonist = colonists[index]
+		if not row_visible(colonist):
+			continue
 		var grid_pos: Vector2 = _visual_positions.get(colonist.id,
 				Vector2(colonist.x, colonist.y))
 		var centre := origin + (grid_pos + Vector2(0.5, 0.5)) * cell
@@ -487,8 +661,17 @@ func _get_tooltip(at_position: Vector2) -> String:
 	var local := (at_position - _origin()) / _cell_size()
 	var grid_pos := Vector2i(floori(local.x), floori(local.y))
 	var lines := PackedStringArray()
-	for tile: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-		if Vector2i(tile.x, tile.y) == grid_pos:
+	if layered:
+		var surface: Variant = terrain_model.surface_at(grid_pos)
+		if surface == null:
+			return "No known surface at (%d, %d), cut z=%d" % [grid_pos.x, grid_pos.y, terrain_model.cut]
+		var material_id := terrain_model.material_at(surface)
+		lines.append("%s material #%d at (%d, %d, %d) | depth %d (%.1fm) | base z=%d" % [
+			LayeredTerrainModel.field(terrain_model.materials.get(material_id), "name", "unknown"), material_id,
+			surface.x, surface.y, surface.z, terrain_model.depth_at(grid_pos), terrain_model.depth_at(grid_pos) * 0.5,
+			terrain_model.base_at(grid_pos)])
+	for tile: ContinuumTile in visible_tiles():
+		if tile == tile_at(grid_pos):
 			lines.append("%s (%d, %d) / %s" % [
 				ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.x, tile.y,
 				"enabled" if tile.enabled else "disabled"])
@@ -510,11 +693,13 @@ func _get_tooltip(at_position: Vector2) -> String:
 				lines.append("Priority ranks sites within the profession. Old goods remain haulable.")
 			break
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
-		if Vector2i(stack.x, stack.y) == grid_pos:
+		if row_visible(stack) and Vector2i(stack.x, stack.y) == grid_pos:
 			lines.append("Ground: %.1f %s" % [stack.amount,
 				ContinuumResourceKind.parse_enum_name(stack.kind.value)])
 	for colonist: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
-		if Vector2i(colonist.x, colonist.y) == grid_pos:
+		var feet: Vector3 = _visual_feet.get(colonist.id, LayeredTerrainModel.movement_position(colonist))
+		var tooltip_xy := Vector2i(floori(feet.x), floori(feet.y)) if layered else Vector2i(colonist.x, colonist.y)
+		if row_visible(colonist) and tooltip_xy == grid_pos:
 			lines.append("%s: %s / %s / %s" % [colonist.name,
 				ContinuumWorkType.parse_enum_name(colonist.work.value),
 				"produce + haul" if colonist.haul_role.value == ContinuumHaulRole.Options.both
@@ -559,6 +744,17 @@ func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
 func _input(event: InputEvent) -> void:
 	if not _has_state:
 		return
+	if event is InputEventKey and event.pressed and not event.echo:
+		if not layer_shortcuts_allowed():
+			return
+		if event.keycode in [KEY_PAGEUP, KEY_BRACKETRIGHT]:
+			set_cut(terrain_model.cut + 1)
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode in [KEY_PAGEDOWN, KEY_BRACKETLEFT]:
+			set_cut(terrain_model.cut - 1)
+			get_viewport().set_input_as_handled()
+			return
 	if event is InputEventMouse and input_blocked.is_valid() and input_blocked.call(event.position):
 		_dragging = false
 		_drag_inside = false
@@ -592,9 +788,19 @@ func _input(event: InputEvent) -> void:
 		var finish: Vector2i = _cell_at(point)
 		var rect := MapUiModel.normalize_rect(_drag_start, finish)
 		_dragging = false
-		if interaction_mode == &"build":
+		if layered and terrain_model.cut != _drag_layer:
+			return
+		if interaction_mode == &"excavate":
+			excavation_requested.emit(rect, selected_base, excavation_height)
+		elif interaction_mode == &"facility":
+			facility_requested.emit(Vector3i(_drag_start.x, _drag_start.y, selected_base))
+		elif interaction_mode == &"build":
 			build_rectangle_requested.emit(rect)
 		else:
+			if rect.size == Vector2i.ONE:
+				var hit := tile_at(finish)
+				if hit != null:
+					rect = tile_footprint(hit)
 			rectangle_selected.emit(rect)
 		queue_redraw()
 		return
@@ -609,6 +815,13 @@ func _gui_input(event: InputEvent) -> void:
 		var grid_pos: Variant = _cell_at(point)
 		if grid_pos == null:
 			return
+		grab_focus()
+		var base: Variant = terrain_model.base_at(grid_pos) if layered else 0
+		if base == null:
+			return
+		selected_base = int(base)
+		_drag_layer = terrain_model.cut
+		cell_selected.emit(terrain_model.surface_at(grid_pos) if layered else Vector3i(grid_pos.x, grid_pos.y, 0))
 		_dragging = true
 		_drag_inside = true
 		_drag_start = grid_pos
@@ -617,13 +830,90 @@ func _gui_input(event: InputEvent) -> void:
 		if interaction_mode != &"select":
 			queue_redraw()
 			return
-		var tile: ContinuumTile = null
-		if SpacetimeDB.Continuum.db != null:
-			for candidate: ContinuumTile in SpacetimeDB.Continuum.db.tile.iter():
-				if candidate.x == grid_pos.x and candidate.y == grid_pos.y:
-					tile = candidate
-					break
+		var tile: ContinuumTile = tile_at(grid_pos)
+		selected_tile_id = -1
 		if tile != null:
 			selected_tile_id = tile.id
 			tile_selected.emit(tile.id)
 			queue_redraw()
+
+
+func layer_shortcuts_allowed() -> bool:
+	if not is_visible_in_tree() or not is_processing_input():
+		return false
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus is LineEdit or focus is TextEdit or focus is SpinBox:
+		return false
+	# Clicking the map explicitly arms navigation. Other app/workspace controls
+	# own their keyboard context, even when they are not text editors.
+	return focus == self
+
+
+func actor_groups(rows: Array) -> Dictionary:
+	var groups := {}
+	for row in rows:
+		var id := int(LayeredTerrainModel.field(row, "id", -1))
+		var position: Vector3 = _visual_feet.get(id, LayeredTerrainModel.movement_position(row))
+		if not terrain_model.position_visible(position, int(LayeredTerrainModel.field(row, "body_width", 1)), int(LayeredTerrainModel.field(row, "body_depth", 1))):
+			continue
+		var key := Vector3i(floori(position.x), floori(position.y), floori(position.z))
+		if not groups.has(key):
+			groups[key] = []
+		groups[key].append(id)
+	return groups
+
+
+func entity_descriptors() -> Array:
+	var entities: Array = []
+	if SpacetimeDB.Continuum.db == null:
+		return entities
+	for tile: ContinuumTile in visible_tiles():
+		if tile.kind.value == ContinuumTileKind.Options.empty:
+			continue
+		var colour: Color = TILE_COLORS.get(tile.kind.value, Color("737d8b"))
+		if not tile.enabled:
+			colour = colour.lerp(DISABLED_COLOR, 0.75)
+		entities.append({"type": "facility", "rect": Rect2(tile_footprint(tile)), "z": tile.z,
+			"colour": colour, "enabled": tile.enabled, "label": ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize()})
+	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
+		if row_visible(stack) and stack.amount > 0:
+			entities.append({"type": "stack", "z": stack.z, "colour": RESOURCE_COLORS[stack.kind.value],
+				"rect": Rect2(Vector2(stack.x + 0.05, stack.y + 0.65), Vector2(0.4, 0.33))})
+	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
+	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool: return a.id < b.id)
+	var groups := actor_groups(colonists)
+	for index in colonists.size():
+		var colonist := colonists[index]
+		var feet: Vector3 = _visual_feet.get(colonist.id, LayeredTerrainModel.movement_position(colonist))
+		var key := Vector3i(floori(feet.x), floori(feet.y), floori(feet.z))
+		if not groups.has(key) or colonist.id not in groups[key]:
+			continue
+		var sharing: Array = groups[key]
+		var centre := Vector2(feet.x, feet.y) + Vector2.ONE * 0.5
+		if sharing.size() > 1:
+			centre += Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * 0.15
+		var sprite_size := 0.62 if sharing.size() > 1 else 0.82
+		var frame := _walk_frame if colonist.move_progress > 0 else 0
+		entities.append({"type": "colonist", "z": floori(feet.z), "rect": Rect2(centre - Vector2.ONE * sprite_size * 0.5, Vector2.ONE * sprite_size),
+			"texture": COLONIST_WALK_TEXTURE, "source": Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0, COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE),
+			"colour": COLONIST_COLORS[index % COLONIST_COLORS.size()], "cargo": colonist.carried_amount > 0,
+			"cargo_colour": RESOURCE_COLORS.get(colonist.carried_kind.value, Color.WHITE)})
+	return entities
+
+
+func _draw_excavations(origin: Vector2, cell: float) -> void:
+	if not layered:
+		return
+	for designation in table_rows(SpacetimeDB.Continuum.db, "excavation_designation"):
+		var bottom := int(LayeredTerrainModel.field(designation, "bottom_z", 0))
+		var height := int(LayeredTerrainModel.field(designation, "height", 6))
+		var area := designation_rect(designation)
+		for y in range(area.position.y, area.end.y):
+			for x in range(area.position.x, area.end.x):
+				var surface: Variant = terrain_model.surface_at(Vector2i(x, y))
+				if surface == null or surface.z < bottom or surface.z >= bottom + height:
+					continue
+				var rect := Rect2(origin + Vector2(x, y) * cell, Vector2.ONE * cell)
+				var colour := Color("ffc35a") if designation.enabled else Color("b57878")
+				draw_rect(rect.grow(-2), colour, false, 2)
+				draw_line(rect.position + Vector2.ONE * 4, rect.end - Vector2.ONE * 4, colour, 1)
