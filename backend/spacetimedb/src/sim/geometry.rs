@@ -328,6 +328,13 @@ impl Geometry {
         if !self.contains(Cell(x0, y0, bottom_z)) || !self.contains(Cell(x1, y1, top)) {
             return Err("excavation outside world bounds".into());
         }
+        let occupied: BTreeSet<_> = self
+            .designations
+            .iter()
+            .flat_map(|d| d.cells.iter())
+            .filter(|job| job.material != AIR)
+            .map(MiningCell::cell)
+            .collect();
         let mut cells = Vec::new();
         for z in (bottom_z..=top).rev() {
             for y in y0..=y1 {
@@ -335,11 +342,7 @@ impl Geometry {
                     let c = Cell(x, y, z);
                     let material = self.material(c).unwrap();
                     if material != AIR {
-                        if self.designations.iter().any(|d| {
-                            d.cells
-                                .iter()
-                                .any(|job| job.material != AIR && job.cell() == c)
-                        }) {
+                        if occupied.contains(&c) {
                             return Err("solid cell already designated".into());
                         }
                         cells.push(MiningCell {

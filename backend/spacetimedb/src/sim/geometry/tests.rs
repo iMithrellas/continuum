@@ -379,3 +379,18 @@ fn expansion_rejects_incomplete_old_chunks_instead_of_regenerating_old_land() {
     assert!(g.expand(128, 128).is_err());
     assert_eq!(g, original);
 }
+
+#[test]
+fn adjacent_large_designations_remain_distinct_and_paused_overlaps_reject_atomically() {
+    let mut g = Geometry::flat_with_dimensions(128, 128).unwrap();
+    let mut first = g.designate(1, 0, 0, 63, 127, -1, 1, 1).unwrap();
+    assert_eq!(first.cells.len(), 8192);
+    first.enabled = false;
+    g.designations.push(first);
+    let second = g.designate(2, 64, 0, 127, 127, -1, 1, 2).unwrap();
+    assert_eq!(second.cells.len(), 8192);
+    g.designations.push(second);
+    let original = g.clone();
+    assert!(g.designate(3, 63, 0, 64, 127, -1, 1, 3).is_err());
+    assert_eq!(g, original);
+}
