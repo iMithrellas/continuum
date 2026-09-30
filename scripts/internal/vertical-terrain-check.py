@@ -107,7 +107,7 @@ if baseline:
     print("TERRAIN_MIGRATION_PASS")
 
 geometry = rows("SELECT * FROM world_geometry")[0]
-assert geometry["width"] == geometry["height"] == 24
+assert geometry["width"] == geometry["height"] == (24 if baseline else 128)
 assert geometry["min_z"] == -16 and geometry["max_z"] >= 15
 materials = {row["id"]: row for row in rows("SELECT * FROM terrain_material")}
 assert {0, 1, 2} <= materials.keys()

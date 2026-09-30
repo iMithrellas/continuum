@@ -165,7 +165,8 @@ wood_before_failed_build="$(scalar 'SELECT wood FROM colony')"
 assert_call_fails build_tile_block 2 2 3 3 '{"mine":{}}'
 assert_eq "$(matching_events 'Built ')" "$events_before" "occupied build has no audit"
 assert_eq "$(scalar 'SELECT wood FROM colony')" "$wood_before_failed_build" "occupied build does not spend wood"
-assert_call_fails build_tile_block 23 23 24 23 '{"storage":{}}'
+world_width="$(scalar 'SELECT width FROM world_geometry')"
+assert_call_fails build_tile_block "$((world_width - 1))" 23 "$world_width" 23 '{"storage":{}}'
 assert_call_fails build_tile_block 0 0 0 0 '{"sleep":{}}'
 assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= 2 AND x <= 3 AND y >= 2 AND y <= 3" mine)" "0" "failed build rollback"
 
