@@ -105,6 +105,18 @@ test-map-ui:
 test-vertical-terrain:
     scripts/internal/test-vertical-terrain
 
+# Backend-free cut-height, surface picking and excavation interaction coverage.
+test-terrain-view:
+    {{ quote(godot) }} --headless --path client/godot --editor --quit
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/terrain_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/terrain_ui_test.tscn
+
+# Real GPU regression: spatial depth blur/darkening and sharp selection overlays.
+# Requires a display; intentionally not headless (Godot's headless renderer is dummy).
+test-terrain-render:
+    {{ quote(godot) }} --path client/godot --rendering-method gl_compatibility --scene res://tools/terrain_render_test.tscn
+    {{ quote(godot) }} --path client/godot --rendering-method gl_compatibility --scene res://tools/terrain_composed_test.tscn
+
 # Run the backend-free workspace layout and interaction regression scene.
 test-workspaces:
     {{ quote(godot) }} --headless --path client/godot --editor --quit
