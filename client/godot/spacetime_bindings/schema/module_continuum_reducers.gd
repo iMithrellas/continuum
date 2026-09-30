@@ -6,11 +6,6 @@ var _client: SpacetimeDBClient
 
 func _init(p_client: SpacetimeDBClient) -> void:
 	_client = p_client
-
-## 0. nonce: int [br]
-func diagnostic_echo(nonce: int) -> SpacetimeDBReducerCall:
-	return _client.call_reducer('diagnostic_echo', [nonce], [&'U64'])
-
 ## 0. alert_id: int [br]
 func acknowledge_alert(alert_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('acknowledge_alert', [alert_id], [&'U64'])
@@ -28,9 +23,54 @@ func build_facility(tile_id: int, kind: ContinuumTileKind) -> SpacetimeDBReducer
 func build_tile_block(start_x: int, start_y: int, end_x: int, end_y: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('build_tile_block', [start_x, start_y, end_x, end_y, kind], [&'I32', &'I32', &'I32', &'I32', &'ContinuumTileKind'])
 
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
+## 4. z: int [br]
+## 5. kind: ContinuumTileKind [br]
+func build_tile_block_at(x0: int, y0: int, x1: int, y1: int, z: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('build_tile_block_at', [x0, y0, x1, y1, z, kind], [&'I32', &'I32', &'I32', &'I32', &'I32', &'ContinuumTileKind'])
+
+## 0. id: int [br]
+func cancel_excavation(id: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('cancel_excavation', [id], [&'U64'])
+
+## 0. id: int [br]
+## 1. width: int [br]
+## 2. depth: int [br]
+## 3. clearance_height: int [br]
+## 4. max_step_height: int [br]
+func configure_colonist_body(id: int, width: int, depth: int, clearance_height: int, max_step_height: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('configure_colonist_body', [id, width, depth, clearance_height, max_step_height], [&'U64', &'U16', &'U16', &'U16', &'U16'])
+
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
+## 4. bottom_z: int [br]
+## 5. height: int [br]
+## 6. priority: int [br]
+func designate_excavation(x0: int, y0: int, x1: int, y1: int, bottom_z: int, height: int, priority: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('designate_excavation', [x0, y0, x1, y1, bottom_z, height, priority], [&'I32', &'I32', &'I32', &'I32', &'I32', &'U16', &'U8'])
+
+## 0. _nonce: int [br]
+func diagnostic_echo(_nonce: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('diagnostic_echo', [_nonce], [&'U64'])
+
 ## 0. identity: PackedByteArray [br]
 func grant_admin(identity: PackedByteArray) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('grant_admin', [identity], [&'__identity__'])
+
+## 0. x: int [br]
+## 1. y: int [br]
+## 2. z: int [br]
+## 3. kind: ContinuumTileKind [br]
+## 4. width: int [br]
+## 5. depth: int [br]
+## 6. clearance_height: int [br]
+func place_facility(x: int, y: int, z: int, kind: ContinuumTileKind, width: int, depth: int, clearance_height: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('place_facility', [x, y, z, kind, width, depth, clearance_height], [&'I32', &'I32', &'I32', &'ContinuumTileKind', &'U16', &'U16', &'U16'])
 
 ## 0. order_id: int [br]
 func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
@@ -49,6 +89,22 @@ func reset_colony() -> SpacetimeDBReducerCall:
 ## 6. enabled: bool [br]
 func set_block_work_order(start_x: int, start_y: int, end_x: int, end_y: int, work: ContinuumWorkType, priority: int, enabled: bool) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_block_work_order', [start_x, start_y, end_x, end_y, work, priority, enabled], [&'I32', &'I32', &'I32', &'I32', &'ContinuumWorkType', &'U8', &'Bool'])
+
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
+## 4. z: int [br]
+## 5. work: ContinuumWorkType [br]
+## 6. priority: int [br]
+## 7. enabled: bool [br]
+func set_block_work_order_at(x0: int, y0: int, x1: int, y1: int, z: int, work: ContinuumWorkType, priority: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_block_work_order_at', [x0, y0, x1, y1, z, work, priority, enabled], [&'I32', &'I32', &'I32', &'I32', &'I32', &'ContinuumWorkType', &'U8', &'Bool'])
+
+## 0. id: int [br]
+## 1. enabled: bool [br]
+func set_excavation_enabled(id: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_excavation_enabled', [id, enabled], [&'U64', &'Bool'])
 
 ## 0. policy: ContinuumHaulPolicy [br]
 func set_haul_policy(policy: ContinuumHaulPolicy) -> SpacetimeDBReducerCall:
@@ -74,6 +130,15 @@ func set_speed_change_cooldown(cooldown_seconds: int) -> SpacetimeDBReducerCall:
 ## 4. enabled: bool [br]
 func set_tile_block_enabled(start_x: int, start_y: int, end_x: int, end_y: int, enabled: bool) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_tile_block_enabled', [start_x, start_y, end_x, end_y, enabled], [&'I32', &'I32', &'I32', &'I32', &'Bool'])
+
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
+## 4. z: int [br]
+## 5. enabled: bool [br]
+func set_tile_block_enabled_at(x0: int, y0: int, x1: int, y1: int, z: int, enabled: bool) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_tile_block_enabled_at', [x0, y0, x1, y1, z, enabled], [&'I32', &'I32', &'I32', &'I32', &'I32', &'Bool'])
 
 ## 0. tile_id: int [br]
 ## 1. enabled: bool [br]

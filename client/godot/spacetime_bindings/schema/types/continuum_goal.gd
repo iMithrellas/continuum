@@ -49,4 +49,3 @@ static func create_work() -> ContinuumGoal:
 
 static func create_haul() -> ContinuumGoal:
 	return create(Options.haul)
-

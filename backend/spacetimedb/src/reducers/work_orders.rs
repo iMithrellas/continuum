@@ -27,6 +27,10 @@ pub fn set_work_order(
             y: tile.y,
             kind: tile.kind,
             enabled: tile.enabled,
+            z: tile.z,
+            width: tile.width,
+            depth: tile.depth,
+            clearance_height: tile.clearance_height,
         },
         work,
         priority,
@@ -100,6 +104,10 @@ mod work_order_validation_tests {
             y: 0,
             kind: TileKind::Farm,
             enabled: true,
+            z: 0,
+            width: 1,
+            depth: 1,
+            clearance_height: 4,
         };
         assert!(WorkOrder::new(&tile, WorkType::None, 2, true).is_err());
         assert!(WorkOrder::new(&tile, WorkType::Mining, 2, true).is_err());
@@ -122,6 +130,10 @@ mod work_order_validation_tests {
                 y: 0,
                 kind: work.definition().unwrap().facility,
                 enabled: false,
+                z: 0,
+                width: 1,
+                depth: 1,
+                clearance_height: 4,
             };
             let original = WorkOrder::new(&tile, work, 1, true).unwrap();
             for priority in 1..=3 {

@@ -39,4 +39,3 @@ static func create_stone() -> ContinuumResourceKind:
 
 static func create_meat() -> ContinuumResourceKind:
 	return create(Options.meat)
-

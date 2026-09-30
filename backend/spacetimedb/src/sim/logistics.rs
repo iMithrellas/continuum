@@ -41,6 +41,31 @@ pub(super) fn assign_haul_roles(world: &mut World) {
 /// carry.
 pub(super) fn labour_goal(world: &World, index: usize, tuning: &Tuning) -> Option<Goal> {
     let colonist = &world.colonists[index];
+    if world.geometry.is_some() {
+        if colonist.is_carrying() {
+            return world
+                .live_destination(index, tuning, Goal::Haul)
+                .map(|_| Goal::Haul);
+        }
+        if colonist.assignment.haul_role.hauls()
+            && world.live_destination(index, tuning, Goal::Haul).is_some()
+        {
+            // A pickup must have a reachable delivery destination as well.
+            let storage = world
+                .geometry
+                .as_ref()
+                .unwrap()
+                .reachable(world.actor_cell(index), colonist.spatial.body);
+            if world.tiles.iter().any(|t| {
+                t.kind == TileKind::Storage && t.enabled && storage.contains_key(&t.base())
+            }) {
+                return Some(Goal::Haul);
+            }
+        }
+        return (colonist.assignment.haul_role.produces()
+            && world.live_destination(index, tuning, Goal::Work).is_some())
+        .then_some(Goal::Work);
+    }
     let storage_open = world.has_enabled(TileKind::Storage);
 
     // Hands full: finish the delivery before anything else on the job.
@@ -93,11 +118,20 @@ pub(super) fn step_work(world: &mut World, colonist_index: usize, tuning: &Tunin
     let Some(definition) = world.colonists[colonist_index].assignment.work.definition() else {
         return;
     };
+    if world.geometry.is_some()
+        && world.colonists[colonist_index].assignment.work == WorkType::Mining
+    {
+        world.step_mining(colonist_index, tuning, dt_hours);
+        return;
+    }
     let (x, y) = (
         world.colonists[colonist_index].position.x,
         world.colonists[colonist_index].position.y,
     );
-    let Some(tile) = world.tile_at(x, y).cloned() else {
+    let Some(tile) = world
+        .tile_at_elevation(x, y, world.colonists[colonist_index].spatial.z)
+        .cloned()
+    else {
         return;
     };
     if world
@@ -117,7 +151,10 @@ pub(super) fn step_haul(world: &mut World, colonist_index: usize, tuning: &Tunin
         world.colonists[colonist_index].position.x,
         world.colonists[colonist_index].position.y,
     );
-    let Some(tile) = world.tile_at(x, y).cloned() else {
+    let Some(tile) = world
+        .tile_at_elevation(x, y, world.colonists[colonist_index].spatial.z)
+        .cloned()
+    else {
         return;
     };
     if world.colonists[colonist_index].is_carrying() {
@@ -134,6 +171,24 @@ pub(super) fn step_haul(world: &mut World, colonist_index: usize, tuning: &Tunin
     let Some(definition) = world.colonists[colonist_index].assignment.work.definition() else {
         return;
     };
+    if world.geometry.is_some()
+        && world.colonists[colonist_index].assignment.work == WorkType::Mining
+    {
+        if !world.colonists[colonist_index].assignment.haul_role.hauls() {
+            return;
+        }
+        let taken = world.take_from_stack(
+            tile.id,
+            definition.output,
+            tuning.stack_size(definition.output),
+        );
+        if taken > 0.0 {
+            let actor = &mut world.colonists[colonist_index];
+            actor.cargo.kind = definition.output;
+            actor.cargo.amount = taken;
+        }
+        return;
+    }
     if tile.kind != definition.facility
         || !world.colonists[colonist_index].assignment.haul_role.hauls()
         || !world.has_enabled(TileKind::Storage)

@@ -59,4 +59,3 @@ static func create_dining() -> ContinuumTileKind:
 
 static func create_recreation() -> ContinuumTileKind:
 	return create(Options.recreation)
-

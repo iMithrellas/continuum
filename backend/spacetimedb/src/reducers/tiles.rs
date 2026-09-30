@@ -53,6 +53,18 @@ pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Res
         .id()
         .find(0)
         .ok_or_else(|| "colony is not initialised".to_string())?;
+    if tile.z != 0 {
+        return Err("legacy build_facility only targets z=0".into());
+    }
+    let world = crate::persistence::load_world(ctx);
+    let mut placement = world
+        .tiles
+        .iter()
+        .find(|t| t.id == tile_id)
+        .unwrap()
+        .clone();
+    placement.kind = kind;
+    world.validate_placement(&placement)?;
     validate_facility_build(
         &crate::sim::Tile {
             id: tile.id,
@@ -60,6 +72,10 @@ pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Res
             y: tile.y,
             kind: tile.kind,
             enabled: tile.enabled,
+            z: tile.z,
+            width: tile.width,
+            depth: tile.depth,
+            clearance_height: tile.clearance_height,
         },
         kind,
         colony.wood,
@@ -89,7 +105,12 @@ pub fn set_zone_enabled(ctx: &ReducerContext, kind: TileKind, enabled: bool) -> 
         return Err("empty tiles cannot be enabled or disabled".into());
     }
     let mut changed = 0u32;
-    for mut tile in ctx.db.tile().iter().filter(|tile| tile.kind == kind) {
+    for mut tile in ctx
+        .db
+        .tile()
+        .iter()
+        .filter(|tile| tile.kind == kind && tile.z == 0)
+    {
         if tile.enabled != enabled {
             tile.enabled = enabled;
             ctx.db.tile().id().update(tile);

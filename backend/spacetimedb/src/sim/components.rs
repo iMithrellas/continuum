@@ -75,6 +75,7 @@ pub struct Colonist {
     pub assignment: WorkAssignment,
     pub task: ActivityState,
     pub cargo: Cargo,
+    pub spatial: super::geometry::Spatial,
 }
 
 impl Colonist {
@@ -86,6 +87,10 @@ impl Colonist {
         let position = Position { x, y };
         Self {
             id,
+            spatial: super::geometry::Spatial {
+                next: super::geometry::Cell(x, y, 0),
+                ..Default::default()
+            },
             name: name.to_string(),
             position,
             movement: Movement {

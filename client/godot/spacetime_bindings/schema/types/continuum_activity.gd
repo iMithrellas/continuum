@@ -54,4 +54,3 @@ static func create_sleeping() -> ContinuumActivity:
 
 static func create_recreating() -> ContinuumActivity:
 	return create(Options.recreating)
-

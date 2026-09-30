@@ -11,6 +11,10 @@ const table_names: Array[String] = ['tile']
 @export var y: int
 @export var kind: ContinuumTileKind
 @export var enabled: bool
+@export var z: int
+@export var width: int
+@export var depth: int
+@export var clearance_height: int
 
 #BSATN metadata
 const primary_key: StringName = &'id'
@@ -19,7 +23,11 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"x": "I32",
 	"y": "I32",
 	"kind": "ContinuumTileKind",
-	"enabled": "Bool"
+	"enabled": "Bool",
+	"z": "I32",
+	"width": "U16",
+	"depth": "U16",
+	"clearance_height": "U16"
 }
 
 ## 1. id: int[br]
@@ -27,11 +35,19 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 ## 3. y: int[br]
 ## 4. kind: ContinuumTileKind[br]
 ## 5. enabled: bool[br]
-static func create(p_id: int, p_x: int, p_y: int, p_kind: ContinuumTileKind, p_enabled: bool) -> ContinuumTile:
+## 6. z: int[br]
+## 7. width: int[br]
+## 8. depth: int[br]
+## 9. clearance_height: int[br]
+static func create(p_id: int, p_x: int, p_y: int, p_kind: ContinuumTileKind, p_enabled: bool, p_z: int, p_width: int, p_depth: int, p_clearance_height: int) -> ContinuumTile:
 	var result: ContinuumTile = ContinuumTile.new()
 	result.id = p_id
 	result.x = p_x
 	result.y = p_y
 	result.kind = p_kind
 	result.enabled = p_enabled
+	result.z = p_z
+	result.width = p_width
+	result.depth = p_depth
+	result.clearance_height = p_clearance_height
 	return result

@@ -10,6 +10,10 @@ pub struct Tile {
     pub y: i32,
     pub kind: TileKind,
     pub enabled: bool,
+    pub z: i32,
+    pub width: u16,
+    pub depth: u16,
+    pub clearance_height: u16,
 }
 
 /// A pile of one resource sitting on one tile, waiting to be hauled.
@@ -26,6 +30,7 @@ pub struct ItemStack {
     pub y: i32,
     pub kind: ResourceKind,
     pub amount: f32,
+    pub z: i32,
 }
 
 pub fn stack_id(tile_id: u32, kind: ResourceKind) -> u64 {
@@ -80,6 +85,8 @@ impl Resources {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
+    /// None is reserved for historical flat simulation fixtures; live loads use Some.
+    pub geometry: Option<super::geometry::Geometry>,
     pub tiles: Vec<Tile>,
     /// Standing production permissions; an empty list disables all production.
     pub work_orders: Vec<WorkOrder>,
@@ -225,6 +232,7 @@ impl World {
                     tile_id: tile.id,
                     x: tile.x,
                     y: tile.y,
+                    z: tile.z,
                     kind,
                     amount,
                 },

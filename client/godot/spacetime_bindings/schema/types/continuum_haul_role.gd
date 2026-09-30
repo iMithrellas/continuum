@@ -34,4 +34,3 @@ static func create_producer() -> ContinuumHaulRole:
 
 static func create_hauler() -> ContinuumHaulRole:
 	return create(Options.hauler)
-

@@ -19,13 +19,18 @@ const Config = Types.Config
 const HaulPolicy = Types.HaulPolicy
 const MealPolicy = Types.MealPolicy
 const EventLog = Types.EventLog
+const ExcavationDesignation = Types.ExcavationDesignation
+const MiningCell = Types.MiningCell
 const ItemStack = Types.ItemStack
 const Membership = Types.Membership
 const Role = Types.Role
 const SpeedControl = Types.SpeedControl
 const Terrain = Types.Terrain
+const TerrainChunk = Types.TerrainChunk
+const TerrainMaterial = Types.TerrainMaterial
 const Tile = Types.Tile
 const WorkOrder = Types.WorkOrder
+const WorldGeometry = Types.WorldGeometry
 const WorldSeed = Types.WorldSeed
 
 
