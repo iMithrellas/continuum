@@ -51,10 +51,14 @@ requires an explicit collision-free identity extension/migration; do not change
 existing IDs to match a new storage layout. Runtime ECS handles, if introduced,
 must remain distinct from durable IDs.
 
-Terrain and operational tile kinds remain separate. Tile kinds are still a
-prototype limitation: before adding material-driven construction, introduce
-capability/suitability queries rather than expanding a mutually exclusive kind
-into every possible combination. This refactor does not implement that system.
+Terrain and operational tile kinds remain separate. Atomic material blocks use
+chunked arrays, not per-cell actors or a tile inheritance hierarchy. Entity
+footprints and standing clearance are capabilities checked against that
+geometry. Navigation, surface visibility, and enclosure roles are derived data;
+they must not rewrite authoritative material geometry. See
+[Vertical Terrain](vertical-terrain.md) for coordinate and rendering conventions.
+Operational kinds remain a prototype limitation, not a taxonomy of materials
+or a substitute for geometry suitability queries.
 
 ## Verification
 
@@ -68,5 +72,6 @@ format. Do not regenerate them merely to make a refactor pass.
 Additional tests cover storage-order independence, legacy keys, standalone
 components, and every colonist persistence field (including empty cargo). The
 existing hauling conservation and long-running failure/recovery tests remain.
-No schema migration or client-binding regeneration is needed for this internal
-composition change.
+The original internal composition refactor did not require a schema migration.
+Vertical-terrain changes extend the public schema and require matching generated
+client bindings; deployment must follow their explicit migration policy.
