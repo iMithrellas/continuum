@@ -1,0 +1,16 @@
+Godot Engine v4.7.2.stable.arch_linux.ed1daf0bf (2026-08-17 01:18:38 UTC) - https://godotengine.org
+WARNING: Could not set V-Sync mode, as changing V-Sync mode is not supported by the graphics driver.
+     at: set_use_vsync (platform/linuxbsd/x11/gl_manager_x11.cpp:372)
+OpenGL API 4.6 (Core Profile) Mesa 26.2.3-arch1.1 - Compatibility - Using Device: Mesa - llvmpipe (LLVM 22.1.8, 256 bits)
+
+PROFILE environment godot=4.7.2-stable (arch_linux) display=X11 edge=24 viewport=(1280, 720)
+PROFILE initial_refresh n=1 mean_ms=125.057 p95_ms=125.057 max_ms=125.057
+PROFILE unchanged_refresh n=5 mean_ms=62.467 p95_ms=63.977 max_ms=63.977
+PROFILE entity_descriptors n=30 mean_ms=62.328 p95_ms=64.083 max_ms=64.482
+PROFILE visible_tiles n=30 mean_ms=58.200 p95_ms=60.749 max_ms=61.180
+PROFILE field_1000 n=10 mean_ms=28.197 p95_ms=28.693 max_ms=28.693
+PROFILE idle_process n=180 mean_ms=2.962 p95_ms=1.894 max_ms=63.783
+PROFILE moving_process n=180 mean_ms=62.891 p95_ms=65.431 max_ms=67.082
+PROFILE max_entity_buffer=(768, 768) bands=32 terrain_textures=2
+PROFILE idle_gpu_frame n=180 p50_ms=10.799 p95_ms=12.381 max_ms=411.623
+MAP_CLIENT_PROFILE_DONE

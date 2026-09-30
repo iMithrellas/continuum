@@ -14,10 +14,16 @@ var materials: Dictionary = {0: {"name": "air", "opaque": false}}
 var _opaque_materials: Dictionary = {0: false}
 var surfaces: Dictionary = {}
 var signature := ""
+## Lowest exposed feet layer, including rays with no supporting floor.
+## A solid or unknown voxel terminates exposure; neither is inferred as air.
+var _exposed_bottom: Dictionary = {}
+var revision := 0
 
 func reset() -> void:
 	chunks.clear()
 	surfaces.clear()
+	_exposed_bottom.clear()
+	revision += 1
 	materials = {0: {"name": "air", "opaque": false}}
 	_opaque_materials = {0: false}
 	signature = ""
@@ -53,16 +59,16 @@ static func sample_movement(row: Variant, previous: Dictionary, weight: float) -
 	var progress := authoritative
 	if previous.get("source") == source and previous.get("next") == next and authoritative >= float(previous.get("authoritative", authoritative)):
 		progress = lerpf(float(previous.progress), authoritative, clampf(weight, 0.0, 1.0))
+		if absf(progress - authoritative) < 0.0001:
+			progress = authoritative
 	return {"source": source, "next": next, "progress": progress, "authoritative": authoritative,
 		"position": step_position(source, next, progress)}
 
 static func field(row: Variant, key: String, fallback: Variant = null) -> Variant:
 	if row is Dictionary:
 		return row.get(key, fallback)
-	if row is Object:
-		for property in row.get_property_list():
-			if property.name == key:
-				return row.get(key)
+	if row is Object and key in row:
+		return row.get(key)
 	return fallback
 
 static func movement_position(row: Variant) -> Vector3:
@@ -76,7 +82,7 @@ func sync(geometry: Variant, chunk_rows: Array, material_rows: Array) -> bool:
 	min_z = int(field(geometry, "min_z", -16))
 	max_z = int(field(geometry, "max_z", 15))
 	cut = clampi(cut, min_z, max_z)
-	var parts: Array[String] = [str(width), str(height), str(min_z), str(max_z), str(cut)]
+	var parts: Array[String] = [str(width), str(height), str(min_z), str(max_z)]
 	chunks.clear()
 	for row in chunk_rows:
 		var coordinate := Vector3i(field(row, "chunk_x", 0), field(row, "chunk_y", 0), field(row, "chunk_z", 0))
@@ -102,7 +108,6 @@ func set_cut(layer: int) -> bool:
 	if next == cut:
 		return false
 	cut = next
-	signature = ""
 	rebuild()
 	return true
 
@@ -124,16 +129,32 @@ func surface_at(xy: Vector2i) -> Variant:
 
 func rebuild() -> void:
 	surfaces.clear()
+	_exposed_bottom.clear()
+	revision += 1
 	for y in height:
 		for x in width:
+			var xy := Vector2i(x, y)
+			var column_chunk := Vector3i(x / EDGE, y / EDGE, 0)
+			var column_index := x % EDGE + EDGE * (y % EDGE)
+			var chunk_z := 2147483647
+			var values: Variant = []
+			var bottom := min_z
 			for z in range(cut, min_z - 1, -1):
-				var cell := Vector3i(x, y, z)
-				var material := material_at(cell)
-				if material < 0 or not _opaque_materials.has(material):
+				var cz := floori(z / float(EDGE))
+				if cz != chunk_z:
+					chunk_z = cz
+					column_chunk.z = cz
+					values = chunks.get(column_chunk, [])
+				var index := column_index + EDGE * EDGE * (z - cz * EDGE)
+				var material := int(values[index]) if index < values.size() else -1
+				if not _opaque_materials.has(material):
+					bottom = z + 1
 					break # unresolved ray: no inferred floor, base, or hit target
-				if opaque(cell):
-					surfaces[Vector2i(x, y)] = cell
+				if _opaque_materials[material]:
+					surfaces[xy] = Vector3i(x, y, z)
+					bottom = z + 1
 					break
+			_exposed_bottom[xy] = bottom
 
 func base_at(xy: Vector2i) -> Variant:
 	var surface: Variant = surface_at(xy)
@@ -149,7 +170,7 @@ func depth_at(xy: Vector2i) -> int:
 ## cross the cut. Unknown chunks are not invented walls or selectable floors.
 func entity_visible(row: Variant) -> bool:
 	var base := int(field(row, "z", 0))
-	if base > cut:
+	if base > cut or base < min_z:
 		return false
 	var x := int(field(row, "x", 0))
 	var y := int(field(row, "y", 0))
@@ -159,11 +180,8 @@ func entity_visible(row: Variant) -> bool:
 		for xx in range(x, x + w):
 			if xx < 0 or yy < 0 or xx >= width or yy >= height:
 				return false
-			for z in range(base, cut + 1):
-				var cell := Vector3i(xx, yy, z)
-				var material := material_at(cell)
-				if material < 0 or not _opaque_materials.has(material) or opaque(cell):
-					return false
+			if base < int(_exposed_bottom.get(Vector2i(xx, yy), cut + 1)):
+				return false
 	return true
 
 func position_visible(position: Vector3, body_width := 1, body_depth := 1) -> bool:
@@ -171,7 +189,7 @@ func position_visible(position: Vector3, body_width := 1, body_depth := 1) -> bo
 		return false
 	for y in range(floori(position.y), ceili(position.y + body_depth)):
 		for x in range(floori(position.x), ceili(position.x + body_width)):
-			if not entity_visible({"x": x, "y": y, "z": floori(position.z)}):
+			if x < 0 or y < 0 or x >= width or y >= height or floori(position.z) < int(_exposed_bottom.get(Vector2i(x, y), cut + 1)):
 				return false
 	return true
 

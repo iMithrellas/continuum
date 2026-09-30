@@ -1,0 +1,28 @@
+Godot 4.7.2 debug, backend-free generated rows; OpenGL compatibility via isolated Xvfb / Mesa llvmpipe
+TERRAIN_TEST_PASS: 125 assertions
+TERRAIN_UI_PASS
+MAP_CLIENT_TEST edge=128 32_depth_bands pixels=8388608 limit=8388608
+MAP_CLIENT_TEST edge=128 entity_bands=31 pixels=7976800 limit=8388608
+MAP_CLIENT_TEST edge=256 32_depth_bands pixels=8388608 limit=8388608
+MAP_CLIENT_TEST edge=256 entity_bands=31 pixels=7976800 limit=8388608
+MAP_CLIENT_TEST_PASS: 699 assertions
+MAP_UI_PASS (existing contract with in-memory rows and fixture roles)
+WORKSPACE_PASS
+MAIN_MENU_PASS
+DIAGNOSTICS_INTEGRATION_PASS
+SESSION_SWITCH_PASS
+UI_SCALE_PASS (expected corrupt-config parse error only)
+HISTORY_PASS
+SUBSCRIPTION_LIFECYCLE_PASS
+DIAGNOSTICS_PASS
+TERRAIN_RENDER_PASS sharp_overlay=true
+TERRAIN_COMPOSED_PASS near_floor_difference=0.000000
+MAP_CLIENT_RENDER idle_draw_calls=5 forced_always_draw_calls=10
+MAP_CLIENT_RENDER edge=24 max_terrain_texture=(768, 768) terrain_pixels=1179648 entity_pixels=589824
+MAP_CLIENT_RENDER_PASS edge=24 near_floor_difference=0.000000 actor_pixels=944
+MAP_CLIENT_RENDER idle_draw_calls=5 forced_always_draw_calls=10
+MAP_CLIENT_RENDER edge=128 max_terrain_texture=(2048, 2048) terrain_pixels=8388608 entity_pixels=409600
+MAP_CLIENT_RENDER_PASS edge=128 near_floor_difference=0.000000 actor_pixels=944
+MAP_CLIENT_RENDER idle_draw_calls=5 forced_always_draw_calls=10
+MAP_CLIENT_RENDER edge=256 max_terrain_texture=(2048, 2048) terrain_pixels=8388608 entity_pixels=409600
+MAP_CLIENT_RENDER_PASS edge=256 near_floor_difference=0.000000 actor_pixels=944

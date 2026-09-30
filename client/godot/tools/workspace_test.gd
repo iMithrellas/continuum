@@ -82,7 +82,10 @@ func _test_geometry(_model: WorkspaceLayout) -> void:
 		"resize snaps both trailing edges to viewport")
 
 func _test_manager() -> void:
+	var previous_db := SpacetimeDB.Continuum.db
+	var local := preload("res://tools/terrain_fixture.gd").database(false)
 	var map := ColonyMap.new()
+	map.bind_world_source(SpacetimeDB.Continuum.db)
 	map.name = "Map"
 	map._has_state = true
 	map._grid = Vector2i(24, 24)
@@ -172,6 +175,9 @@ func _test_manager() -> void:
 		reloaded.workspaces[reloaded.active].name == "Survey notes", "UI edits auto-save the active workspace")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(manager_path))
 	deck.queue_free()
+	map.queue_free()
+	SpacetimeDB.Continuum.db = previous_db
+	local.free()
 
 func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
 	for key: String in deck.windows:

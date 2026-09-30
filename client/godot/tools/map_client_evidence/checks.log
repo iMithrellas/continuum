@@ -1,0 +1,17 @@
+PASS terrain elapsed_s=0.64
+PASS terrain-ui elapsed_s=1.61
+PASS map-client elapsed_s=4.22
+PASS workspace elapsed_s=0.65
+PASS menu elapsed_s=0.57
+PASS diagnostics-ui elapsed_s=1.53
+PASS legacy-map-ui elapsed_s=1.58
+PASS session elapsed_s=1.52
+PASS ui_scale_test elapsed_s=0.52
+PASS history_test elapsed_s=0.52
+PASS subscription_lifecycle_test elapsed_s=0.49
+PASS diagnostics_test elapsed_s=0.49
+PASS terrain_render_test elapsed_s=0.74
+PASS terrain_composed_test elapsed_s=1.09
+PASS camera-render-24 elapsed_s=1.09
+PASS camera-render-128 elapsed_s=1.39
+PASS camera-render-256 elapsed_s=1.99

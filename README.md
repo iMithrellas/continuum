@@ -97,6 +97,12 @@ floors hide lower rooms, while shafts reveal lower surfaces. Deeper geometry is
 progressively blurred and darkened; selection overlays remain sharp. Interaction
 uses the visible surface's actual coordinates, not an assumed fixed storey.
 
+The persistent map toolbar shows `Layer z=… | …m` and zoom, even for viewers
+and in Map mode. Its arrows and PageUp/PageDown (or `]`/`[`, with map focus)
+step one 0.5 m layer. Mouse wheel zooms around the cursor; middle-drag pans.
+`Fit` centres and fits the full map; `1:1` restores native 32px cells. Zooming,
+panning, changing layers, or losing focus cancels an unfinished editing drag.
+
 Excavation designations specify a horizontal footprint and arbitrary integer
 height, defaulting to six clear cells (3 m). Facilities also have configurable
 footprint and clearance dimensions for multi-cell furniture and tall equipment.
@@ -373,6 +379,13 @@ processes only inside a private PID-namespace container; Docker is test isolatio
 not the production local-server runtime.
 
 ## Development
+
+Use `just test-map-client` for camera, HUD, cache and existing client contracts;
+`just test-map-client-render` adds isolated software-GL camera/shader checks at
+24/128/256 cells. `just profile-map-client` repeats the recorded CPU/frame/UI
+fixtures. Install Xvfb for the isolated render/profile recipes; they do not
+capture production GPU or network performance. Measured methods and limits are
+in [the client evidence](client/godot/tools/map_client_evidence/methods.md).
 
 Run backend tests:
 
