@@ -3,8 +3,9 @@
 ## Authority and wire layout
 
 - Coordinates are integer **0.5 m cells** (volume **0.125 m³**); z is the
-  feet/base layer and support is z − 1. Default bounds are x/y `0..24`
-  (exclusive upper bounds), z **−16..=15** (inclusive).
+  feet/base layer and support is z − 1. Fresh/reset bounds are x/y `0..128`
+  (exclusive upper bounds), z **−16..=15** (inclusive). The 24 × 24 starter layout
+  retains its original 576 operational/environment rows and eight colonists.
 - `world_geometry` has singleton ID 0. `terrain_chunk` uses edge 16,
   Euclidean negative chunk coordinates, and `x + 16*(y + 16*z)` local ordering.
   Each chunk always contains 4096 material IDs, including air padding outside
@@ -37,6 +38,15 @@ SpacetimeDB's canonical schema names rectangle arguments/fields **`x_0`, `y_0`,
 `x_1`, `y_1`**, even though the Rust source uses `x0`, `y0`, `x1`, `y1`.
 Old coordinate rectangles and zone-wide operations select **z=0 only**;
 ID-addressed operations still address their explicit durable entity.
+
+`expand_world(width: i32, height: i32)` is admin-only and grows initialized
+horizontal bounds without reseeding the colony. Each dimension must be positive,
+at most 256, and no smaller than its current value; equal bounds are a no-op.
+Existing cells, chunk IDs, excavations/jobs, facilities, actors, goods, orders,
+and clock remain intact. Newly exposed cells, including former chunk padding,
+are explicitly seeded as soil/stone below air. Only changed old chunks advance
+revision. Incomplete authoritative geometry rejects instead of refilling holes.
+Rectangle reducers use physical bounds and support sparse operational rows.
 
 - Facilities are accessible **capability/room reservations**, not solid walls
   or blocking furniture. All dimensions must be positive, all footprint cells
@@ -81,7 +91,7 @@ ID-addressed operations still address their explicit durable entity.
 ## Explicit additive migration
 
 SpacetimeDB 2.10 schema defaults append the fields; all new tables are additive.
-When geometry is missing on a live load, install a flat volume: soil at z=−1,
+When geometry is missing on a live load, install a flat 24 × 24 volume: soil at z=−1,
 stone at z=−16..−2, air at z=0..15. This preserves every old z=0 operational
 tile and actor location, resource quantity, identity, work order and existing
 environmental/dirty row. No hillside or work orders are imposed on old colonies.
@@ -109,7 +119,10 @@ database was published, reset or otherwise mutated during implementation.
   keep a job blocked until the occupant moves.
 - Sparse supported-position graphs, actor-local BFS trees and planned routes are
   derived transaction-local caches, separate from authoritative material arrays.
-  At most eight body graphs and 32 actor searches/routes are retained; coordinate
+  Compact column-clearance masks avoid enumerating every empty z position.
+  Canonical BFS searches resume lazily, while disconnected components reject
+  impossible routes before repeated full searches. At most eight body graphs
+  and 32 actor searches/routes are retained; coordinate
   origins do not accumulate unbounded cache entries. Every actual voxel write
   advances an internal invalidation epoch, including repeated writes in one chunk
   whose public revision increments only once. Dynamic reservations/goods are
@@ -150,18 +163,41 @@ cargo run --release --manifest-path backend/spacetimedb/Cargo.toml \
   --example geometry_profile -- 5
 ```
 
-Fresh physical-world simulation, five-sample native medians (milliseconds):
+Fresh 128 × 128 physical-world simulation, five-sample native medians
+(milliseconds):
 
 | Requested game seconds | Native median | Native max |
 |---:|---:|---:|
-| 6 | 1.817 | 1.911 |
-| 60 | 1.703 | 1.794 |
-| 600 | 4.282 | 4.583 |
-| 3600 | 23.033 | 24.264 |
-| 100000 | 401.268 | 416.591 |
+| 6 | 5.706 | 6.233 |
+| 60 | 5.765 | 6.147 |
+| 600 | 9.415 | 9.633 |
+| 3600 | 35.563 | 36.808 |
+| 100000 | 565.565 | 567.161 |
 
-A cold `mining_job` over a valid 9216-solid-cell designation takes median
-1.283 ms; a completely buried 8640-cell designation returns no job in 3.072 ms.
+Real-WASM server CPU medians at these speeds were 40, 40, 50, 110, and
+1330 ms respectively (three samples; includes server persistence/API/SQL work,
+excludes scheduler waiting and CLI child CPU). At the 256-cell maximum, a normal
+tick measured 20.639 ms native / 110 ms WASM CPU; the extreme 100000-second tick
+measured 1162 / 3270 ms. Extreme speed is not guaranteed to maintain a 1 Hz wall
+cadence, and elapsed simulation time is never silently skipped.
+
+Repeat the larger-world gates with:
+
+```sh
+cargo run --release --manifest-path backend/spacetimedb/Cargo.toml \
+  --example geometry_profile -- 5 128
+python3 backend/spacetimedb/tools/profile_live.py --size 128 --samples 3 --scale-gate
+python3 backend/spacetimedb/tools/profile_live.py --size 256 --samples 3
+```
+
+The scale gate covers authorization, non-aligned expansion, sparse rectangle
+operations, existing-world upgrades, and preservation of paused colony state.
+These measurements cover eight founding actors and the starter layout, not
+arbitrary populations or full-map bulk operations. Terrain is not streamed.
+
+A cold `mining_job` over a valid 9216-solid-cell designation in the 128 world
+takes median 3.701 ms; a completely buried 8640-cell designation returns no job
+in 5.576 ms. These vectors occupy a 24 × 24 subregion, not the entire map.
 Mining inverts target-face/footprint/reach constraints and stops at the first
 eligible top-down cell, rather than multiplying every job by every reachable
 position. Multiple decisions share actor BFS; travel consumes a retained route

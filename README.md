@@ -5,7 +5,8 @@ simulation runs as a SpacetimeDB module and keeps advancing while no clients are
 connected. Godot subscribes directly to the database over WebSockets and sends
 intent-level reducer calls; there is no separate REST server.
 
-This vertical slice contains a 24x24 colony and eight autonomous colonists, with
+Fresh worlds contain 128x128 physical cells (64x64 m), a 24x24 starter colony,
+and eight autonomous colonists, with
 two workers each in farming, logging, mining, and hunting. Production, ground
 items, hauling, and shared storage sit alongside food consumption, sleep,
 recreation, mood, fatigue, productivity, alerts, and an event log. The recoverable
@@ -102,6 +103,12 @@ footprint and clearance dimensions for multi-cell furniture and tall equipment.
 Material definitions carry density, strength, conductivity, and specific heat
 metadata; full structural and thermal simulations are deferred. See
 [docs/vertical-terrain.md](docs/vertical-terrain.md) for the coordinate contract.
+
+Publishing an upgrade does not resize an existing world. Admins can explicitly
+call `expand_world(width, height)` to grow either horizontal dimension up to
+256 cells without resetting the colony. Old cells, excavations, facilities,
+colonists, goods, orders, and the clock are retained. New land has soil over
+stone, not procedurally generated hills or caves.
 
 The existing `terrain` environmental rows retain fertility, forest density,
 and moisture independently of material geometry and operational facility kind.

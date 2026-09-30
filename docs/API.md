@@ -160,6 +160,7 @@ Rust signatures and the generated binding types.
 | `acknowledge_alert` | `(alert_id: u64)` | Operator/admin. Unknown ID errors; already acknowledged is a no-op. |
 | `set_time_scale` | `(time_scale: f64)` | Admin only. Baseline accepts finite `0..=100000` (the cooldown worker explicitly rejects NaN/infinity); missing config errors; unchanged value is a no-op with no timestamp update. `0` pauses the clock. |
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |
+| `expand_world` | `(width: i32, height: i32)` | Admin only. Each dimension must be positive, at most `256`, and no smaller than the current dimension. Equal dimensions are an idempotent no-op. Expansion preserves the existing colony and geometry; it never resets or shrinks the world. |
 | `set_operator` | `(identity: Identity, authorized: bool)` | Admin only. Zero/database identities and admin membership error. `authorized=true` for an existing operator and `false` for a missing operator are idempotent no-ops; otherwise it adds/removes the operator. |
 | `set_speed_change_cooldown`* | `(cooldown_seconds: u32)` | Admin only. Cooldown worker only; values above `3600` error, equal value is a no-op, and changing it does not alter `last_changed_at`. |
 
@@ -207,7 +208,21 @@ are not a reason to regenerate excavated terrain.
 Fresh initialization or explicit reset adds a reachable 48-cell hillside
 excavation. Old Mine orders remain intent but do not produce indefinitely:
 operators on upgraded colonies must designate actual terrain to resume mining.
-Default world bounds are 24 × 24 cells and `z = -16 .. 15`, inclusive.
+Fresh/reset world bounds are 128 × 128 cells (64 × 64 m) and
+`z = -16 .. 15`, inclusive. The initial facilities and environmental rows remain
+in the 24 × 24 starter area; unoccupied terrain does not require an operational
+tile row for every cell. Legacy missing-geometry migrations remain flat 24 × 24
+worlds, and an already initialized world's dimensions do not change on publish.
+
+Admins may explicitly call `expand_world(128, 128)` or another grow-only size
+up to 256 cells per axis. Expansion preserves existing cells, excavations,
+chunk IDs, actors, facilities, goods, designation jobs, work orders, and clock.
+Only changed former-padding chunks advance revision; new exposed cells are
+initialized explicitly to supported soil/stone terrain and air above it. Invalid
+dimensions or incomplete existing chunk geometry reject atomically. Expansion
+does not populate inert facility/environment rows across the new land, invent
+procedural hills or caves, or reseed the old area. Rectangular operations use the
+authoritative geometry bounds and allocate operational rows only when needed.
 
 Work-order IDs are deterministic tuples in the current implementation: the
 server derives the ID from `(tile_id, output resource)`, so priority and enabled

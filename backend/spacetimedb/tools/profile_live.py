@@ -29,6 +29,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--parent-gate", type=Path)
     parser.add_argument("--migration", action="store_true", help="also build the immutable pre-vertical fixture and test a genuinely paused additive upgrade")
+    parser.add_argument("--size", type=int, choices=(128, 256), default=128, help="fresh 128 world or explicitly expanded 256 maximum")
+    parser.add_argument("--samples", type=int, default=1, help="cold samples per speed, each after explicit reset")
+    parser.add_argument("--scale-gate", action="store_true", help="verify non-destructive upgrades, expansion, authorization and sparse operations")
+    parser.add_argument("--gates-only", action="store_true", help="skip speed measurements while exercising private API/upgrade gates")
     args = parser.parse_args()
     subprocess.run(["cargo", "build", "--manifest-path", str(MODULE / "Cargo.toml"), "--release", "--target", "wasm32-unknown-unknown"], check=True)
     wasm = MODULE / "target/wasm32-unknown-unknown/release/continuum_module.wasm"
@@ -48,6 +52,12 @@ def main():
                     result = subprocess.run([CLI, "--root-dir", str(root / "cli"), *map(str, argv)], capture_output=True, text=True, timeout=60)
                     assert result.returncode == 0, (argv, result.stdout, result.stderr)
                     return result.stdout
+
+                def cpu_seconds():
+                    # Includes actual WASM execution, persistence and server SQL/
+                    # API work, but excludes scheduler sleep and CLI child CPU.
+                    fields = Path(f"/proc/{process.pid}/stat").read_text().rsplit(")", 1)[1].split()
+                    return (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK")
 
                 def wait(test, seconds=45):
                     end = time.monotonic() + seconds
@@ -76,29 +86,41 @@ def main():
 
                 cli("publish", "--yes", "-s", host, "-b", wasm, db)
                 call("set_time_scale", 0)
-                for scale in [6, 60, 600, 3600, 100000]:
-                    call("reset_colony")
-                    call("set_time_scale", 0)
-                    before = rows("SELECT game_seconds FROM config")[0]["game_seconds"]
-                    started = time.monotonic()
-                    call("set_time_scale", scale)
-                    wait(lambda: rows("SELECT game_seconds FROM config")[0]["game_seconds"] >= before + scale)
-                    call("set_time_scale", 0)
-                    after = rows("SELECT game_seconds FROM config")[0]["game_seconds"]
-                    elapsed = time.monotonic() - started
-                    assert (after-before) >= scale
-                    assert abs((after-before) / scale - round((after-before)/scale)) < 1e-8
-                    assert not any(word in log.read_text().lower() for word in ("runtime error", "fuel exhausted", "wasm trap")), log.read_text()[-12000:]
-                    print(f"WASM_PASS scale={scale} game_delta={after-before:g} observed_wall={elapsed:.3f}s", flush=True)
+                assert args.samples > 0
+                for scale in ([] if args.gates_only else [6, 60, 600, 3600, 100000]):
+                    for sample in range(args.samples):
+                        call("reset_colony")
+                        call("set_time_scale", 0)
+                        if args.size != 128:
+                            call("expand_world", args.size, args.size)
+                        dimensions = rows("SELECT * FROM world_geometry")[0]
+                        assert dimensions["width"] == dimensions["height"] == args.size
+                        assert len(rows("SELECT id FROM tile")) == 576
+                        assert len(rows("SELECT tile_id FROM terrain")) == 576
+                        before = rows("SELECT game_seconds FROM config")[0]["game_seconds"]
+                        started = time.monotonic()
+                        cpu_before = cpu_seconds()
+                        call("set_time_scale", scale)
+                        wait(lambda: rows("SELECT game_seconds FROM config")[0]["game_seconds"] >= before + scale)
+                        call("set_time_scale", 0)
+                        after = rows("SELECT game_seconds FROM config")[0]["game_seconds"]
+                        elapsed = time.monotonic() - started
+                        cpu_delta = cpu_seconds() - cpu_before
+                        assert (after-before) >= scale
+                        assert abs((after-before) / scale - round((after-before)/scale)) < 1e-8
+                        assert not any(word in log.read_text().lower() for word in ("runtime error", "fuel exhausted", "wasm trap")), log.read_text()[-12000:]
+                        print(f"WASM_PASS size={args.size} scale={scale} sample={sample+1} game_delta={after-before:g} observed_wall={elapsed:.3f}s server_cpu={cpu_delta:.3f}s", flush=True)
                     if scale==100000:
-                        started=time.monotonic();before=after
+                        started=time.monotonic();before=after;cpu_before=cpu_seconds()
                         call("set_time_scale",scale)
                         wait(lambda:rows("SELECT game_seconds FROM config")[0]["game_seconds"]>=before+3*scale)
                         call("set_time_scale",0)
                         after=rows("SELECT game_seconds FROM config")[0]["game_seconds"]
                         assert abs((after-before)/scale-round((after-before)/scale))<1e-8
-                        print(f"WASM_SUSTAIN_PASS scale={scale} game_delta={after-before:g} observed_wall={time.monotonic()-started:.3f}s",flush=True)
+                        print(f"WASM_SUSTAIN_PASS size={args.size} scale={scale} game_delta={after-before:g} observed_wall={time.monotonic()-started:.3f}s server_cpu={cpu_seconds()-cpu_before:.3f}s",flush=True)
                 call("reset_colony"); call("set_time_scale", 0)
+                if args.size != 128:
+                    call("expand_world", args.size, args.size)
                 for d in rows("SELECT id FROM excavation_designation"):
                     call("cancel_excavation", d["id"])
                 call("designate_excavation", 0, 0, 23, 23, -16, 16, 2)
@@ -108,6 +130,9 @@ def main():
                 wait(lambda: rows("SELECT game_seconds FROM config")[0]["game_seconds"] >= before + 600)
                 call("set_time_scale", 0)
                 print("WASM_LARGE_DESIGNATION_PASS cells=9216", flush=True)
+                if args.scale_gate:
+                    from scale_live import check_scale
+                    check_scale(cli, host, wasm, root, MODULE.parents[1], wait)
                 if args.parent_gate:
                     env = dict(os.environ, TERRAIN_TEST_CLI=CLI, TERRAIN_TEST_TMP=str(root), TERRAIN_TEST_PORT=str(port), TERRAIN_TEST_WASM=str(wasm))
                     env.pop("CONTINUUM_BASELINE_WASM", None)
@@ -128,6 +153,8 @@ def main():
                     snapshots={q:rows(q) for q in ("SELECT * FROM colonist","SELECT * FROM tile","SELECT * FROM work_order","SELECT * FROM colony","SELECT game_seconds FROM config")}
                     cli("publish","--yes","--delete-data=never","-s",host,"-b",wasm,db)
                     wait(lambda:len(rows("SELECT * FROM world_geometry"))==1)
+                    bounds = rows("SELECT * FROM world_geometry")[0]
+                    assert (bounds["width"], bounds["height"], bounds["min_z"], bounds["max_z"]) == (24, 24, -16, 15)
                     before={c["id"]:c for c in snapshots["SELECT * FROM colonist"]}
                     for c in rows("SELECT * FROM colonist"):
                         previous=before[c["id"]]
