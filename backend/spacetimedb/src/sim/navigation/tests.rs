@@ -125,3 +125,169 @@ fn cache_storage_is_bounded_by_bodies_and_actor_ids_not_visited_origins() {
         (1, MAX_CACHED_ACTORS, MAX_CACHED_ACTORS)
     );
 }
+
+#[test]
+fn compact_clearance_matches_supported_positions_and_edges_with_unknown_chunks() {
+    let mut g = Geometry::flat();
+    g.width = 18;
+    g.height = 5;
+    g.chunks.remove(&Cell(1, 0, -1));
+    g.set(Cell(15, 2, 0), u16::MAX);
+    for z in -5..0 {
+        g.set(Cell(3, 2, z), AIR);
+    }
+    g.set(Cell(4, 2, 0), STONE);
+    g.set(Cell(5, 2, 3), STONE);
+    for body in [
+        Body::default(),
+        Body {
+            width: 2,
+            depth: 2,
+            height: 2,
+            step: 3,
+        },
+        Body {
+            height: 1,
+            step: 7,
+            ..Body::default()
+        },
+        Body {
+            height: 16,
+            ..Body::default()
+        },
+        Body {
+            width: 0,
+            ..Body::default()
+        },
+        Body {
+            height: u16::MAX,
+            ..Body::default()
+        },
+    ] {
+        let graph = Graph::build(&g, body);
+        for z in g.min_z..=g.max_z {
+            for y in 0..g.height {
+                for x in 0..g.width {
+                    let p = Cell(x, y, z);
+                    assert_eq!(
+                        graph.node(p).is_some(),
+                        g.supported(p, body),
+                        "{p:?}, {body:?}"
+                    );
+                    if graph.node(p).is_some() {
+                        for (dx, dy) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
+                            for dz in -i32::from(body.step)..=i32::from(body.step) {
+                                let q = Cell(x + dx, y + dy, z + dz);
+                                assert_eq!(
+                                    graph.adjacent(p, q),
+                                    g.can_step(p, q, body),
+                                    "{p:?}->{q:?}, {body:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn large_world_cached_distances_and_first_hops_match_reference_and_expansion_invalidates() {
+    let mut g = Geometry::flat();
+    let start = Cell(10, 7, 0);
+    let mut nav = Navigation::default();
+    assert!(nav
+        .reachable(&g, 1, start, Body::default())
+        .get(&Cell(127, 127, 0))
+        .is_none());
+    g.expand(128, 128).unwrap();
+    for z in 0..6 {
+        g.set(Cell(22, 8, z), STONE);
+    }
+    for body in [
+        Body::default(),
+        Body {
+            width: 2,
+            depth: 3,
+            height: 7,
+            step: 2,
+        },
+    ] {
+        let reference = g.reachable(start, body);
+        let reached = nav.reachable(&g, 1, start, body);
+        for (&cell, &value) in &reference {
+            assert_eq!(reached.get(&cell), Some(value), "{cell:?}, {body:?}");
+        }
+        for &cell in &reached.graph.cells {
+            assert!(g.supported(cell, body));
+            assert_eq!(
+                reached.get(&cell),
+                reference.get(&cell).copied(),
+                "{cell:?}, {body:?}"
+            );
+        }
+        for outside in [
+            Cell(128, 0, 0),
+            Cell(0, 128, 0),
+            Cell(-1, 0, 0),
+            Cell(0, 0, 16),
+            Cell(0, 0, -17),
+        ] {
+            assert_eq!(reached.get(&outside), None);
+        }
+        assert_eq!(reached.distance(Cell(126, 125, 0)), Some(234));
+    }
+    assert_eq!(nav.graph_builds, 3);
+}
+
+#[test]
+fn lazy_queries_avoid_distant_land_and_query_order_cannot_change_canonical_paths() {
+    let g = Geometry::seeded();
+    let start = Cell(10, 7, 0);
+    let body = Body::default();
+    let reference = g.reachable(start, body);
+    let graph = Rc::new(Graph::build(&g, body));
+    let local = Reachability::build(graph.clone(), start);
+    let distant_first = Reachability::build(graph, start);
+    let near = Cell(12, 8, 0);
+    assert_eq!(local.get(&near), reference.get(&near).copied());
+    assert!(local.search.borrow().queue.len() < 128);
+    assert!(local.search.borrow().queue.len() * 100 < reference.len());
+    let visited = local.search.borrow().queue.len();
+    assert_eq!(local.get(&Cell(22, 8, 6)), None); // disconnected hillside top
+    assert_eq!(local.search.borrow().queue.len(), visited);
+    let targets = [
+        near,
+        Cell(127, 127, 0),
+        Cell(22, 8, 6),
+        Cell(2, 2, 0),
+        Cell(19, 4, 0),
+    ];
+    for p in targets.into_iter().rev() {
+        assert_eq!(distant_first.get(&p), reference.get(&p).copied());
+    }
+    for p in targets {
+        assert_eq!(local.get(&p), reference.get(&p).copied());
+        assert_eq!(local.route(p), distant_first.route(p));
+    }
+    assert_eq!(local.search.borrow().queue.len(), reference.len());
+}
+
+#[test]
+fn larger_physical_world_still_executes_actors_and_shared_goods_in_durable_id_order() {
+    let mut ordered = crate::sim::new_world();
+    ordered.geometry = Some(Geometry::seeded());
+    let mut permuted = ordered.clone();
+    permuted.colonists.reverse();
+    permuted.tiles.reverse();
+    permuted.work_orders.reverse();
+    let tuning = crate::sim::Tuning::default();
+    let events = crate::sim::step(&mut ordered, &tuning, 3600.0);
+    let shuffled_events = crate::sim::step(&mut permuted, &tuning, 3600.0);
+    assert_eq!(events, shuffled_events);
+    permuted.colonists.sort_by_key(|c| c.id);
+    permuted.tiles.sort_by_key(|t| t.id);
+    permuted.work_orders.sort_by_key(|o| o.id);
+    assert_eq!(ordered, permuted);
+}

@@ -3,8 +3,10 @@
 //! within a valid material snapshot and discarded on EVERY actual voxel write.
 use super::geometry::{Body, Cell, Geometry};
 use super::World;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
+mod terrain;
 
 pub const MAX_CACHED_BODIES: usize = 8;
 pub const MAX_CACHED_ACTORS: usize = 32;
@@ -18,6 +20,7 @@ struct Graph {
     max_z: i32,
     at: Vec<u32>,
     cells: Vec<Cell>,
+    components: Vec<u32>,
     offsets: Vec<usize>,
     edges: Vec<usize>,
 }
@@ -39,6 +42,7 @@ impl Graph {
         (n != UNREACHED).then_some(n as usize)
     }
     fn build(g: &Geometry, body: Body) -> Self {
+        let terrain = terrain::Terrain::build(g);
         let mut graph = Self {
             width: g.width,
             height: g.height,
@@ -46,20 +50,14 @@ impl Graph {
             max_z: g.max_z,
             at: vec![UNREACHED; (g.width * g.height * (g.max_z - g.min_z + 1)) as usize],
             cells: Vec::new(),
+            components: Vec::new(),
             offsets: Vec::new(),
             edges: Vec::new(),
         };
-        for z in g.min_z + 1..=g.max_z {
-            for y in 0..g.height {
-                for x in 0..g.width {
-                    let p = Cell(x, y, z);
-                    if g.supported(p, body) {
-                        let offset = graph.offset(p).unwrap();
-                        graph.at[offset] = graph.cells.len() as u32;
-                        graph.cells.push(p);
-                    }
-                }
-            }
+        graph.cells = terrain.positions(body);
+        for (node, &p) in graph.cells.iter().enumerate() {
+            let offset = graph.offset(p).unwrap();
+            graph.at[offset] = node as u32;
         }
         for &p in &graph.cells {
             graph.offsets.push(graph.edges.len());
@@ -68,7 +66,7 @@ impl Graph {
                 for dz in -step..=step {
                     let q = Cell(p.0 + dx, p.1 + dy, p.2 + dz);
                     if let Some(n) = graph.node(q) {
-                        if g.can_step(p, q, body) {
+                        if terrain.step_clear(p, q, body) {
                             graph.edges.push(n);
                         }
                     }
@@ -76,6 +74,28 @@ impl Graph {
             }
         }
         graph.offsets.push(graph.edges.len());
+        // Weak connectivity is a necessary condition for ANY route. Reject
+        // isolated supported positions without draining every actor's BFS. Union
+        // both ends, so this remains safe even if a future edge is directional.
+        let mut roots: Vec<_> = (0..graph.cells.len()).collect();
+        fn root(roots: &mut [usize], mut n: usize) -> usize {
+            while roots[n] != n {
+                roots[n] = roots[roots[n]];
+                n = roots[n];
+            }
+            n
+        }
+        for n in 0..graph.cells.len() {
+            for &q in &graph.edges[graph.offsets[n]..graph.offsets[n + 1]] {
+                let (a, b) = (root(&mut roots, n), root(&mut roots, q));
+                if a != b {
+                    roots[b] = a;
+                }
+            }
+        }
+        graph.components = (0..graph.cells.len())
+            .map(|n| root(&mut roots, n) as u32)
+            .collect();
         graph
     }
     fn adjacent(&self, a: Cell, b: Cell) -> bool {
@@ -87,46 +107,76 @@ impl Graph {
 }
 
 #[derive(Clone, Debug)]
-pub struct Reachability {
-    graph: Rc<Graph>,
-    start: Cell,
+struct Search {
     distances: Vec<u32>,
     parents: Vec<usize>,
     first: Vec<usize>,
+    queue: Vec<usize>,
+    head: usize,
+}
+impl Search {
+    /// Resume the SAME cardinal BFS until the requested node is discovered.
+    /// Query order affects work performed, never distances, parents or tie breaks.
+    /// An unreachable query drains the connected component rather than truncating.
+    fn visit_until(&mut self, graph: &Graph, target: usize) {
+        while self.distances[target] == UNREACHED && self.head < self.queue.len() {
+            let n = self.queue[self.head];
+            self.head += 1;
+            for &q in &graph.edges[graph.offsets[n]..graph.offsets[n + 1]] {
+                if self.distances[q] == UNREACHED {
+                    self.distances[q] = self.distances[n] + 1;
+                    self.parents[q] = n;
+                    self.first[q] = if self.distances[n] == 0 {
+                        q
+                    } else {
+                        self.first[n]
+                    };
+                    self.queue.push(q);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Reachability {
+    graph: Rc<Graph>,
+    start: Cell,
+    component: Option<u32>,
+    search: RefCell<Search>,
 }
 impl Reachability {
     fn build(graph: Rc<Graph>, start: Cell) -> Self {
         let count = graph.cells.len();
-        let mut s = Self {
-            graph,
-            start,
+        let mut search = Search {
             distances: vec![UNREACHED; count],
             parents: vec![usize::MAX; count],
             first: vec![usize::MAX; count],
+            queue: Vec::new(),
+            head: 0,
         };
-        let Some(root) = s.graph.node(start) else {
-            return s;
-        };
-        let mut queue = VecDeque::from([root]);
-        s.distances[root] = 0;
-        s.parents[root] = root;
-        s.first[root] = root;
-        while let Some(n) = queue.pop_front() {
-            for &q in &s.graph.edges[s.graph.offsets[n]..s.graph.offsets[n + 1]] {
-                if s.distances[q] == UNREACHED {
-                    s.distances[q] = s.distances[n] + 1;
-                    s.parents[q] = n;
-                    s.first[q] = if n == root { q } else { s.first[n] };
-                    queue.push_back(q);
-                }
-            }
+        let component = graph.node(start).map(|root| {
+            search.queue.push(root);
+            search.distances[root] = 0;
+            search.parents[root] = root;
+            search.first[root] = root;
+            graph.components[root]
+        });
+        Self {
+            graph,
+            start,
+            component,
+            search: RefCell::new(search),
         }
-        s
     }
     pub fn get(&self, p: &Cell) -> Option<(u32, Cell)> {
         let n = self.graph.node(*p)?;
-        (self.distances[n] != UNREACHED)
-            .then(|| (self.distances[n], self.graph.cells[self.first[n]]))
+        if self.component != Some(self.graph.components[n]) {
+            return None;
+        }
+        let mut s = self.search.borrow_mut();
+        s.visit_until(&self.graph, n);
+        (s.distances[n] != UNREACHED).then(|| (s.distances[n], self.graph.cells[s.first[n]]))
     }
     pub fn contains_key(&self, p: &Cell) -> bool {
         self.get(p).is_some()
@@ -135,17 +185,16 @@ impl Reachability {
         self.get(&p).map(|(d, _)| d)
     }
     fn route(&self, p: Cell) -> Option<VecDeque<Cell>> {
+        self.get(&p)?;
         let mut n = self.graph.node(p)?;
-        if self.distances[n] == UNREACHED {
-            return None;
-        }
+        let s = self.search.borrow();
         let mut path = VecDeque::new();
         loop {
             path.push_front(self.graph.cells[n]);
-            if self.parents[n] == n {
+            if s.parents[n] == n {
                 break;
             }
-            n = self.parents[n];
+            n = s.parents[n];
         }
         Some(path)
     }
