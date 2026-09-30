@@ -67,6 +67,29 @@ private and is not a public table.
 | `alert` | `id: u64` (auto-increment primary key); `code: String` (unique problem key); `severity: Severity`; `message: String`; `active: bool`; `acknowledged: bool`; `raised_game_seconds: f64` (in-game clock at raise); `raised_at: Timestamp` (server timestamp). |
 | `event_log` | `id: u64` (auto-increment primary key); `game_seconds: f64` (in-game clock); `day`, `hour`, `minute: u32` (display time components); `severity: Severity`; `message: String`; `at: Timestamp` (server timestamp). |
 
+### Physical terrain and elevation
+
+All physical coordinates are integer 0.5 m cells; entity `z` is a base/feet
+elevation, supported by the solid cell at `z - 1`. These public tables extend
+the operational schema:
+
+| Table | Meaning |
+| --- | --- |
+| `world_geometry` | Singleton `id = 0`; horizontal `width`, `height` and inclusive `min_z`, `max_z` bounds. |
+| `terrain_chunk` | Durable `id`; `chunk_x`, `chunk_y`, `chunk_z`; 4,096 `u16` material IDs in a 16³ chunk; `revision` for geometry invalidation. Index is `x + 16 * (y + 16 * z)` in local coordinates. |
+| `terrain_material` | Material `id`, `name`, `opaque`, and SI-valued `density`, `strength`, `thermal_conductivity`, `specific_heat_capacity`. ID zero is air. |
+| `excavation_designation` | Durable `id`; inclusive `x0`, `y0`, `x1`, `y1`; `bottom_z`, integer `height`; `priority`, `enabled`; `total_cells`, `completed_cells`. Intent targets whole cells, not floor slabs. |
+
+`tile` appends `z`, `width`, `depth`, and `clearance_height`. `colonist` appends
+`z`, `target_z`, configurable `body_width`, `body_depth`, `clearance_height`,
+`max_step_height`, and authoritative next-hop `next_x`, `next_y`, `next_z`.
+`item_stack` appends `z`. Legacy tile/stack IDs retain their persisted encoding;
+facilities at different elevations have distinct durable tile IDs.
+
+Terrain is authoritative packed geometry, not one entity or table row per voxel.
+Walking support, navigation, and cut-height visible surfaces are derived from it.
+Material metadata does not imply a full structural or thermal simulation.
+
 The cooldown worker adds the public `speed_control` singleton: `id: u32`
 (always `0`), `cooldown_seconds: u32` (wall-clock seconds), and
 `last_changed_at: Option<Timestamp>` (server timestamp of the last actual
@@ -135,6 +158,30 @@ Rust signatures and the generated binding types.
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |
 | `set_operator` | `(identity: Identity, authorized: bool)` | Admin only. Zero/database identities and admin membership error. `authorized=true` for an existing operator and `false` for a missing operator are idempotent no-ops; otherwise it adds/removes the operator. |
 | `set_speed_change_cooldown`* | `(cooldown_seconds: u32)` | Admin only. Cooldown worker only; values above `3600` error, equal value is a no-op, and changing it does not alter `last_changed_at`. |
+
+### Elevation-aware commands
+
+The following reducers require operator/admin authority. The legacy rectangular
+2D commands above target `z = 0` only; use the explicit-elevation forms for lower
+or higher floors. Every placement validates support and full-volume clearance
+before changing goods or facilities.
+
+| Reducer | Arguments |
+| --- | --- |
+| `designate_excavation` | `(x0: i32, y0: i32, x1: i32, y1: i32, bottom_z: i32, height: u16, priority: u8)` |
+| `set_excavation_enabled` | `(id: u64, enabled: bool)` |
+| `cancel_excavation` | `(id: u64)` |
+| `build_tile_block_at` | `(x0: i32, y0: i32, x1: i32, y1: i32, z: i32, kind: TileKind)` |
+| `place_facility` | `(x: i32, y: i32, z: i32, kind: TileKind, width: u16, depth: u16, clearance_height: u16)` |
+| `set_tile_block_enabled_at` | `(x0: i32, y0: i32, x1: i32, y1: i32, z: i32, enabled: bool)` |
+| `set_block_work_order_at` | `(x0: i32, y0: i32, x1: i32, y1: i32, z: i32, work: WorkType, priority: u8, enabled: bool)` |
+
+Excavation heights are positive arbitrary integers within world bounds; the UI
+default is six cells (3 m). Designations normalize reversed horizontal endpoints
+and target `bottom_z .. bottom_z + height - 1`. A designation is not an immediate
+remote geometry deletion: miners must reach a supported, clear work position.
+Mined cells become air and cannot yield again. Pausing or cancelling intent does
+not refill excavated space or discard goods already produced.
 
 Work-order IDs are deterministic tuples in the current implementation: the
 server derives the ID from `(tile_id, output resource)`, so priority and enabled
@@ -296,8 +343,18 @@ Refresh generated bindings separately for the default local `continuum` database
 just bindings
 ```
 
-`just bindings` uses the generator's configured default `continuum` database; it
-does not provide a custom-DB generation mode. It imports the Godot project, fetches
-the published schema, and regenerates
+`just bindings` uses the generator's configured default `continuum` database. To
+generate from an already-published disposable server without publishing to the
+default database, import the project and call the generator directly:
+
+```bash
+godot --headless --path client/godot --editor --quit
+godot --headless --path client/godot --script res://tools/generate_bindings.gd -- \
+  --stdb-host=http://127.0.0.1:3307 --stdb-db=continuum-schema-test
+godot --headless --path client/godot --editor --quit
+```
+
+The host override is fetch-only and does not change the client's saved endpoint.
+The generator fetches the published schema and regenerates
 `client/godot/spacetime_bindings/`. It must be rerun after table, reducer, or
 type changes. Generated files are outputs and are not hand-edited.

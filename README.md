@@ -22,7 +22,9 @@ to normal during schema migration and colony reset.
 
 ## Jobs And Hauling
 
-Workers produce resources on their work tile, not directly into storage:
+Workers leave resources in ground piles, not directly in storage. Mining removes
+finite material blocks from designated terrain rather than producing stone
+indefinitely from a zone marker:
 
 | Job | Work Zone | Output | Units Per Carried Stack |
 | --- | --- | --- | ---: |
@@ -82,12 +84,29 @@ alongside their needs.
 
 ## Terrain And Block Operations
 
-The backend persists one `world_seed` and one `terrain` row per tile. Terrain is
-an environmental layer, separate from the operational `tile.kind`: a tile's
-soil fertility, forest density, and moisture are continuous seeded values that
-may overlap, while `tile.kind` determines the facility or work zone currently
-operating there. The current simulation does not use terrain values to change
-production, movement, needs, or other outcomes.
+The physical world uses **0.5 × 0.5 × 0.5 m cells** stored as chunked material-ID
+arrays. Each solid cell is a whole 0.125 m³ block. Floors, walls, and ceilings
+are derived from solid/air adjacency; a walking floor is a supporting block's
+upper surface. Movement, excavation, and facility placement check actual
+elevation, support, footprint, and clearance. Colonists default to four clear
+cells (2 m) of standing height.
+
+The map is a 2D cut-height view. Exact layer navigation changes elevation by
+0.5 m. Each column looks down through air to its first opaque surface: intact
+floors hide lower rooms, while shafts reveal lower surfaces. Deeper geometry is
+progressively blurred and darkened; selection overlays remain sharp. Interaction
+uses the visible surface's actual coordinates, not an assumed fixed storey.
+
+Excavation designations specify a horizontal footprint and arbitrary integer
+height, defaulting to six clear cells (3 m). Facilities also have configurable
+footprint and clearance dimensions for multi-cell furniture and tall equipment.
+Material definitions carry density, strength, conductivity, and specific heat
+metadata; full structural and thermal simulations are deferred. See
+[docs/vertical-terrain.md](docs/vertical-terrain.md) for the coordinate contract.
+
+The existing `terrain` environmental rows retain fertility, forest density,
+and moisture independently of material geometry and operational facility kind.
+Those ecological values remain decorative.
 
 Operators can issue atomic rectangular intents over inclusive grid bounds:
 
@@ -99,12 +118,16 @@ Operators can issue atomic rectangular intents over inclusive grid bounds:
   the selected producing work type. Forest cells independently support logging
   and hunting orders.
 
+These legacy 2D reducers target elevation zero. Their `*_at` variants take an
+explicit elevation, while `place_facility` takes a full footprint and clearance
+height. `designate_excavation` creates a footprint-plus-height mining intent.
+
 The reducers normalize reversed bounds, reject out-of-grid rectangles, and
 reconcile from subscribed server state. A failed build is prevalidated before
 wood or tiles change. See [docs/API.md](docs/API.md) for exact errors, no-op
 behavior, authorization, and migration/reset semantics.
 
-The Godot map tools expose two modes: `Select` and `Build`. In `Build`, choose
+The Godot map tools include selection, building, and excavation. In `Build`, choose
 one of `Farm`, `Forest`, `Mine`, `Storage`, `Dining`, `Sleep`, or `Recreation`
 from the type menu, then press and drag across empty ground and release to send
 one rectangular build intent. Bounds are inclusive, so a one-cell drag is valid.
@@ -120,8 +143,9 @@ server. Forest supports independent logging and hunting orders. The existing
 selected-tile inspection remains available for per-tile details.
 
 While dragging, Escape, right-click, releasing outside the drawn grid, or losing
-window focus cancels without dispatching an intent. A valid Build-mode drag
-release submits one atomic `build_tile_block` request. A Select-mode drag only
+window focus cancels without dispatching an intent. Changing elevation also
+cancels the current drag. A valid Build-mode drag release submits one atomic
+elevation-aware build request. A Select-mode drag only
 selects; the selected-block buttons separately dispatch the corresponding
 enable/disable or work-order mutation. Displayed state follows the subscribed
 server rows, and pending requests do not optimistically change the map.
@@ -183,10 +207,9 @@ to admins; workspace permissions do not grant reducer authority.
 
 Run `just test-workspaces` for the backend-free layout and viewport-input tests.
 
-The map renders a blended soil layer and independent ecological cover. Soil
-fertility, moisture, and forest density may overlap and are currently
-decorative: terrain does not modify production, movement, needs, or other
-simulation outcomes yet.
+Soil fertility, moisture, and forest density may overlap and remain decorative.
+Physical solid/air terrain, in contrast, governs support, clearance, movement,
+placement, and mining.
 
 ## Requirements
 
