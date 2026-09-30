@@ -6,6 +6,9 @@ extends RefCounted
 const SHADER = preload("res://shaders/terrain_depth.gdshader")
 const ENTITY_CANVAS = preload("res://scripts/terrain_entity_canvas.gd")
 const PIXELS := 32
+const MAX_TEXTURE_EDGE := 2048
+const MAX_PASS_PIXELS := 8 * 1024 * 1024 # 32MiB per terrain/entity family
+const CAMERA_PADDING := 2 # maximum 31-layer blur support, in grid cells
 var layers: Array[TextureRect] = []
 var entity_layers: Array[TextureRect] = []
 var viewports: Array[SubViewport] = []
@@ -15,6 +18,16 @@ var _visible := false
 var _model: LayeredTerrainModel
 var _origin := Vector2.ZERO
 var _extent := Vector2.ZERO
+var _region := Rect2i()
+var _pixels := PIXELS
+var _render_revision := -1
+var _entity_masks: Dictionary = {}
+var _entities: Array = []
+var _entity_regions: Array[Rect2i] = []
+## Counters for backend-free cache regressions/profiling, not frame polling.
+var terrain_build_count := 0
+var mask_build_count := 0
+var entity_update_count := 0
 
 func attach(parent: Control) -> void:
 	parent_control = parent
@@ -50,86 +63,200 @@ func _ensure_bands(count: int) -> void:
 		viewport.add_child(canvas)
 		viewports.append(viewport)
 		canvases.append(canvas)
+		_entity_regions.append(Rect2i())
 
 func rebuild(model: LayeredTerrainModel) -> void:
 	_model = model
 	var count := model.max_z - model.min_z + 1
 	_ensure_bands(count)
+	_sync_region()
+	layout(_origin, _extent)
+
+func _sync_region() -> void:
+	if _model == null:
+		return
+	_ensure_bands(_model.max_z - _model.min_z + 1)
+	var bounds := Rect2i(0, 0, _model.width, _model.height)
+	var region := bounds
+	if _extent.x > 0 and _extent.y > 0:
+		var cell := _extent / Vector2(_model.width, _model.height)
+		var start := -_origin / cell
+		var end := (parent_control.size - _origin) / cell
+		region = Rect2i(Vector2i(floori(start.x), floori(start.y)) - Vector2i.ONE * CAMERA_PADDING,
+			Vector2i(ceili(end.x), ceili(end.y)) - Vector2i(floori(start.x), floori(start.y)) + Vector2i.ONE * CAMERA_PADDING * 2).intersection(bounds)
+	if region == _region and _render_revision == _model.revision:
+		return
+	var pixels := clampi(MAX_TEXTURE_EDGE / maxi(1, maxi(region.size.x, region.size.y)), 1, PIXELS)
+	var occupied_depths := {}
+	for y in range(region.position.y, region.end.y):
+		for x in range(region.position.x, region.end.x):
+			var surface: Variant = _model.surface_at(Vector2i(x, y))
+			if surface != null:
+				occupied_depths[surface.z] = true
+	pixels = mini(pixels, maxi(1, floori(sqrt(MAX_PASS_PIXELS / float(maxi(1, region.get_area() * occupied_depths.size()))))))
+	_region = region
+	_pixels = pixels
+	_render_revision = _model.revision
+	_entity_masks.clear()
+	_build_terrain()
+	# A crop/terrain change invalidates masks and all active entity passes once.
+	_apply_entities(true)
+
+func _build_terrain() -> void:
+	terrain_build_count += 1
+	var count := _model.max_z - _model.min_z + 1
 	var images: Array[Image] = []
 	images.resize(count)
-	for xy: Vector2i in model.surfaces:
-		var surface: Vector3i = model.surfaces[xy]
-		var depth := model.cut - surface.z
-		if images[depth] == null:
-			images[depth] = _image()
-		var colour := Color("887047") if model.material_at(surface) == 1 else Color("737d8b")
-		images[depth].fill_rect(Rect2i(xy * PIXELS, Vector2i.ONE * PIXELS), colour)
-		images[depth].fill_rect(Rect2i(xy * PIXELS, Vector2i(PIXELS, 2)), colour.lightened(0.18))
-		images[depth].fill_rect(Rect2i(xy * PIXELS + Vector2i(12, 16), Vector2i(4, 4)), colour.darkened(0.25))
+	var masks: Array[Image] = []
+	masks.resize(count)
+	for y in range(_region.position.y, _region.end.y):
+		for x in range(_region.position.x, _region.end.x):
+			var xy := Vector2i(x, y)
+			var surface: Variant = _model.surface_at(xy)
+			if surface == null:
+				continue
+			var depth: int = _model.cut - surface.z
+			if images[depth] == null:
+				images[depth] = _image()
+				masks[depth] = Image.create(_region.size.x, _region.size.y, false, Image.FORMAT_RGBA8)
+			var at := xy - _region.position
+			var colour := Color("887047") if _model.material_at(surface) == 1 else Color("737d8b")
+			images[depth].fill_rect(Rect2i(at * _pixels, Vector2i.ONE * _pixels), colour)
+			images[depth].fill_rect(Rect2i(at * _pixels, Vector2i(_pixels, maxi(1, roundi(2.0 * _pixels / PIXELS)))), colour.lightened(0.18))
+			images[depth].fill_rect(Rect2i(at * _pixels + Vector2i(12, 16) * _pixels / PIXELS, Vector2i.ONE * maxi(1, _pixels / 8)), colour.darkened(0.25))
+			masks[depth].set_pixelv(at, Color.WHITE)
 	for depth in count:
-		layers[depth].texture = ImageTexture.create_from_image(images[depth]) if images[depth] != null else null
-		layers[depth].material.set_shader_parameter("visibility_mask", _mask(depth, false))
-		entity_layers[depth].material.set_shader_parameter("visibility_mask", _mask(depth, true))
+		layers[depth].texture = _upload(layers[depth].texture, images[depth])
+		if masks[depth] != null:
+			layers[depth].material.set_shader_parameter("visibility_mask", _upload(layers[depth].material.get_shader_parameter("visibility_mask"), masks[depth]))
+			mask_build_count += 1
+		for layer in [layers[depth], entity_layers[depth]]:
+			layer.material.set_shader_parameter("radius", depth * 0.65 * _pixels / PIXELS)
+			layer.visible = _visible and layer.texture != null
 	for depth in range(count, layers.size()):
 		layers[depth].texture = null
 		entity_layers[depth].texture = null
-	layout(_origin, _extent)
-	set_visible(_visible)
 
 func _image() -> Image:
-	return Image.create(_model.width * PIXELS, _model.height * PIXELS, false, Image.FORMAT_RGBA8)
+	return Image.create(_region.size.x * _pixels, _region.size.y * _pixels, false, Image.FORMAT_RGBA8)
 
-func _mask(depth: int, entity: bool) -> Texture2D:
-	var image := Image.create(_model.width, _model.height, false, Image.FORMAT_RGBA8)
-	var base := _model.cut - depth
-	for xy: Vector2i in _model.surfaces:
-		var surface: Vector3i = _model.surfaces[xy]
-		var allowed := _model.depth_at(xy) == depth
-		if entity:
-			allowed = surface.z < base and _model.entity_visible({"x": xy.x, "y": xy.y, "z": base})
-		if allowed:
-			image.set_pixelv(xy, Color.WHITE)
+func _upload(previous: Texture2D, image: Image) -> Texture2D:
+	if image == null:
+		return null
+	if previous is ImageTexture and previous.get_size() == Vector2(image.get_size()):
+		previous.update(image)
+		return previous
 	return ImageTexture.create_from_image(image)
 
+func _entity_mask(depth: int, region: Rect2i) -> Texture2D:
+	if _entity_masks.has(depth) and _entity_masks[depth].region == region:
+		return _entity_masks[depth].texture
+	var image := Image.create(region.size.x, region.size.y, false, Image.FORMAT_RGBA8)
+	var base := _model.cut - depth
+	for y in range(region.position.y, region.end.y):
+		for x in range(region.position.x, region.end.x):
+			var xy := Vector2i(x, y)
+			var surface: Variant = _model.surface_at(xy)
+			if surface != null and surface.z < base and _model.position_visible(Vector3(x, y, base)):
+				image.set_pixelv(xy - region.position, Color.WHITE)
+	var texture := ImageTexture.create_from_image(image)
+	_entity_masks[depth] = {"region": region, "texture": texture}
+	mask_build_count += 1
+	return texture
+
 func update_entities(entities: Array) -> void:
+	_entities = entities
+	_apply_entities()
+
+func _apply_entities(force := false) -> void:
 	if _model == null:
 		return
 	var groups := {}
-	for entity: Dictionary in entities:
+	var regions := {}
+	for entity: Dictionary in _entities:
+		if _region.size == Vector2i.ZERO or not entity.rect.intersects(Rect2(_region)):
+			continue
 		var depth := _model.cut - int(entity.z)
 		if depth < 0 or depth >= canvases.size():
 			continue
 		if not groups.has(depth):
 			groups[depth] = []
+			regions[depth] = entity.rect
+		else:
+			regions[depth] = regions[depth].merge(entity.rect)
 		groups[depth].append(entity)
+	var area := 0
+	var pixels := PIXELS
+	for depth: int in regions:
+		var rect: Rect2 = regions[depth]
+		# Chunk-aligned loose bounds keep moving sprites on a reusable small pass.
+		var start := Vector2i((rect.position / 16.0).floor()) * 16 - Vector2i.ONE * CAMERA_PADDING
+		var end := Vector2i((rect.end / 16.0).ceil()) * 16 + Vector2i.ONE * CAMERA_PADDING
+		regions[depth] = Rect2i(start, end - start).intersection(_region)
+		area += regions[depth].get_area()
+		pixels = mini(pixels, MAX_TEXTURE_EDGE / maxi(1, maxi(regions[depth].size.x, regions[depth].size.y)))
+	# Sparse whole sprites keep native detail even when many terrain bands force
+	# a lower terrain resolution. Entity crops have their own aggregate budget.
+	pixels = mini(pixels, maxi(1, floori(sqrt(MAX_PASS_PIXELS / float(maxi(1, area))))))
 	for depth in canvases.size():
-		canvases[depth].entities = groups.get(depth, [])
-		canvases[depth].queue_redraw()
+		var group: Array = groups.get(depth, [])
+		var region: Rect2i = regions.get(depth, Rect2i())
+		if not force and group == canvases[depth].entities and region == _entity_regions[depth] and pixels == int(canvases[depth].pixels):
+			continue
+		canvases[depth].entities = group
+		canvases[depth].pixels = float(pixels)
+		_entity_regions[depth] = region
 		var active := groups.has(depth)
 		if active:
-			viewports[depth].size = Vector2i(_model.width, _model.height) * PIXELS
-		viewports[depth].render_target_update_mode = SubViewport.UPDATE_ALWAYS if active and _visible else SubViewport.UPDATE_DISABLED
+			viewports[depth].size = region.size * pixels
+			canvases[depth].origin = Vector2(region.position)
+			canvases[depth].queue_redraw()
+			entity_layers[depth].material.set_shader_parameter("visibility_mask", _entity_mask(depth, region))
+			entity_layers[depth].material.set_shader_parameter("radius", depth * 0.65 * pixels / PIXELS)
+			entity_update_count += 1
+		else:
+			viewports[depth].size = Vector2i(2, 2)
+		viewports[depth].render_target_update_mode = SubViewport.UPDATE_ONCE if active and _visible else SubViewport.UPDATE_DISABLED
 		entity_layers[depth].texture = viewports[depth].get_texture() if active else null
 		entity_layers[depth].visible = active and _visible
+	_layout_layers()
 
 func layout(origin: Vector2, extent: Vector2) -> void:
 	_origin = origin
 	_extent = extent
-	for layer in layers + entity_layers:
-		layer.position = origin
-		layer.size = extent
+	_sync_region()
+	_layout_layers()
+
+func _layout_layers() -> void:
+	if _model == null:
+		return
+	var cell := _extent / Vector2(_model.width, _model.height)
+	for depth in layers.size():
+		layers[depth].position = _origin + Vector2(_region.position) * cell
+		layers[depth].size = Vector2(_region.size) * cell
+		entity_layers[depth].position = _origin + Vector2(_entity_regions[depth].position) * cell
+		entity_layers[depth].size = Vector2(_entity_regions[depth].size) * cell
 
 func reset() -> void:
 	_model = null
+	_render_revision = -1
+	_entities = []
+	_entity_masks.clear()
 	for canvas in canvases:
 		canvas.entities = []
+	for depth in viewports.size():
+		viewports[depth].size = Vector2i(2, 2)
+		viewports[depth].render_target_update_mode = SubViewport.UPDATE_DISABLED
+		_entity_regions[depth] = Rect2i()
 	for layer in layers + entity_layers:
 		layer.texture = null
 	set_visible(false)
 
 func set_visible(value: bool) -> void:
+	if _visible == value:
+		return
 	_visible = value
 	for layer in layers + entity_layers:
 		layer.visible = value and layer.texture != null
 	for depth in viewports.size():
-		viewports[depth].render_target_update_mode = SubViewport.UPDATE_ALWAYS if value and not canvases[depth].entities.is_empty() else SubViewport.UPDATE_DISABLED
+		viewports[depth].render_target_update_mode = SubViewport.UPDATE_ONCE if value and not canvases[depth].entities.is_empty() else SubViewport.UPDATE_DISABLED

@@ -1,0 +1,5 @@
+PASS profile-24 final smoke run; recorded comparison logs retained
+PASS profile-render-24 final smoke run; recorded comparison logs retained
+PASS profile-128 final smoke run; recorded comparison logs retained
+PASS profile-render-128 final smoke run; recorded comparison logs retained
+PASS profile-ui final smoke run; recorded comparison logs retained

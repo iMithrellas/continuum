@@ -1,0 +1,12 @@
+Godot Engine v4.7.2.stable.arch_linux.ed1daf0bf (2026-08-17 01:18:38 UTC) - https://godotengine.org
+
+PROFILE environment godot=4.7.2-stable (arch_linux) display=headless edge=24 viewport=(1280, 720)
+PROFILE initial_refresh n=1 mean_ms=94.538 p95_ms=94.538 max_ms=94.538
+PROFILE unchanged_refresh n=5 mean_ms=64.821 p95_ms=65.035 max_ms=65.035
+PROFILE entity_descriptors n=30 mean_ms=63.598 p95_ms=64.990 max_ms=66.008
+PROFILE visible_tiles n=30 mean_ms=58.221 p95_ms=60.273 max_ms=60.895
+PROFILE field_1000 n=10 mean_ms=28.909 p95_ms=29.288 max_ms=29.288
+PROFILE idle_process n=180 mean_ms=3.751 p95_ms=1.865 max_ms=66.276
+PROFILE moving_process n=180 mean_ms=64.620 p95_ms=67.486 max_ms=73.790
+PROFILE max_entity_buffer=(768, 768) bands=32 terrain_textures=2
+MAP_CLIENT_PROFILE_DONE

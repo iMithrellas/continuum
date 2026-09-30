@@ -96,6 +96,9 @@ var _block_controls: Dictionary = {}
 var map_intent_override: Callable
 var _dirty: bool = false
 var _map_dirty: bool = false
+var _map_tables_changed: Dictionary = {}
+var _ui_tables_changed: Dictionary = {}
+var _full_ui_refresh := true
 var _refresh_timer: float = 0.0
 var _host := ""
 var _database := ""
@@ -140,6 +143,16 @@ var _layer_label: Label
 var _cell_label: Label
 var _excavation_list: VBoxContainer
 var _dimension_inputs: Dictionary = {}
+var _map_toolbar: PanelContainer
+var _map_layer_label: Label
+var _map_zoom_label: Label
+var _map_layer_buttons: Dictionary = {}
+var _map_zoom_buttons: Dictionary = {}
+var _map_navigation_buttons: Array[Button] = []
+var _toolbar_metric_font := -1
+var _excavation_signature: Array = []
+var _colonist_cards: Dictionary = {}
+var _colonist_empty: Label
 
 
 func _ready() -> void:
@@ -211,6 +224,8 @@ func _ready() -> void:
 		_selected_surface = {}
 		_cell_label.text = "Select a visible surface"
 		_dirty = true)
+	map.camera_changed.connect(_sync_map_toolbar)
+	map.cut_changed.connect(func(_layer: int) -> void: _sync_map_toolbar())
 	map.selection_invalidated.connect(func() -> void:
 		_selected_rect = Rect2i()
 		_selected_tile_id = -1
@@ -248,6 +263,11 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 	map.metrics = _metrics
 	_history_chart.metrics = _metrics
 	workspace.apply_metrics(_metrics)
+	for card: PanelContainer in _colonist_cards.values():
+		var style: StyleBox = card.get_theme_stylebox("panel")
+		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
+			style.set_content_margin(side, _metrics.px(10))
+	_sync_map_toolbar()
 	_configure_diagnostics_overlay()
 	if _menu != null:
 		_menu.apply_metrics(_metrics)
@@ -359,6 +379,9 @@ func attach_diagnostics_transport(send_authenticated_echo: Callable) -> void:
 func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
 		direct_launch := false) -> void:
 	map.reset_world()
+	_full_ui_refresh = true
+	_map_tables_changed.clear()
+	_ui_tables_changed.clear()
 	_state_ready = false
 	_session_generation += 1
 	_reset_diagnostics_epoch()
@@ -484,6 +507,8 @@ func _hide_server_management() -> void:
 func _sync_menu_input() -> void:
 	# An opaque menu must also suppress the workspace's global keyboard/mouse handlers.
 	var blocked := _menu.visible or _server_management.visible
+	if blocked:
+		map.cancel_gestures()
 	map.process_mode = Node.PROCESS_MODE_DISABLED if blocked else Node.PROCESS_MODE_INHERIT
 	workspace.process_mode = Node.PROCESS_MODE_DISABLED if blocked else Node.PROCESS_MODE_INHERIT
 
@@ -604,7 +629,8 @@ func _process(delta: float) -> void:
 		_refresh_timer = REFRESH_INTERVAL
 		if _map_dirty:
 			_map_dirty = false
-			map.refresh()
+			map.refresh(_map_tables_changed)
+			_map_tables_changed.clear()
 		if _dirty:
 			_dirty = false
 			_refresh()
@@ -674,6 +700,7 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 	if _subscription != subscription or generation != _session_generation or not _session_requested:
 		return
 	_state_ready = true
+	_full_ui_refresh = true
 	_dirty = true
 	_map_dirty = true
 	_settings.remember_server(_host, _database)
@@ -855,9 +882,11 @@ func _process_diagnostics() -> void:
 
 func _on_table_changed(table_name: String) -> void:
 	_dirty = true
+	_ui_tables_changed[table_name] = true
 	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config",
 		"world_geometry", "terrain_chunk", "terrain_material", "excavation_designation"]:
 		_map_dirty = true
+		_map_tables_changed[table_name] = true
 
 
 func _on_tile_selected(tile_id: int) -> void:
@@ -904,7 +933,7 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 		return
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	var occupied := 0
-	for tile: ContinuumTile in map.visible_tiles():
+	for tile: ContinuumTile in map.facility_tiles():
 		if rect.intersects(ColonyMap.tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
 			occupied += 1
 	var cost := rect.size.x * rect.size.y * 20.0
@@ -1002,7 +1031,7 @@ func _on_facility_requested(cell: Vector3i) -> void:
 
 func _recreation_tiles() -> Array[ContinuumTile]:
 	var result: Array[ContinuumTile] = []
-	for tile: ContinuumTile in map.visible_tiles():
+	for tile: ContinuumTile in map.facility_tiles():
 		if tile.kind.value == ContinuumTileKind.Options.recreation:
 			result.append(tile)
 	return result
@@ -1160,6 +1189,7 @@ func _build_panels() -> void:
 	for key: String in WorkspaceLayout.PANEL_NAMES:
 		_sections[key] = workspace.add_panel(key)
 	_build_telemetry()
+	_build_map_toolbar()
 	var side: VBoxContainer
 	var section: VBoxContainer = _sections["overview"]
 	side = section
@@ -1401,6 +1431,75 @@ func _build_telemetry() -> void:
 	workspace.telemetry.add_child(menu_button)
 
 
+func _build_map_toolbar() -> void:
+	# A dedicated wrapping header row, above the window area: panels cannot hide
+	# navigation and Viewers never need permission to open Operations to find it.
+	_map_toolbar = PanelContainer.new()
+	_map_toolbar.name = "MapToolbar"
+	_map_toolbar.tooltip_text = "Wheel: zoom at cursor. Middle-drag: pan. PgUp/PgDn: half-metre layers."
+	var stack := workspace.area.get_parent()
+	stack.add_child(_map_toolbar)
+	stack.move_child(_map_toolbar, workspace.area.get_index())
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", _metrics.px(6))
+	_map_toolbar.add_child(flow)
+	var layer_row := HBoxContainer.new()
+	flow.add_child(layer_row)
+	var down := _map_navigation_button(layer_row, "↓", "Layer down by 0.5m (PgDn / [)", func() -> void: map.set_cut(map.terrain_model.cut - 1))
+	_map_layer_label = Label.new()
+	_map_layer_label.tooltip_text = "Inclusive cut layer z; every layer is 0.5 metres. Navigation is available to Viewers too."
+	_map_layer_label.add_theme_font_size_override("font_size", _metrics.font(12))
+	_map_layer_label.set_meta("ui_font_reference", 12.0)
+	layer_row.add_child(_map_layer_label)
+	var up := _map_navigation_button(layer_row, "↑", "Layer up by 0.5m (PgUp / ])", func() -> void: map.set_cut(map.terrain_model.cut + 1))
+	_map_layer_buttons = {-1: down, 1: up}
+	var zoom_row := HBoxContainer.new()
+	flow.add_child(zoom_row)
+	_map_navigation_button(zoom_row, "−", "Zoom out; mouse wheel anchors at the cursor", func() -> void: map.zoom_at(1.0 / 1.2, map.size * 0.5))
+	_map_zoom_label = Label.new()
+	_map_zoom_label.tooltip_text = "Zoom relative to native 32px cells. Middle-drag pans the map; Fit recentres it."
+	_map_zoom_label.add_theme_font_size_override("font_size", _metrics.font(12))
+	_map_zoom_label.set_meta("ui_font_reference", 12.0)
+	zoom_row.add_child(_map_zoom_label)
+	_map_navigation_button(zoom_row, "+", "Zoom in; middle-drag pans without editing", func() -> void: map.zoom_at(1.2, map.size * 0.5))
+	_map_zoom_buttons["reset"] = _map_navigation_button(zoom_row, "1:1", "Reset to native 100% zoom and centre", map.reset_camera)
+	_map_zoom_buttons["fit"] = _map_navigation_button(zoom_row, "Fit", "Fit the entire map and centre it", map.fit_camera)
+	_sync_map_toolbar()
+
+
+func _map_navigation_button(parent: Control, caption: String, hint: String, callback: Callable) -> Button:
+	var button := Button.new()
+	button.text = caption
+	button.tooltip_text = hint
+	button.add_theme_font_size_override("font_size", _metrics.font(12))
+	button.set_meta("ui_font_reference", 12.0)
+	button.custom_minimum_size = _metrics.min_size(24, 20)
+	button.pressed.connect(callback)
+	parent.add_child(button)
+	_map_navigation_buttons.append(button)
+	return button
+
+
+func _sync_map_toolbar() -> void:
+	if _map_layer_label == null:
+		return
+	if _toolbar_metric_font != _metrics.base_font_size:
+		_toolbar_metric_font = _metrics.base_font_size
+		_map_toolbar.add_theme_stylebox_override("panel", DeckTheme.box(DeckTheme.INK, DeckTheme.LINE, _metrics.px(2)))
+		_map_toolbar.get_child(0).add_theme_constant_override("h_separation", _metrics.px(6))
+		_map_toolbar.get_child(0).add_theme_constant_override("v_separation", _metrics.px(2))
+		for button in _map_navigation_buttons:
+			for state in ["normal", "hover", "pressed", "disabled"]:
+				var style: StyleBox = theme.get_stylebox(state, "Button").duplicate()
+				style.set_content_margin(SIDE_TOP, _metrics.px(2))
+				style.set_content_margin(SIDE_BOTTOM, _metrics.px(2))
+				button.add_theme_stylebox_override(state, style)
+	_map_layer_label.text = "Layer z=%d | %.1fm" % [map.terrain_model.cut, map.terrain_model.cut * LayeredTerrainModel.METRES_PER_LAYER]
+	_map_zoom_label.text = "%d%%" % roundi(map.zoom_percent())
+	for step: int in _map_layer_buttons:
+		_map_layer_buttons[step].disabled = not map.layered or (map.terrain_model.cut <= map.terrain_model.min_z if step < 0 else map.terrain_model.cut >= map.terrain_model.max_z)
+
+
 func _refresh_permissions() -> void:
 	if not is_instance_valid(workspace):
 		return
@@ -1461,11 +1560,21 @@ func _render_connection_role() -> void:
 
 
 func _refresh() -> void:
+	if SpacetimeDB.Continuum.db == null:
+		map.bind_world_source(null)
+		_state_ready = false
+		_full_ui_refresh = true
+		return
 	_refresh_status()
-	_refresh_colonists()
+	if _full_ui_refresh or _ui_tables_changed.has("colonist"):
+		_refresh_colonists()
 	_refresh_controls()
-	_refresh_alerts()
-	_refresh_feed()
+	if _full_ui_refresh or _ui_tables_changed.has("alert"):
+		_refresh_alerts()
+	if _full_ui_refresh or _ui_tables_changed.has("event_log"):
+		_refresh_feed()
+	_full_ui_refresh = false
+	_ui_tables_changed.clear()
 
 
 func _refresh_status() -> void:
@@ -1506,7 +1615,7 @@ func _refresh_status() -> void:
 
 
 func _sample_history() -> void:
-	if not _state_ready:
+	if not _state_ready or SpacetimeDB.Continuum.db == null:
 		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
@@ -1566,11 +1675,19 @@ func _dimension_control(side: Control, caption: String, value: int, minimum: int
 
 
 func _refresh_excavations() -> void:
+	var rows := ColonyMap.table_rows(SpacetimeDB.Continuum.db, "excavation_designation")
+	var signature: Array = [map.layered, map.terrain_model.revision, _can_operate, _state_ready, _intent_request != null]
+	for row in rows:
+		signature.append([row.id, row.x_0, row.y_0, row.x_1, row.y_1, row.bottom_z, row.height, row.enabled, row.completed_cells, row.total_cells])
+	if signature == _excavation_signature:
+		return
+	_excavation_signature = signature
 	for child in _excavation_list.get_children():
+		_excavation_list.remove_child(child)
 		child.queue_free()
 	if not map.layered:
 		return
-	for designation in ColonyMap.table_rows(SpacetimeDB.Continuum.db, "excavation_designation"):
+	for designation in rows:
 		# Never offer interaction with a designation hidden behind another floor.
 		var exposed := false
 		var area := ColonyMap.designation_rect(designation)
@@ -1600,7 +1717,7 @@ func _refresh_excavations() -> void:
 
 
 func _selection_z() -> Variant:
-	if not map.terrain_model.selection_valid(_selected_surface):
+	if not map.has_world_snapshot() or not map.terrain_model.selection_valid(_selected_surface):
 		_selected_rect = Rect2i()
 		_selected_surface = {}
 		map.clear_selection()
@@ -1678,60 +1795,87 @@ func _coloured(text: String, value_0_100: float) -> String:
 
 
 func _refresh_colonists() -> void:
-	for child in _colonist_box.get_children():
-		_colonist_box.remove_child(child)
-		child.queue_free()
-
 	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
 	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
 		return a.id < b.id)
+	for id in _colonist_cards.keys():
+		if SpacetimeDB.Continuum.db.colonist.id.find(id) == null:
+			var removed: PanelContainer = _colonist_cards[id]
+			_colonist_box.remove_child(removed)
+			removed.queue_free()
+			_colonist_cards.erase(id)
+	if colonists.is_empty():
+		if not is_instance_valid(_colonist_empty):
+			_colonist_empty = _heading("Waiting for colonist data")
+			_colonist_box.add_child(_colonist_empty)
+		return
+	if is_instance_valid(_colonist_empty):
+		_colonist_box.remove_child(_colonist_empty)
+		_colonist_empty.queue_free()
+		_colonist_empty = null
 
+	var index := 0
 	for colonist: ContinuumColonist in colonists:
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("403a32"), DeckTheme.LINE, _metrics.px(10)))
-		var panel := VBoxContainer.new()
-		panel.add_theme_constant_override("separation", _metrics.px(4))
-		card.add_child(panel)
-
-		var header := Label.new()
+		if not _colonist_cards.has(colonist.id):
+			_colonist_cards[colonist.id] = _new_colonist_card()
+		var card: PanelContainer = _colonist_cards[colonist.id]
+		_colonist_box.move_child(card, index)
+		index += 1
+		var controls: Dictionary = card.get_meta("colonist_controls")
 		var suffix := ""
 		if colonist.activity.value == ContinuumActivity.Options.travelling:
 			suffix = " -> %s" % ContinuumGoal.parse_enum_name(colonist.goal.value).capitalize()
-		header.text = "%s - %s%s" % [
+		controls.header.text = "%s - %s%s" % [
 			colonist.name, ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize(), suffix,
 		]
-		header.add_theme_font_size_override("font_size", _metrics.font(13))
-		header.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		panel.add_child(header)
-
 		var role := "Produce + haul" if colonist.haul_role.value == ContinuumHaulRole.Options.both \
 				else ContinuumHaulRole.parse_enum_name(colonist.haul_role.value).capitalize()
-		var job := Label.new()
-		job.text = "%s / %s" % [
+		controls.job.text = "%s / %s" % [
 			ContinuumWorkType.parse_enum_name(colonist.work.value).capitalize(), role,
 		]
-		job.add_theme_font_size_override("font_size", _metrics.font(12))
-		job.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		job.add_theme_color_override("font_color", DeckTheme.MUTED)
-		panel.add_child(job)
-		var cargo := Label.new()
-		cargo.text = "Cargo: empty hands"
-		cargo.add_theme_font_size_override("font_size", _metrics.font(12))
-		cargo.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		controls.cargo.text = "Cargo: empty hands"
+		controls.cargo.add_theme_color_override("font_color", Color("e8e1d5"))
 		if colonist.carried_amount > 0.0:
-			cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
+			controls.cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
 				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
-			cargo.add_theme_color_override("font_color",
+			controls.cargo.add_theme_color_override("font_color",
 					ColonyMap.RESOURCE_COLORS[colonist.carried_kind.value])
-		panel.add_child(cargo)
-
 		for bar: Dictionary in NEED_BARS:
-			panel.add_child(_stat_row(str(bar["label"]),
-					float(colonist.get(str(bar["key"]))), bool(bar["invert"])))
+			_update_stat_row(controls.bars[bar.key], float(colonist.get(bar.key)), bar.invert)
 
-		_colonist_box.add_child(card)
-	if colonists.is_empty():
-		_colonist_box.add_child(_heading("Waiting for colonist data"))
+
+func _new_colonist_card() -> PanelContainer:
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", DeckTheme.box(Color("403a32"), DeckTheme.LINE, _metrics.px(10)))
+	var panel := VBoxContainer.new()
+	panel.add_theme_constant_override("separation", _metrics.px(4))
+	card.add_child(panel)
+	var controls := {"bars": {}}
+	for key in ["header", "job", "cargo"]:
+		var label := Label.new()
+		label.add_theme_font_size_override("font_size", _metrics.font(13 if key == "header" else 12))
+		label.set_meta("ui_font_reference", 13.0 if key == "header" else 12.0)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		panel.add_child(label)
+		controls[key] = label
+	controls.job.add_theme_color_override("font_color", DeckTheme.MUTED)
+	for bar: Dictionary in NEED_BARS:
+		var row := _stat_row(bar.label, 0.0, bar.invert)
+		panel.add_child(row)
+		controls.bars[bar.key] = row
+	card.set_meta("colonist_controls", controls)
+	_colonist_box.add_child(card)
+	return card
+
+
+func _update_stat_row(row: HBoxContainer, value: float, invert: bool) -> void:
+	var bar: ProgressBar = row.get_child(1)
+	bar.value = value
+	var goodness := 100.0 - value if invert else value
+	var style: StyleBoxFlat = bar.get_theme_stylebox("fill")
+	style.bg_color = Color("ff5c6c") if goodness < 30 else (Color("ffb74d") if goodness < 60 else Color("6fcf7f"))
+	var value_label: Label = row.get_child(2)
+	value_label.text = "%3.0f" % value
 
 
 ## One labelled 0-100 bar. `invert` means "high is bad" (a need), so the colour
@@ -1743,6 +1887,7 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 	label.text = label_text
 	label.custom_minimum_size = _metrics.min_size(84, 0)
 	label.add_theme_font_size_override("font_size", _metrics.font(11))
+	label.set_meta("ui_font_reference", 11.0)
 	row.add_child(label)
 
 	var bar := ProgressBar.new()
@@ -1769,16 +1914,24 @@ func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
 	value_label.custom_minimum_size = _metrics.min_size(28, 0)
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	value_label.add_theme_font_size_override("font_size", _metrics.font(11))
+	value_label.set_meta("ui_font_reference", 11.0)
 	row.add_child(value_label)
 
 	return row
 
 
 func _refresh_controls() -> void:
+	if SpacetimeDB.Continuum.db == null:
+		map.bind_world_source(null)
+		_state_ready = false
+		_build_menu.disabled = true
+		_sync_map_toolbar()
+		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var busy := not _state_ready or _intent_request != null
 	_build_menu.disabled = busy or not _can_operate
 	_layer_label.text = "Cut z=%d / %.1fm (inclusive)" % [map.terrain_model.cut, map.terrain_model.cut * 0.5]
+	_sync_map_toolbar()
 	if map.layered:
 		_dimension_inputs["excavation"].max_value = map.terrain_model.max_z - map.terrain_model.min_z + 1
 		_dimension_inputs["clearance"].max_value = map.terrain_model.max_z - map.terrain_model.min_z + 1
@@ -1797,10 +1950,11 @@ func _refresh_controls() -> void:
 	var occupied := 0
 	var enabled_count := 0
 	var compatible_counts: Dictionary = {}
+	var block_rows: Array[ContinuumTile] = []
 	if _selected_rect.size != Vector2i.ZERO:
-		for tile: ContinuumTile in map.visible_tiles():
-			if not _selected_rect.has_point(Vector2i(tile.x, tile.y)):
-				continue
+		block_rows = map.tiles_in_rect(_selected_rect)
+	if _selected_rect.size != Vector2i.ZERO:
+		for tile: ContinuumTile in block_rows:
 			block_tiles += 1
 			if tile.kind.value != ContinuumTileKind.Options.empty:
 				occupied += 1
@@ -1820,9 +1974,7 @@ func _refresh_controls() -> void:
 		var fertility := 0.0
 		var moisture := 0.0
 		var cover := 0.0
-		for tile: ContinuumTile in map.visible_tiles():
-			if not _selected_rect.has_point(Vector2i(tile.x, tile.y)):
-				continue
+		for tile: ContinuumTile in block_rows:
 			var fields: ContinuumTerrain = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
 			if fields != null:
 				terrain_count += 1

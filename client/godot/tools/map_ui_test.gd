@@ -40,7 +40,25 @@ func _has_user_arg(value: String) -> bool:
 
 
 func _test_map_input() -> void:
+	# The live connection starts in the later controller phase. Own a temporary
+	# provider here so resize/input provenance checks never depend on nil or on
+	# subscription scheduling; preserve the extension's already-seeded provider.
+	var previous_db := SpacetimeDB.Continuum.db
+	var local: LocalDatabase
+	if previous_db == null:
+		var fixture := preload("res://tools/map_client_profile.gd").new()
+		local = fixture.database()
+		fixture.free()
+	await _test_flat_map_input()
+	SpacetimeDB.Continuum.db = previous_db
+	map.bind_world_source(previous_db)
+	if local != null:
+		local.free()
+
+
+func _test_flat_map_input() -> void:
 	map = ColonyMap.new()
+	map.bind_world_source(SpacetimeDB.Continuum.db)
 	map.size = Vector2(480, 570)
 	map._has_state = true
 	map._grid = Vector2i(24, 24)
@@ -55,11 +73,15 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"build")
 	_drag(Vector2(130, 130), Vector2(30, 50))
 	_assert(build_releases == 1, "one reversed build drag emits one atomic request")
+	if failed:
+		return
 	_assert(build_rects[0] == Rect2i(1, 0, 6, 5), "reversed drag payload is exact")
 	_assert(not map._dragging, "drag state clears after release")
 
 	_drag(Vector2(70, 70), Vector2(70, 70))
 	_assert(build_releases == 2, "one-cell build drag emits one request")
+	if failed:
+		return
 	_assert(build_rects[1] == Rect2i(3, 1, 1, 1), "single-cell payload is exact")
 	_release(Vector2(70, 70))
 	_assert(build_releases == 2, "repeated release cannot submit another build")
@@ -91,6 +113,8 @@ func _test_map_input() -> void:
 	map.set_interaction_mode(&"select")
 	_drag(Vector2(210, 210), Vector2(250, 250))
 	_assert(selected_releases == 1, "select mode emits one rectangular selection")
+	if failed:
+		return
 	_assert(selected_rects[0] == Rect2i(10, 8, 3, 3), "selection payload is exact")
 
 
@@ -217,12 +241,11 @@ func _test_workspace_surface(main: Control) -> void:
 
 func _refresh_real_tiles(main: Control) -> void:
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
-	var frames := 0
-	while (client.db == null or client.db.tile.iter().is_empty()) and frames < 120:
+	var deadline := Time.get_ticks_msec() + 10000
+	while (not main._state_ready or client.db == null or client.db.tile.iter().is_empty()) and Time.get_ticks_msec() < deadline:
 		await get_tree().process_frame
-		frames += 1
-	_assert(client.db != null and not client.db.tile.iter().is_empty(),
-		"private subscribed fixture provides tiles for refresh tests")
+	_assert(main._state_ready and client.db != null and not client.db.tile.iter().is_empty(),
+		"private fixture subscription completes with tiles within 10 seconds")
 	if failed:
 		return
 	var occupied: ContinuumTile = null

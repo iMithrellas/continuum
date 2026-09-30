@@ -35,6 +35,9 @@ func fixture() -> void:
 		{"id": 2, "name": "stone", "opaque": true}])
 
 func run() -> void:
+	var previous_db := SpacetimeDB.Continuum.db
+	var query_db := preload("res://tools/terrain_fixture.gd").database(false)
+	var query_source := SpacetimeDB.Continuum.db
 	fixture()
 	check(model.surface_at(Vector2i(0, 0)) == Vector3i(0, 0, -1), "ray crosses air to actual negative-z floor")
 	check(model.surface_at(Vector2i(1, 0)) == Vector3i(1, 0, -8), "ray can reveal a floor many layers below cut")
@@ -65,6 +68,7 @@ func run() -> void:
 	check(model.excavation_payload(Rect2i(0, 0, 1, 1), 14, 3).is_empty(), "designation upper bounds checked")
 	check(model.excavation_payload(Rect2i(0, 0, 1, 1), 0, 0).is_empty(), "zero designation height rejected")
 	var map := ColonyMap.new()
+	map.bind_world_source(query_source)
 	map.size = Vector2(400, 200)
 	get_tree().root.add_child(map)
 	map.terrain_model = model
@@ -214,7 +218,6 @@ func run() -> void:
 		[{"id": 3, "name": "glass", "opaque": false}])
 	check(unknown.placement_clear(Rect2i(0, 0, 1, 1), 0, 1), "transparent non-air material provides physical support")
 	check(not unknown.placement_clear(Rect2i(0, 0, 1, 1), -1, 1), "transparent solid occupies space even without opacity")
-	var previous_db := SpacetimeDB.Continuum.db
 	var first_db := preload("res://tools/terrain_fixture.gd").database()
 	first_db._tables["config"][0] = ContinuumConfig.create(0, 0, 0, 7, ContinuumHaulPolicy.create(0), ContinuumMealPolicy.create(0))
 	preload("res://tools/terrain_fixture.gd").index_rows(first_db)
@@ -233,7 +236,7 @@ func run() -> void:
 		"actual DB replacement with identical generation/revisions refreshes authoritative surface hit xyz")
 	check(not map._visual_feet.has(77) and map._selection_rect.size == Vector2i.ZERO,
 		"actual DB replacement clears stale eased actors and frozen selections")
-	SpacetimeDB.Continuum.db = previous_db
+	SpacetimeDB.Continuum.db = query_source
 	first_db.free()
 	second_db.free()
 	test_step_motion()
@@ -247,6 +250,8 @@ func run() -> void:
 	controller._build_menu.free()
 	controller.free()
 	map.free()
+	SpacetimeDB.Continuum.db = previous_db
+	query_db.free()
 	print("TERRAIN_TEST_%s: %d assertions" % ["PASS" if failures == 0 else "FAIL", assertions])
 	get_tree().quit(0 if failures == 0 else 1)
 
@@ -299,6 +304,7 @@ func test_unresolved_rays() -> void:
 	check(terrain.surface_at(Vector2i.ZERO) == null and terrain.base_at(Vector2i.ZERO) == null,
 		"known lower floor is neither visible nor selectable through missing upper chunk")
 	var map := ColonyMap.new()
+	map.bind_world_source(SpacetimeDB.Continuum.db)
 	map.size = Vector2(100, 100)
 	get_tree().root.add_child(map)
 	map.terrain_model = terrain

@@ -111,6 +111,21 @@ test-terrain-view:
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/terrain_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/terrain_ui_test.tscn
 
+# Camera/HUD/cache regressions plus existing backend-free client contracts.
+test-map-client:
+    {{ quote(godot) }} --headless --path client/godot --import
+    python3 client/godot/tools/map_client_checks.py
+
+# Include isolated software-GL 24/128/256 camera and composed shader checks.
+test-map-client-render:
+    {{ quote(godot) }} --headless --path client/godot --import
+    python3 client/godot/tools/map_client_checks.py --gpu
+
+# Repeat client CPU/frame/UI profiles without replacing saved comparison logs.
+profile-map-client:
+    {{ quote(godot) }} --headless --path client/godot --import
+    python3 client/godot/tools/map_client_checks.py --gpu --profile
+
 # Real GPU regression: spatial depth blur/darkening and sharp selection overlays.
 # Requires a display; intentionally not headless (Godot's headless renderer is dummy).
 test-terrain-render:
