@@ -80,6 +80,8 @@ impl Resources {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct World {
+    /// Bounded derived transaction-local navigation, never persisted authority.
+    pub navigation: std::cell::RefCell<super::navigation::Navigation>,
     /// None is reserved for historical flat simulation fixtures; live loads use Some.
     pub geometry: Option<super::geometry::Geometry>,
     pub tiles: Vec<Tile>,

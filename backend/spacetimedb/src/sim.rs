@@ -11,6 +11,7 @@ pub use definitions::{
 pub use tuning::Tuning;
 pub use work_orders::{default_work_orders, WorkOrder};
 pub mod geometry;
+pub mod navigation;
 pub mod terrain;
 mod vertical;
 

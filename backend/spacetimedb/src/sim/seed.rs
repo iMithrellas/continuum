@@ -81,6 +81,7 @@ pub fn default_colonists() -> Vec<Colonist> {
 pub fn new_world() -> World {
     let tiles = default_tiles();
     World {
+        navigation: Default::default(),
         geometry: None,
         work_orders: default_work_orders(&tiles),
         tiles,

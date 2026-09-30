@@ -42,11 +42,7 @@ pub(super) fn labour_goal(world: &World, index: usize, tuning: &Tuning) -> Optio
         if colonist.assignment.haul_role.hauls()
             && world.live_destination(index, tuning, Goal::Haul).is_some()
         {
-            let storage = world
-                .geometry
-                .as_ref()
-                .unwrap()
-                .reachable(world.actor_cell(index), colonist.spatial.body);
+            let storage = world.actor_reachability(index);
             if world.tiles.iter().any(|t| {
                 t.kind == TileKind::Storage && t.enabled && storage.contains_key(&t.base())
             }) {

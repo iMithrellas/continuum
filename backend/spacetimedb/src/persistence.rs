@@ -157,6 +157,7 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
     let config = ctx.db.config().id().find(0);
 
     let mut world = World {
+        navigation: Default::default(),
         geometry: Some(geometry),
         tiles,
         work_orders,
@@ -189,7 +190,17 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
             .map(|colony| colony.smoothed_productivity)
             .unwrap_or(90.0),
     };
+    let saved_hops: Vec<_> = world
+        .colonists
+        .iter()
+        .map(|c| (c.spatial.next, c.movement.progress))
+        .collect();
     world.repair_navigation_hops();
+    for (actor, saved) in world.colonists.iter().zip(saved_hops) {
+        if (actor.spatial.next, actor.movement.progress) != saved {
+            ctx.db.colonist().id().update(colonist_row(actor));
+        }
+    }
     world
 }
 

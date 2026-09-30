@@ -297,6 +297,79 @@ fn nine_cell_excavation_uses_existing_upper_stair_access() {
 }
 
 #[test]
+fn actual_progress_marks_only_changed_job_vectors_and_completion_marks_public_row() {
+    let mut w = world();
+    designate(&mut w, Cell(3, 2, 0), 1);
+    let g = w.geometry.as_mut().unwrap();
+    let mut other = g.designate(2, 6, 5, 6, 5, -5, 1, 3).unwrap();
+    other.enabled = false;
+    g.designations.push(other);
+    w.step_mining(0, &Tuning::default(), 0.1);
+    let g = w.geometry.as_ref().unwrap();
+    assert_eq!(g.dirty_jobs, std::collections::BTreeSet::from([1]));
+    assert!(g.dirty_designations.is_empty());
+    w.step_mining(0, &Tuning::default(), 0.1);
+    let g = w.geometry.as_ref().unwrap();
+    assert_eq!(g.dirty_jobs, std::collections::BTreeSet::from([1]));
+    assert_eq!(g.dirty_designations, std::collections::BTreeSet::from([1]));
+}
+
+#[test]
+fn body_reconfiguration_changes_actual_routes_and_mining_execution() {
+    let mut w = world();
+    w.colonists[0].position = sim::Position { x: 1, y: 1 };
+    w.colonists[0].movement.target = sim::Position { x: 5, y: 1 };
+    let g = w.geometry.as_mut().unwrap();
+    g.height = 3;
+    for z in 0..4 {
+        g.set(Cell(3, 0, z), STONE);
+        g.set(Cell(3, 1, z), STONE);
+    }
+    designate(&mut w, Cell(6, 1, 0), 1);
+    assert!(w.actor_reachability(0).contains_key(&Cell(5, 1, 0)));
+    let body = Body {
+        width: 2,
+        depth: 2,
+        height: 4,
+        step: 1,
+    };
+    assert!(w
+        .geometry
+        .as_ref()
+        .unwrap()
+        .supported(w.actor_cell(0), body));
+    w.colonists[0].spatial.body = body;
+    assert!(!w.actor_reachability(0).contains_key(&Cell(5, 0, 0)));
+    assert!(w.mining_job(0).is_none());
+    w.step_live_travel(0, &fast(), 1.0);
+    assert_eq!(w.actor_cell(0), Cell(1, 1, 0));
+    w.colonists[0].spatial.body = Body::default();
+    w.step_live_travel(0, &fast(), 1.0);
+    assert_eq!(w.actor_cell(0), Cell(5, 1, 0));
+    w.step_mining(0, &fast(), 1.0);
+    assert_eq!(stone_total(&w), 1.0);
+}
+
+#[test]
+fn full_size_designations_return_reachable_jobs_and_reject_buried_jobs_without_cross_product() {
+    let mut w = world();
+    let g = w.geometry.as_mut().unwrap();
+    g.width = 24;
+    g.height = 24;
+    let d = g.designate(1, 0, 0, 23, 23, -16, 16, 2).unwrap();
+    assert_eq!(d.cells.len(), 9216);
+    g.designations.push(d);
+    let (_, _, p) = w.mining_job(0).unwrap();
+    assert!(w.actor_reachability(0).contains_key(&p));
+    let g = w.geometry.as_mut().unwrap();
+    g.designations.clear();
+    let d = g.designate(2, 0, 0, 23, 23, -16, 15, 2).unwrap();
+    assert_eq!(d.cells.len(), 8640);
+    g.designations.push(d);
+    assert!(w.mining_job(0).is_none());
+}
+
+#[test]
 fn need_and_logistics_destinations_ignore_unreachable_facilities_and_other_elevations() {
     let mut w = world();
     w.tiles.push(tile(80, Cell(2, 2, -8), TileKind::Dining));
