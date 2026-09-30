@@ -12,6 +12,7 @@ const table_names: Array[String] = ['item_stack']
 @export var y: int
 @export var kind: ContinuumResourceKind
 @export var amount: float
+@export var z: int
 
 #BSATN metadata
 const primary_key: StringName = &'id'
@@ -21,7 +22,8 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"x": "I32",
 	"y": "I32",
 	"kind": "ContinuumResourceKind",
-	"amount": "F32"
+	"amount": "F32",
+	"z": "I32"
 }
 
 ## 1. id: int[br]
@@ -30,7 +32,8 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 ## 4. y: int[br]
 ## 5. kind: ContinuumResourceKind[br]
 ## 6. amount: float[br]
-static func create(p_id: int, p_tile_id: int, p_x: int, p_y: int, p_kind: ContinuumResourceKind, p_amount: float) -> ContinuumItemStack:
+## 7. z: int[br]
+static func create(p_id: int, p_tile_id: int, p_x: int, p_y: int, p_kind: ContinuumResourceKind, p_amount: float, p_z: int) -> ContinuumItemStack:
 	var result: ContinuumItemStack = ContinuumItemStack.new()
 	result.id = p_id
 	result.tile_id = p_tile_id
@@ -38,4 +41,5 @@ static func create(p_id: int, p_tile_id: int, p_x: int, p_y: int, p_kind: Contin
 	result.y = p_y
 	result.kind = p_kind
 	result.amount = p_amount
+	result.z = p_z
 	return result

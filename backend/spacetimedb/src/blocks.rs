@@ -49,6 +49,10 @@ fn to_sim_tile(tile: &Tile) -> sim::Tile {
         y: tile.y,
         kind: tile.kind,
         enabled: tile.enabled,
+        z: tile.z,
+        width: tile.width,
+        depth: tile.depth,
+        clearance_height: tile.clearance_height,
     }
 }
 
@@ -64,7 +68,9 @@ pub(crate) fn validate_empty_block(
     let mut ids = Vec::with_capacity(rect_area(rect) as usize);
     for y in rect.min_y..=rect.max_y {
         for x in rect.min_x..=rect.max_x {
-            let tile = tiles.iter().find(|tile| tile.x == x && tile.y == y);
+            let tile = tiles
+                .iter()
+                .find(|tile| tile.x == x && tile.y == y && tile.z == 0);
             let Some(tile) = tile else {
                 return Err("rectangle contains missing grid cells".into());
             };
@@ -95,6 +101,7 @@ pub(crate) fn compatible_tile_ids(
         .iter()
         .filter(|tile| {
             tile.x >= rect.min_x
+                && tile.z == 0
                 && tile.x <= rect.max_x
                 && tile.y >= rect.min_y
                 && tile.y <= rect.max_y
@@ -132,6 +139,12 @@ pub fn build_tile_block(
     let tiles: Vec<_> = ctx.db.tile().iter().collect();
     let sim_tiles: Vec<_> = tiles.iter().map(to_sim_tile).collect();
     let ids = validate_empty_block(&sim_tiles, rect, kind, colony.wood)?;
+    let world = crate::persistence::load_world(ctx);
+    for id in &ids {
+        let mut tile = world.tiles.iter().find(|t| t.id == *id).unwrap().clone();
+        tile.kind = kind;
+        world.validate_placement(&tile)?;
+    }
     let cost = block_cost(rect);
 
     let mut updated_colony = colony;
@@ -179,6 +192,7 @@ pub fn set_tile_block_enabled(
         .iter()
         .filter(|tile| {
             tile.kind != TileKind::Empty
+                && tile.z == 0
                 && tile.x >= rect.min_x
                 && tile.x <= rect.max_x
                 && tile.y >= rect.min_y
@@ -295,6 +309,10 @@ mod tests {
             y,
             kind,
             enabled: true,
+            z: 0,
+            width: 1,
+            depth: 1,
+            clearance_height: 4,
         }
     }
 

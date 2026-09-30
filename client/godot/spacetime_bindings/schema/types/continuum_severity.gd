@@ -34,4 +34,3 @@ static func create_warning() -> ContinuumSeverity:
 
 static func create_critical() -> ContinuumSeverity:
 	return create(Options.critical)
-

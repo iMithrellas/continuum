@@ -78,6 +78,14 @@ pub struct Tile {
     pub y: i32,
     pub kind: TileKind,
     pub enabled: bool,
+    #[default(0)]
+    pub z: i32,
+    #[default(1)]
+    pub width: u16,
+    #[default(1)]
+    pub depth: u16,
+    #[default(4)]
+    pub clearance_height: u16,
 }
 
 /// Continuous environmental values for a tile. These are independent of the
@@ -114,6 +122,24 @@ pub struct Colonist {
     pub productivity: f32,
     pub sleep_hours: f32,
     pub last_sleep_quality: f32,
+    #[default(0)]
+    pub z: i32,
+    #[default(0)]
+    pub target_z: i32,
+    #[default(1)]
+    pub body_width: u16,
+    #[default(1)]
+    pub body_depth: u16,
+    #[default(4)]
+    pub clearance_height: u16,
+    #[default(1)]
+    pub max_step_height: u16,
+    #[default(0)]
+    pub next_x: i32,
+    #[default(0)]
+    pub next_y: i32,
+    #[default(0)]
+    pub next_z: i32,
 }
 
 #[table(accessor = item_stack, public)]
@@ -125,6 +151,66 @@ pub struct ItemStack {
     pub y: i32,
     pub kind: ResourceKind,
     pub amount: f32,
+    #[default(0)]
+    pub z: i32,
+}
+
+#[table(accessor = world_geometry, public)]
+pub struct WorldGeometry {
+    #[primary_key]
+    pub id: u32,
+    pub width: i32,
+    pub height: i32,
+    pub min_z: i32,
+    pub max_z: i32,
+}
+
+#[table(accessor = terrain_chunk, public)]
+pub struct TerrainChunk {
+    #[primary_key]
+    pub id: u64,
+    pub chunk_x: i32,
+    pub chunk_y: i32,
+    pub chunk_z: i32,
+    pub materials: Vec<u16>,
+    pub revision: u32,
+}
+
+#[table(accessor = terrain_material, public)]
+pub struct TerrainMaterial {
+    #[primary_key]
+    pub id: u16,
+    pub name: String,
+    pub density: f32,
+    pub strength: f32,
+    pub thermal_conductivity: f32,
+    pub specific_heat_capacity: f32,
+    pub opaque: bool,
+}
+
+#[table(accessor = excavation_designation, public)]
+pub struct ExcavationDesignation {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+    pub bottom_z: i32,
+    pub height: u16,
+    pub priority: u8,
+    pub enabled: bool,
+    pub total_cells: u32,
+    pub completed_cells: u32,
+}
+
+/// One job vector per intent, not one ECS/database row per terrain cell.
+#[table(accessor = excavation_jobs)]
+pub struct ExcavationJobs {
+    #[primary_key]
+    pub id: u64,
+    pub cells: Vec<crate::sim::geometry::MiningCell>,
 }
 
 /// Persistent operator intent, not a worker assignment. Ticks never rewrite orders.

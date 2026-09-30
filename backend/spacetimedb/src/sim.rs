@@ -10,7 +10,9 @@ pub use definitions::{
 };
 pub use tuning::Tuning;
 pub use work_orders::{default_work_orders, WorkOrder};
+pub mod geometry;
 pub mod terrain;
+mod vertical;
 
 pub const GRID_W: i32 = 24;
 pub const GRID_H: i32 = 24;

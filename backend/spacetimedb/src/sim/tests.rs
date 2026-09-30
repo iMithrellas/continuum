@@ -12,6 +12,10 @@ fn facility_build_validation_is_strict_and_does_not_spend_resources() {
         y: 0,
         kind: TileKind::Empty,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     };
     assert!(validate_facility_build(&tile, TileKind::Dining, 20.0).is_ok());
     assert!(validate_facility_build(&tile, TileKind::Farm, 20.0).is_err());
@@ -77,6 +81,10 @@ fn work_orders_validate_jobs_facilities_priorities_and_stable_ids() {
         y: 0,
         kind: TileKind::Forest,
         enabled: false,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     };
     assert!(WorkOrder::new(&tile, WorkType::None, 2, true).is_err());
     assert!(WorkOrder::new(&tile, WorkType::Farming, 2, true).is_err());
@@ -137,6 +145,10 @@ fn two_site_world(policy: HaulPolicy) -> (World, Tuning) {
         y: 0,
         kind: TileKind::Farm,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     });
     world.work_orders = default_work_orders(&world.tiles);
     tuning.move_tiles_per_hour = 15.0;
@@ -332,6 +344,10 @@ fn order_changes_preserve_needs_and_deliver_existing_cargo() {
                 y: 1,
                 kind,
                 enabled: true,
+                z: 0,
+                width: 1,
+                depth: 1,
+                clearance_height: 4,
             });
             let c = &mut world.colonists[0];
             c.cargo.kind = ResourceKind::Wood;
@@ -368,6 +384,10 @@ fn forest_orders_rank_and_pause_logging_and_hunting_independently() {
             y: 0,
             kind: TileKind::Forest,
             enabled: true,
+            z: 0,
+            width: 1,
+            depth: 1,
+            clearance_height: 4,
         });
         world.work_orders = default_work_orders(&world.tiles);
         for id in 3..=4 {
@@ -421,6 +441,10 @@ fn hauling_world(work: WorkType, policy: HaulPolicy) -> (World, Tuning) {
             y: 0,
             kind,
             enabled: true,
+            z: 0,
+            width: 1,
+            depth: 1,
+            clearance_height: 4,
         })
         .collect();
     world.work_orders = default_work_orders(&world.tiles);
@@ -591,6 +615,10 @@ fn carriers_wait_with_goods_and_retarget_enabled_storage() {
         y: 0,
         kind: TileKind::Storage,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     });
     step(&mut world, &tuning, 2.0 * 60.0);
     assert_eq!(world.colonists[0].movement.target.x, 2);
@@ -628,6 +656,10 @@ fn dedicated_haulers_batch_active_output_and_collect_when_producer_rests() {
         y: 1,
         kind: TileKind::Sleep,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     });
     world.colonists[0].needs.fatigue = 80.0;
     let amount = world.stack_amount(1, ResourceKind::Food);
@@ -670,6 +702,10 @@ fn work_and_pickup_targets_follow_remaining_facilities_and_piles() {
         y: 0,
         kind: TileKind::Farm,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     });
     world.work_orders = default_work_orders(&world.tiles);
     step(&mut world, &tuning, 60.0);
@@ -731,6 +767,10 @@ fn needs_interrupt_hauling_without_losing_the_carried_stack() {
         y: 1,
         kind: TileKind::Dining,
         enabled: true,
+        z: 0,
+        width: 1,
+        depth: 1,
+        clearance_height: 4,
     });
     world.colonists[0].cargo.kind = ResourceKind::Wood;
     world.colonists[0].cargo.amount = tuning.stack_wood;

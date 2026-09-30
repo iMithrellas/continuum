@@ -3,6 +3,8 @@
 use crate::schema::*;
 use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
+mod geometry;
+pub(crate) use geometry::write_designation as insert_designation;
 
 const DEFAULT_WORLD_SEED: u64 = 0x6c6f_6e67_7365_6564;
 
@@ -38,6 +40,7 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         ctx.db.event_log().id().delete(event.id);
     }
 
+    geometry::reset(ctx);
     let world = sim::new_world();
     for tile in &world.tiles {
         ctx.db.tile().insert(Tile {
@@ -46,6 +49,10 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
             y: tile.y,
             kind: tile.kind,
             enabled: tile.enabled,
+            z: tile.z,
+            width: tile.width,
+            depth: tile.depth,
+            clearance_height: tile.clearance_height,
         });
     }
     for order in &world.work_orders {
@@ -122,18 +129,8 @@ fn upsert_world_seed(ctx: &ReducerContext, seed: u64) {
 
 pub(crate) fn load_world(ctx: &ReducerContext) -> World {
     ensure_terrain(ctx);
-    let mut tiles: Vec<sim::Tile> = ctx
-        .db
-        .tile()
-        .iter()
-        .map(|tile| sim::Tile {
-            id: tile.id,
-            x: tile.x,
-            y: tile.y,
-            kind: tile.kind,
-            enabled: tile.enabled,
-        })
-        .collect();
+    let geometry = geometry::load(ctx);
+    let mut tiles: Vec<sim::Tile> = ctx.db.tile().iter().map(tile_state).collect();
     tiles.sort_by_key(|tile| tile.id);
 
     let mut work_orders: Vec<sim::WorkOrder> = ctx
@@ -153,25 +150,14 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
     let mut colonists: Vec<sim::Colonist> = ctx.db.colonist().iter().map(colonist_state).collect();
     colonists.sort_by_key(|colonist| colonist.id);
 
-    let mut stacks: Vec<sim::ItemStack> = ctx
-        .db
-        .item_stack()
-        .iter()
-        .map(|stack| sim::ItemStack {
-            id: stack.id,
-            tile_id: stack.tile_id,
-            x: stack.x,
-            y: stack.y,
-            kind: stack.kind,
-            amount: stack.amount,
-        })
-        .collect();
+    let mut stacks: Vec<sim::ItemStack> = ctx.db.item_stack().iter().map(stack_state).collect();
     stacks.sort_by_key(|stack| stack.id);
 
     let colony = ctx.db.colony().id().find(0);
     let config = ctx.db.config().id().find(0);
 
-    World {
+    let mut world = World {
+        geometry: Some(geometry),
         tiles,
         work_orders,
         colonists,
@@ -202,7 +188,9 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
             .as_ref()
             .map(|colony| colony.smoothed_productivity)
             .unwrap_or(90.0),
-    }
+    };
+    world.repair_navigation_hops();
+    world
 }
 
 /// Additive migrations do not rewrite existing terrain or any other colony rows.
@@ -244,6 +232,17 @@ fn colonist_state(row: Colonist) -> sim::Colonist {
     sim::Colonist {
         id: row.id,
         name: row.name,
+        spatial: sim::geometry::Spatial {
+            z: row.z,
+            target_z: row.target_z,
+            next: sim::geometry::Cell(row.next_x, row.next_y, row.next_z),
+            body: sim::geometry::Body {
+                width: row.body_width,
+                depth: row.body_depth,
+                height: row.clearance_height,
+                step: row.max_step_height,
+            },
+        },
         position: sim::Position { x: row.x, y: row.y },
         movement: sim::Movement {
             target: sim::Position {
@@ -302,6 +301,15 @@ fn colonist_row(colonist: &sim::Colonist) -> Colonist {
         productivity: colonist.wellbeing.productivity,
         sleep_hours: colonist.rest.hours,
         last_sleep_quality: colonist.rest.last_quality,
+        z: colonist.spatial.z,
+        target_z: colonist.spatial.target_z,
+        body_width: colonist.spatial.body.width,
+        body_depth: colonist.spatial.body.depth,
+        clearance_height: colonist.spatial.body.height,
+        max_step_height: colonist.spatial.body.step,
+        next_x: colonist.spatial.next.0,
+        next_y: colonist.spatial.next.1,
+        next_z: colonist.spatial.next.2,
     }
 }
 
@@ -322,6 +330,7 @@ fn colony_row(world: &World) -> Colony {
 
 /// Save tick output, leaving tile settings and work-order intents unchanged.
 pub(crate) fn save_world(ctx: &ReducerContext, world: &World, config: Config) {
+    save_geometry_and_tiles(ctx, world);
     for colonist in &world.colonists {
         ctx.db.colonist().id().update(colonist_row(colonist));
     }
@@ -335,14 +344,7 @@ pub(crate) fn save_world(ctx: &ReducerContext, world: &World, config: Config) {
         }
     }
     for stack in &world.stacks {
-        let row = ItemStack {
-            id: stack.id,
-            tile_id: stack.tile_id,
-            x: stack.x,
-            y: stack.y,
-            kind: stack.kind,
-            amount: stack.amount,
-        };
+        let row = stack_row(stack);
         if ctx.db.item_stack().id().find(stack.id).is_some() {
             ctx.db.item_stack().id().update(row);
         } else {
@@ -362,3 +364,78 @@ pub(crate) fn save_world(ctx: &ReducerContext, world: &World, config: Config) {
 
 #[cfg(test)]
 mod tests;
+
+pub(crate) fn save_geometry_and_tiles(ctx: &ReducerContext, world: &World) {
+    if let Some(g) = &world.geometry {
+        geometry::save(ctx, g);
+    }
+    for t in &world.tiles {
+        let row = tile_row(t);
+        match ctx.db.tile().id().find(t.id) {
+            Some(old)
+                if old.x == t.x
+                    && old.y == t.y
+                    && old.z == t.z
+                    && old.kind == t.kind
+                    && old.enabled == t.enabled
+                    && old.width == t.width
+                    && old.depth == t.depth
+                    && old.clearance_height == t.clearance_height => {}
+            Some(_) => {
+                ctx.db.tile().id().update(row);
+            }
+            None => {
+                ctx.db.tile().insert(row);
+            }
+        }
+    }
+}
+
+fn tile_state(t: Tile) -> sim::Tile {
+    sim::Tile {
+        id: t.id,
+        x: t.x,
+        y: t.y,
+        z: t.z,
+        kind: t.kind,
+        enabled: t.enabled,
+        width: t.width,
+        depth: t.depth,
+        clearance_height: t.clearance_height,
+    }
+}
+fn tile_row(t: &sim::Tile) -> Tile {
+    Tile {
+        id: t.id,
+        x: t.x,
+        y: t.y,
+        z: t.z,
+        kind: t.kind,
+        enabled: t.enabled,
+        width: t.width,
+        depth: t.depth,
+        clearance_height: t.clearance_height,
+    }
+}
+fn stack_state(s: ItemStack) -> sim::ItemStack {
+    sim::ItemStack {
+        id: s.id,
+        tile_id: s.tile_id,
+        x: s.x,
+        y: s.y,
+        z: s.z,
+        kind: s.kind,
+        amount: s.amount,
+    }
+}
+fn stack_row(s: &sim::ItemStack) -> ItemStack {
+    ItemStack {
+        id: s.id,
+        tile_id: s.tile_id,
+        x: s.x,
+        y: s.y,
+        z: s.z,
+        kind: s.kind,
+        amount: s.amount,
+    }
+}

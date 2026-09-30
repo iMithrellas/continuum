@@ -32,6 +32,10 @@ pub fn default_tiles() -> Vec<Tile> {
                 y,
                 kind,
                 enabled: true,
+                z: 0,
+                width: 1,
+                depth: 1,
+                clearance_height: 4,
             });
             id += 1;
         }
@@ -72,9 +76,12 @@ pub fn default_colonists() -> Vec<Colonist> {
         .collect()
 }
 
+/// Historical flat simulation fixture/layout. Persistence explicitly installs
+/// real geometry on fresh seed and on every live load (including migrations).
 pub fn new_world() -> World {
     let tiles = default_tiles();
     World {
+        geometry: None,
         work_orders: default_work_orders(&tiles),
         tiles,
         colonists: default_colonists(),

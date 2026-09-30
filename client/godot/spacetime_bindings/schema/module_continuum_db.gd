@@ -2,31 +2,39 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["colony", "colonist", "work_order", "speed_control", "event_log", "config", "terrain", "item_stack", "tile", "world_seed", "alert", "my_role"]
+const table_names : Array[String] = ["excavation_designation", "work_order", "colony", "terrain_material", "item_stack", "world_seed", "event_log", "terrain_chunk", "alert", "world_geometry", "speed_control", "config", "colonist", "terrain", "tile", "my_role"]
 
-var colony: ContinuumColonyTable
-var colonist: ContinuumColonistTable
+var excavation_designation: ContinuumExcavationDesignationTable
 var work_order: ContinuumWorkOrderTable
-var speed_control: ContinuumSpeedControlTable
-var event_log: ContinuumEventLogTable
-var config: ContinuumConfigTable
-var terrain: ContinuumTerrainTable
+var colony: ContinuumColonyTable
+var terrain_material: ContinuumTerrainMaterialTable
 var item_stack: ContinuumItemStackTable
-var tile: ContinuumTileTable
 var world_seed: ContinuumWorldSeedTable
+var event_log: ContinuumEventLogTable
+var terrain_chunk: ContinuumTerrainChunkTable
 var alert: ContinuumAlertTable
+var world_geometry: ContinuumWorldGeometryTable
+var speed_control: ContinuumSpeedControlTable
+var config: ContinuumConfigTable
+var colonist: ContinuumColonistTable
+var terrain: ContinuumTerrainTable
+var tile: ContinuumTileTable
 var my_role: ContinuumMyRoleTable
 
 func _init(p_local_db: LocalDatabase) -> void:
-	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
-	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
+	excavation_designation = preload('res://spacetime_bindings/schema/tables/continuum_excavation_designation_table.gd').create(p_local_db)
 	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
-	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
-	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
-	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
-	terrain = preload('res://spacetime_bindings/schema/tables/continuum_terrain_table.gd').create(p_local_db)
+	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
+	terrain_material = preload('res://spacetime_bindings/schema/tables/continuum_terrain_material_table.gd').create(p_local_db)
 	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
-	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
 	world_seed = preload('res://spacetime_bindings/schema/tables/continuum_world_seed_table.gd').create(p_local_db)
+	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
+	terrain_chunk = preload('res://spacetime_bindings/schema/tables/continuum_terrain_chunk_table.gd').create(p_local_db)
 	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
+	world_geometry = preload('res://spacetime_bindings/schema/tables/continuum_world_geometry_table.gd').create(p_local_db)
+	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
+	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
+	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
+	terrain = preload('res://spacetime_bindings/schema/tables/continuum_terrain_table.gd').create(p_local_db)
+	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
 	my_role = preload('res://spacetime_bindings/schema/tables/continuum_my_role_table.gd').create(p_local_db)

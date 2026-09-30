@@ -29,4 +29,3 @@ static func create_self_haul() -> ContinuumHaulPolicy:
 
 static func create_dedicated_haulers() -> ContinuumHaulPolicy:
 	return create(Options.dedicatedHaulers)
-

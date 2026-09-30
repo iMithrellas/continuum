@@ -16,25 +16,34 @@ pub(super) fn destination_for<'a>(
     index: usize,
     tuning: &Tuning,
     goal: Goal,
-) -> Option<&'a Tile> {
+) -> Option<Tile> {
+    if world.geometry.is_some() {
+        return world.live_destination(index, tuning, goal);
+    }
     let colonist = &world.colonists[index];
     if goal == Goal::Work {
-        return world.best_work_tile(
-            colonist.assignment.work,
-            colonist.position.x,
-            colonist.position.y,
-        );
+        return world
+            .best_work_tile(
+                colonist.assignment.work,
+                colonist.position.x,
+                colonist.position.y,
+            )
+            .cloned();
     }
     if goal == Goal::Haul && !colonist.is_carrying() {
-        return world.best_supply_tile(
-            colonist.assignment.work,
-            tuning,
-            colonist.position.x,
-            colonist.position.y,
-        );
+        return world
+            .best_supply_tile(
+                colonist.assignment.work,
+                tuning,
+                colonist.position.x,
+                colonist.position.y,
+            )
+            .cloned();
     }
     let kind = goal.tile_kind(colonist.assignment.work, colonist.is_carrying())?;
-    world.nearest_enabled_tile(kind, colonist.position.x, colonist.position.y)
+    world
+        .nearest_enabled_tile(kind, colonist.position.x, colonist.position.y)
+        .cloned()
 }
 
 /// Re-ranks work and pickups without resetting travel to an unchanged target.
@@ -45,6 +54,13 @@ pub(super) fn destination_still_serves(
     goal: Goal,
 ) -> bool {
     let colonist = &world.colonists[index];
+    if world.geometry.is_some() {
+        return destination_for(world, index, tuning, goal).is_some_and(|t| {
+            t.x == colonist.movement.target.x
+                && t.y == colonist.movement.target.y
+                && t.z == colonist.spatial.target_z
+        });
+    }
     if goal == Goal::Work || (goal == Goal::Haul && !colonist.is_carrying()) {
         return destination_for(world, index, tuning, goal).is_some_and(|tile| {
             tile.x == colonist.movement.target.x && tile.y == colonist.movement.target.y

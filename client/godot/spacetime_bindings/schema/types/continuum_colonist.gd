@@ -26,6 +26,15 @@ const table_names: Array[String] = ['colonist']
 @export var productivity: float
 @export var sleep_hours: float
 @export var last_sleep_quality: float
+@export var z: int
+@export var target_z: int
+@export var body_width: int
+@export var body_depth: int
+@export var clearance_height: int
+@export var max_step_height: int
+@export var next_x: int
+@export var next_y: int
+@export var next_z: int
 
 #BSATN metadata
 const primary_key: StringName = &'id'
@@ -49,7 +58,16 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 	"mood": "F32",
 	"productivity": "F32",
 	"sleep_hours": "F32",
-	"last_sleep_quality": "F32"
+	"last_sleep_quality": "F32",
+	"z": "I32",
+	"target_z": "I32",
+	"body_width": "U16",
+	"body_depth": "U16",
+	"clearance_height": "U16",
+	"max_step_height": "U16",
+	"next_x": "I32",
+	"next_y": "I32",
+	"next_z": "I32"
 }
 
 ## 1. id: int[br]
@@ -72,7 +90,16 @@ const BSATN_TYPES: Dictionary[StringName, StringName] = {
 ## 18. productivity: float[br]
 ## 19. sleep_hours: float[br]
 ## 20. last_sleep_quality: float[br]
-static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progress: float, p_target_x: int, p_target_y: int, p_activity: ContinuumActivity, p_work: ContinuumWorkType, p_haul_role: ContinuumHaulRole, p_carried_kind: ContinuumResourceKind, p_carried_amount: float, p_goal: ContinuumGoal, p_hunger: float, p_fatigue: float, p_recreation: float, p_mood: float, p_productivity: float, p_sleep_hours: float, p_last_sleep_quality: float) -> ContinuumColonist:
+## 21. z: int[br]
+## 22. target_z: int[br]
+## 23. body_width: int[br]
+## 24. body_depth: int[br]
+## 25. clearance_height: int[br]
+## 26. max_step_height: int[br]
+## 27. next_x: int[br]
+## 28. next_y: int[br]
+## 29. next_z: int[br]
+static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progress: float, p_target_x: int, p_target_y: int, p_activity: ContinuumActivity, p_work: ContinuumWorkType, p_haul_role: ContinuumHaulRole, p_carried_kind: ContinuumResourceKind, p_carried_amount: float, p_goal: ContinuumGoal, p_hunger: float, p_fatigue: float, p_recreation: float, p_mood: float, p_productivity: float, p_sleep_hours: float, p_last_sleep_quality: float, p_z: int, p_target_z: int, p_body_width: int, p_body_depth: int, p_clearance_height: int, p_max_step_height: int, p_next_x: int, p_next_y: int, p_next_z: int) -> ContinuumColonist:
 	var result: ContinuumColonist = ContinuumColonist.new()
 	result.id = p_id
 	result.name = p_name
@@ -94,4 +121,13 @@ static func create(p_id: int, p_name: String, p_x: int, p_y: int, p_move_progres
 	result.productivity = p_productivity
 	result.sleep_hours = p_sleep_hours
 	result.last_sleep_quality = p_last_sleep_quality
+	result.z = p_z
+	result.target_z = p_target_z
+	result.body_width = p_body_width
+	result.body_depth = p_body_depth
+	result.clearance_height = p_clearance_height
+	result.max_step_height = p_max_step_height
+	result.next_x = p_next_x
+	result.next_y = p_next_y
+	result.next_z = p_next_z
 	return result

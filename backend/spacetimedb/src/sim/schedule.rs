@@ -75,12 +75,34 @@ fn step_bounded(
     for &colonist_index in order {
         let labour = labour_goal(world, colonist_index, tuning);
         let colonist = &world.colonists[colonist_index];
+        let live_availability = Availability {
+            food: interval_availability.food
+                && world
+                    .live_destination(colonist_index, tuning, Goal::Eat)
+                    .is_some(),
+            kitchen: interval_availability.kitchen
+                && world
+                    .live_destination(colonist_index, tuning, Goal::Eat)
+                    .is_some(),
+            sleep: interval_availability.sleep
+                && world
+                    .live_destination(colonist_index, tuning, Goal::Sleep)
+                    .is_some(),
+            recreation: interval_availability.recreation
+                && world
+                    .live_destination(colonist_index, tuning, Goal::Recreate)
+                    .is_some(),
+        };
         let decision = decide(
             &colonist.task,
             &colonist.needs,
             &colonist.rest,
             tuning,
-            &interval_availability,
+            if world.geometry.is_some() {
+                &live_availability
+            } else {
+                &interval_availability
+            },
             labour,
         );
         let mut desired = decision.goal;
@@ -105,7 +127,7 @@ fn step_bounded(
         let destination_invalid = !destination_still_serves(world, colonist_index, tuning, desired);
         if world.colonists[colonist_index].task.goal != desired || destination_invalid {
             let dest = destination_for(world, colonist_index, tuning, desired)
-                .map(|tile| (tile.x, tile.y));
+                .map(|tile| (tile.x, tile.y, tile.z));
 
             if desired.tile_kind(work, carrying).is_some() && dest.is_none() {
                 desired = Goal::Nothing;
@@ -115,16 +137,24 @@ fn step_bounded(
             colonist.task.goal = desired;
             colonist.rest.hours = 0.0;
             match dest {
-                Some((tx, ty)) => {
-                    if (colonist.movement.target.x, colonist.movement.target.y) != (tx, ty) {
+                Some((tx, ty, tz)) => {
+                    if (
+                        colonist.movement.target.x,
+                        colonist.movement.target.y,
+                        colonist.spatial.target_z,
+                    ) != (tx, ty, tz)
+                    {
                         colonist.movement.progress = 0.0;
                     }
                     colonist.movement.target.x = tx;
                     colonist.movement.target.y = ty;
+                    colonist.spatial.target_z = tz;
                 }
                 None => {
                     colonist.movement.target.x = colonist.position.x;
                     colonist.movement.target.y = colonist.position.y;
+                    colonist.spatial.target_z = colonist.spatial.z;
+                    colonist.spatial.next = world_cell(colonist);
                 }
             }
         }
@@ -133,6 +163,7 @@ fn step_bounded(
             let colonist = &world.colonists[colonist_index];
             colonist.position.x == colonist.movement.target.x
                 && colonist.position.y == colonist.movement.target.y
+                && colonist.spatial.z == colonist.spatial.target_z
         };
 
         let next_activity = if world.colonists[colonist_index].task.goal == Goal::Nothing {
@@ -181,13 +212,17 @@ fn step_bounded(
 
         match next_activity {
             Activity::Travelling => {
-                let colonist = &mut world.colonists[colonist_index];
-                step_travel(
-                    &mut colonist.position,
-                    &mut colonist.movement,
-                    tuning,
-                    dt_hours,
-                )
+                if world.geometry.is_some() {
+                    world.step_live_travel(colonist_index, tuning, dt_hours);
+                } else {
+                    let colonist = &mut world.colonists[colonist_index];
+                    step_travel(
+                        &mut colonist.position,
+                        &mut colonist.movement,
+                        tuning,
+                        dt_hours,
+                    )
+                }
             }
             Activity::Eating => step_eat(
                 &mut world.colonists[colonist_index].needs,
@@ -215,6 +250,12 @@ fn step_bounded(
         }
 
         let colonist = &mut world.colonists[colonist_index];
+        if colonist.position.x == colonist.movement.target.x
+            && colonist.position.y == colonist.movement.target.y
+            && colonist.spatial.z == colonist.spatial.target_z
+        {
+            colonist.spatial.next = world_cell(colonist);
+        }
         accrue_needs(
             &mut colonist.needs,
             colonist.task.activity,
@@ -230,4 +271,8 @@ fn step_bounded(
     world.productivity_ema += (world.avg_productivity() - world.productivity_ema) * alpha;
 
     events
+}
+
+fn world_cell(actor: &super::Colonist) -> super::geometry::Cell {
+    super::geometry::Cell(actor.position.x, actor.position.y, actor.spatial.z)
 }

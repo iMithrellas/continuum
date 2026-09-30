@@ -44,4 +44,3 @@ static func create_hunting() -> ContinuumWorkType:
 
 static func create_farming() -> ContinuumWorkType:
 	return create(Options.farming)
-

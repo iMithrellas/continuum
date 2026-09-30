@@ -11,9 +11,19 @@ impl Trace {
     }
 
     fn world(&mut self, world: &World) {
+        assert!(
+            world.geometry.is_none(),
+            "golden traces describe only the legacy flat fixture"
+        );
         self.record((world.game_seconds, world.mood_ema, world.productivity_ema));
         self.record((&world.resources, world.haul_policy, world.meal_policy));
-        self.record((&world.tiles, &world.work_orders, &world.stacks));
+        let tiles: Vec<_> = world.tiles.iter().map(legacy_wire::Tile::from).collect();
+        let stacks: Vec<_> = world
+            .stacks
+            .iter()
+            .map(legacy_wire::ItemStack::from)
+            .collect();
+        self.record((&tiles, &world.work_orders, &stacks));
         for c in &world.colonists {
             self.record((
                 c.id,
@@ -39,6 +49,52 @@ impl Trace {
                 c.wellbeing.productivity,
             ));
             self.record((c.rest.hours, c.rest.last_quality));
+        }
+    }
+}
+
+/// Frozen field projection for the pre-composition golden traces.
+#[allow(dead_code)]
+mod legacy_wire {
+    use super::{ResourceKind, TileKind};
+    #[derive(Debug)]
+    pub struct Tile {
+        id: u32,
+        x: i32,
+        y: i32,
+        kind: TileKind,
+        enabled: bool,
+    }
+    impl From<&super::Tile> for Tile {
+        fn from(t: &super::Tile) -> Self {
+            Self {
+                id: t.id,
+                x: t.x,
+                y: t.y,
+                kind: t.kind,
+                enabled: t.enabled,
+            }
+        }
+    }
+    #[derive(Debug)]
+    pub struct ItemStack {
+        id: u64,
+        tile_id: u32,
+        x: i32,
+        y: i32,
+        kind: ResourceKind,
+        amount: f32,
+    }
+    impl From<&super::ItemStack> for ItemStack {
+        fn from(s: &super::ItemStack) -> Self {
+            Self {
+                id: s.id,
+                tile_id: s.tile_id,
+                x: s.x,
+                y: s.y,
+                kind: s.kind,
+                amount: s.amount,
+            }
         }
     }
 }
