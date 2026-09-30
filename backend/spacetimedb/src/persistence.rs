@@ -4,6 +4,7 @@ use crate::schema::*;
 use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
 mod geometry;
+pub(crate) use geometry::expand as expand_world;
 pub(crate) use geometry::write_designation as insert_designation;
 
 const DEFAULT_WORLD_SEED: u64 = 0x6c6f_6e67_7365_6564;

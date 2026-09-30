@@ -58,6 +58,11 @@ func designate_excavation(x0: int, y0: int, x1: int, y1: int, bottom_z: int, hei
 func diagnostic_echo(_nonce: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('diagnostic_echo', [_nonce], [&'U64'])
 
+## 0. width: int [br]
+## 1. height: int [br]
+func expand_world(width: int, height: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('expand_world', [width, height], [&'I32', &'I32'])
+
 ## 0. identity: PackedByteArray [br]
 func grant_admin(identity: PackedByteArray) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('grant_admin', [identity], [&'__identity__'])

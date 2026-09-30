@@ -151,7 +151,8 @@ pub fn build_tile_block_at(
     kind: TileKind,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = crate::blocks::normalize_rect(x0, y0, x1, y1)?;
+    let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
+    crate::blocks::validate_elevation(ctx, z)?;
     let world = persistence::load_world(ctx);
     let (planned, cost) = plan_block(&world, rect, z, kind)?;
     commit_build(ctx, &planned, cost)
@@ -213,6 +214,48 @@ mod tests {
             .iter()
             .all(|t| t.id > 576 && t.kind == TileKind::Sleep));
     }
+
+    #[test]
+    fn sparse_new_land_builds_on_demand_without_inert_rows_or_id_reuse() {
+        let mut w = sim::new_world();
+        w.geometry = Some(Geometry::seeded());
+        let original = w.tiles.clone();
+        let rect = crate::blocks::Rect {
+            min_x: 126,
+            min_y: 127,
+            max_x: 127,
+            max_y: 127,
+        };
+        let (planned, cost) = plan_block(&w, rect, 0, TileKind::Dining).unwrap();
+        assert_eq!(cost, 40.0);
+        assert_eq!(planned.tiles.len(), 578);
+        assert_eq!(&planned.tiles[..576], original);
+        assert_eq!(planned.tiles[576].id, 577);
+        assert_eq!(planned.tiles[577].id, 578);
+        sim::validate_facility_build_in_bounds(
+            &sim::Tile {
+                kind: TileKind::Empty,
+                ..planned.tiles[576].clone()
+            },
+            TileKind::Sleep,
+            20.0,
+            128,
+            128,
+        )
+        .unwrap();
+        assert!(planned
+            .validate_placement(&sim::Tile {
+                x: 128,
+                ..planned.tiles[576].clone()
+            })
+            .is_err());
+        assert!(planned
+            .validate_placement(&sim::Tile {
+                width: 2,
+                ..planned.tiles[577].clone()
+            })
+            .is_err());
+    }
 }
 
 #[reducer]
@@ -227,7 +270,8 @@ pub fn set_tile_block_enabled_at(
     enabled: bool,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = crate::blocks::normalize_rect(x0, y0, x1, y1)?;
+    let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
+    crate::blocks::validate_elevation(ctx, z)?;
     let tiles: Vec<_> = ctx
         .db
         .tile()
@@ -265,7 +309,8 @@ pub fn set_block_work_order_at(
     enabled: bool,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let rect = crate::blocks::normalize_rect(x0, y0, x1, y1)?;
+    let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
+    crate::blocks::validate_elevation(ctx, z)?;
     if !(1..=3).contains(&priority) {
         return Err("priority must be 1..=3".into());
     }
