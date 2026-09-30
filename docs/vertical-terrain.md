@@ -36,6 +36,11 @@ conductivity (W/(m·K)), and specific heat capacity (J/(kg·K)). These propertie
 prepare the data model for later physics; this change does not implement
 structural collapse, heat transfer, or temperature simulation.
 
+The prototype's facilities reserve supported clear volumes and are traversable
+room/work capabilities, not blocking furniture colliders. Soil and stone both
+yield one prototype stone unit per mined block; material-specific inventories
+and mass-limited carrying are deferred.
+
 ## Excavation and movement
 
 An excavation designation contains an inclusive horizontal rectangle, a base

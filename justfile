@@ -100,6 +100,11 @@ admin-grant *args:
 test-map-ui:
     scripts/internal/test-map-ui
 
+# Exercise physical terrain and optional additive migration in a private native server.
+# Set CONTINUUM_BASELINE_WASM to also upgrade an old module without deleting its data.
+test-vertical-terrain:
+    scripts/internal/test-vertical-terrain
+
 # Run the backend-free workspace layout and interaction regression scene.
 test-workspaces:
     {{ quote(godot) }} --headless --path client/godot --editor --quit
