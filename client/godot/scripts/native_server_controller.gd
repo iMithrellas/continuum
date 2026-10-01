@@ -4,7 +4,7 @@ class_name ContinuumNativeServerController
 extends Node
 
 signal state_changed(state: String, message: String)
-signal server_ready(host: String, database: String)
+signal server_ready(host: String, database: String, startup_epoch: int)
 signal autostart_changed(enabled: bool, error: String)
 
 var manager: ContinuumNativeServerManager
@@ -17,17 +17,31 @@ var _cached_state := "unknown"
 var _cached_message := "Native server status is being checked..."
 var _last_status_ms := -1000
 var _startup_epoch := 0
+var _cancelled_through_epoch := -1
 var _runtime_epoch := -1
 var _started_by_request := false
 
 func _ready() -> void:
 	_thread.start(_worker)
 
-func request_start() -> void:
-	_queue("start")
+func request_start() -> int:
+	_mutex.lock()
+	if not _running or (not _operations.has("start") and _operations.size() >= 8):
+		_mutex.unlock()
+		return -1
+	_startup_epoch += 1
+	var epoch := _startup_epoch
+	_operations.erase("start")
+	_operations.append("start")
+	_mutex.unlock()
+	return epoch
+
+func is_startup_current(epoch: int) -> bool:
+	return epoch >= 0 and _may_start(epoch)
 
 func cancel_startup() -> void:
 	_mutex.lock()
+	_cancelled_through_epoch = _startup_epoch
 	_startup_epoch += 1
 	_operations.erase("start")
 	_mutex.unlock()
@@ -36,6 +50,7 @@ func cancel_startup() -> void:
 func request_shutdown() -> void:
 	_mutex.lock()
 	_running = false
+	_cancelled_through_epoch = _startup_epoch
 	_startup_epoch += 1
 	_operations.clear()
 	_mutex.unlock()
@@ -53,9 +68,16 @@ func _may_start(epoch: int) -> bool:
 	_mutex.unlock()
 	return allowed
 
+func _was_cancelled(epoch: int) -> bool:
+	_mutex.lock()
+	var cancelled := epoch >= 0 and epoch <= _cancelled_through_epoch
+	_mutex.unlock()
+	return cancelled
+
 func request_stop(force := false) -> void:
 	if not force:
 		_mutex.lock()
+		_cancelled_through_epoch = _startup_epoch
 		_startup_epoch += 1
 		_operations.erase("start")
 		_mutex.unlock()
@@ -92,7 +114,7 @@ func _worker() -> void:
 	manager.failed.connect(_on_worker_failure, CONNECT_DEFERRED)
 	manager.ready.connect(_on_worker_ready)
 	while _running:
-		if _running and _started_by_request and _runtime_epoch >= 0 and not _may_start(_runtime_epoch) and manager.state() in ["starting", "online"] and manager.can_stop():
+		if _running and _started_by_request and _was_cancelled(_runtime_epoch) and manager.state() in ["starting", "online"] and manager.can_stop():
 			manager.stop(false)
 		_mutex.lock()
 		var operation: String = "" if _operations.is_empty() else _operations.pop_front()
@@ -143,6 +165,8 @@ func _worker() -> void:
 
 func _on_worker_state(value: String) -> void:
 	_cached_state = value
+	if value != "unknown" and value != "checking" and _cached_message == "Native server status is being checked...":
+		_cached_message = ""
 	state_changed.emit(value, _cached_message)
 
 func _on_worker_progress(value: String) -> void:
@@ -158,7 +182,7 @@ func _on_worker_ready(value_host: String, value_database: String) -> void:
 
 func _emit_server_ready(value_host: String, value_database: String, epoch: int) -> void:
 	if _may_start(epoch):
-		server_ready.emit(value_host, value_database)
+		server_ready.emit(value_host, value_database, epoch)
 
 func _emit_autostart(enabled: bool, error: String) -> void:
 	autostart_changed.emit(enabled, error)

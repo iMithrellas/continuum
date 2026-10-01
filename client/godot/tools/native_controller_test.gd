@@ -52,10 +52,22 @@ class DelayedRuntime extends Preparation:
 		if _state == State.STOPPING and allow_stop:
 			_set_state(State.OFFLINE)
 
+class ReusableRuntime extends Preparation:
+	var stops := 0
+	func _init() -> void:
+		installed = true
+	func can_stop() -> bool:
+		return _state == State.ONLINE
+	func stop(_force := false) -> bool:
+		stops += 1
+		_set_state(State.OFFLINE)
+		return true
+
 func _initialize() -> void:
 	await _cancel_then_retry()
 	await _responsive_shutdown()
 	await _retry_waits_for_cancelled_runtime()
+	await _fresh_ticket_reuses_runtime()
 	print("NATIVE_CONTROLLER_PASS" if failures == 0 else "NATIVE_CONTROLLER_FAIL")
 	quit(0 if failures == 0 else 1)
 
@@ -71,7 +83,7 @@ func _cancel_then_retry() -> void:
 	var controller := ContinuumNativeServerController.new()
 	controller.manager_factory = func(): return fake
 	var joined := [0]
-	controller.server_ready.connect(func(_host, _database): joined[0] += 1)
+	controller.server_ready.connect(func(_host, _database, _epoch): joined[0] += 1)
 	root.add_child(controller)
 	controller.request_start()
 	var entered := await _wait_for(func(): return fake.entered.try_wait())
@@ -111,7 +123,7 @@ func _retry_waits_for_cancelled_runtime() -> void:
 	var controller := ContinuumNativeServerController.new()
 	controller.manager_factory = func(): return fake
 	var joined := [0]
-	controller.server_ready.connect(func(_host, _database): joined[0] += 1)
+	controller.server_ready.connect(func(_host, _database, _epoch): joined[0] += 1)
 	root.add_child(controller)
 	controller.request_start()
 	_check(await _wait_for(func(): return fake.starts == 1), "first runtime begins startup")
@@ -127,6 +139,26 @@ func _retry_waits_for_cancelled_runtime() -> void:
 	_check(joined[0] == 1, "old completion cannot acquire the new retry epoch")
 	controller.request_shutdown()
 	_check(await _wait_for(controller.finish_shutdown), "retry fixture shuts down")
+	controller.queue_free()
+	await process_frame
+
+func _fresh_ticket_reuses_runtime() -> void:
+	var fake := ReusableRuntime.new()
+	var controller := ContinuumNativeServerController.new()
+	controller.manager_factory = func(): return fake
+	var joined: Array[int] = []
+	controller.server_ready.connect(func(_host, _database, epoch): joined.append(epoch))
+	root.add_child(controller)
+	var first := controller.request_start()
+	_check(await _wait_for(func(): return joined.size() == 1), "first owned runtime becomes ready")
+	var second := controller.request_start()
+	_check(first != second and controller.is_startup_current(second) and not controller.is_startup_current(first), "fresh requests have unique completion tickets")
+	_check(await _wait_for(func(): return joined.size() == 2), "fresh ticket can join the existing runtime")
+	_check(fake.stops == 0 and fake.starts == 1, "ticket renewal alone never stops or relaunches an owned runtime")
+	_check(joined.size() == 2 and joined[0] == first and joined[1] == second, "ready signals preserve each request's exact ticket")
+	controller.request_shutdown()
+	_check(controller.request_start() == -1, "closed controller rejects new startup tickets")
+	_check(await _wait_for(controller.finish_shutdown), "reusable runtime fixture shuts down")
 	controller.queue_free()
 	await process_frame
 

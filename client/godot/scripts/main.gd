@@ -125,6 +125,8 @@ var _menu: ContinuumMainMenu
 var _session_requested := false
 var _direct_launch := false
 var _session_generation := 0
+var _bound_client: ContinuumModuleClient
+var _client_bindings: Array[Dictionary] = []
 var _has_configured_client := false
 var _diagnostics_stats: DiagnosticsStats
 var _session_diagnostics: SessionDiagnostics
@@ -137,6 +139,8 @@ var _server_history: ContinuumConnectionHistory
 var _server_probes: ContinuumServerProbes
 var _server_management: ContinuumServerManagement
 var _native_controller: ContinuumNativeServerController
+var _native_join_epoch := -1
+var _native_join_generation := -1
 var _native_force_dialog: ConfirmationDialog
 var _exit_requested := false
 var _layer_label: Label
@@ -234,7 +238,7 @@ func _ready() -> void:
 	_configure_diagnostics_overlay()
 	_native_controller = NativeServerController.new()
 	_native_controller.state_changed.connect(_on_native_state, CONNECT_DEFERRED)
-	_native_controller.server_ready.connect(_on_native_ready, CONNECT_DEFERRED)
+	_native_controller.server_ready.connect(_on_native_ready.bind(_native_controller.get_instance_id()), CONNECT_DEFERRED)
 	add_child(_native_controller)
 	_native_controller.autostart_changed.connect(_on_native_autostart_changed)
 	_native_controller.request_autostart_status()
@@ -290,13 +294,27 @@ func _on_native_autostart_changed(enabled: bool, error: String) -> void:
 	_server_management.set_native_autostart(_settings.native_autostart)
 
 func _native_start() -> void:
-	if _native_controller == null: return
+	if _native_controller == null or _closing or _exit_requested: return
+	if _session_requested and _direct_launch and not _state_ready:
+		leave_session()
+		_show_server_management()
 	_menu.set_busy(true)
 	_server_management.set_native_busy(true)
 	_server_management.set_status("")
-	_native_controller.request_start()
+	_native_join_epoch = _native_controller.request_start()
+	_native_join_generation = _session_generation
+	if _native_join_epoch < 0:
+		_invalidate_native_join()
+		_server_management.set_native_busy(false)
+		_menu.set_busy(_manual_connection_busy())
+		_server_management.set_status("Native startup request could not be queued.", true)
+
+func _invalidate_native_join() -> void:
+	_native_join_epoch = -1
+	_native_join_generation = -1
 
 func cancel_local_setup() -> void:
+	_invalidate_native_join()
 	if _session_requested and not _state_ready and _host == ContinuumNativeServerManager.DEFAULT_HOST:
 		leave_session()
 	if _native_controller != null:
@@ -310,7 +328,12 @@ func _request_exit() -> void:
 		return
 	_exit_requested = true
 	_closing = true
+	_invalidate_native_join()
 	_session_requested = false
+	_unbind_client(SpacetimeDB.Continuum)
+	_clear_pending_requests()
+	_set_permissions("Unknown", false, false)
+	if _access != null: _access.stop()
 	_cancel_reconnect()
 	_reset_diagnostics_epoch()
 	if SpacetimeDB.Continuum.is_connected_db():
@@ -320,6 +343,7 @@ func _request_exit() -> void:
 		_native_controller.request_shutdown()
 
 func _native_stop() -> void:
+	_invalidate_native_join()
 	if _session_requested and _host == ContinuumNativeServerManager.DEFAULT_HOST:
 		leave_session()
 		_show_server_management()
@@ -338,7 +362,14 @@ func _native_force_stop() -> void:
 func _native_refresh() -> void:
 	if _native_controller != null: _native_controller.request_status()
 
-func _on_native_ready(value_host: String, value_database: String) -> void:
+func _on_native_ready(value_host: String, value_database: String, epoch: int,
+		source_id: int) -> void:
+	if _closing or _exit_requested: return
+	if epoch != _native_join_epoch or _native_join_generation != _session_generation:
+		return
+	if not is_instance_valid(_native_controller) or _native_controller.get_instance_id() != source_id or not _native_controller.is_startup_current(epoch):
+		return
+	_invalidate_native_join()
 	_show_server_management()
 	_server_management.set_native_busy(false)
 	_server_management.set_busy(true)
@@ -348,10 +379,15 @@ func _on_native_ready(value_host: String, value_database: String) -> void:
 func _on_native_state(value: String, message: String) -> void:
 	if _exit_requested:
 		return
-	var can_start := value in ["offline", "unknown"]
+	var can_start := value == "offline"
 	var can_stop := value in ["online", "starting", "unhealthy"]
 	var can_force := value == "stop_timeout"
 	var display := "Native server: %s" % value
+	if message.is_empty():
+		match value:
+			"offline": message = "No managed native server was found. You can still join an existing server manually."
+			"conflict": message = "Native ownership does not match this configuration. Local start and stop are unavailable; you can still join manually."
+			"unhealthy": message = "The owned native server did not pass its health check."
 	if not message.is_empty(): display += " | " + message
 	_server_management.set_local_management_state({"can_start": can_start, "can_stop": can_stop,
 		"can_force_stop": can_force, "message": display})
@@ -377,12 +413,19 @@ func attach_diagnostics_transport(send_authenticated_echo: Callable) -> void:
 
 func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
 		direct_launch := false) -> void:
+	if _closing or _exit_requested: return
+	_invalidate_native_join()
+	var client: ContinuumModuleClient = SpacetimeDB.Continuum
+	_unbind_client(client)
+	_release_main_subscription()
 	map.reset_world()
 	_full_ui_refresh = true
 	_map_tables_changed.clear()
 	_ui_tables_changed.clear()
 	_state_ready = false
 	_session_generation += 1
+	_clear_pending_requests()
+	_set_permissions("Unknown", false, false)
 	_reset_diagnostics_epoch()
 	_cancel_reconnect()
 	_host = host.strip_edges()
@@ -390,22 +433,24 @@ func configure_connection(host: String, database: String, profile := ContinuumCl
 	_profile = profile
 	_direct_launch = direct_launch
 	_session_requested = true
-	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	if _access != null:
 		_access.stop()
+		_access = null
 	if _has_configured_client:
 		_replace_client_and_connect.call_deferred(_session_generation)
 		return
 	_has_configured_client = true
+	_bind_client(client)
 	_start_configured_client(client, _session_generation)
 
 
 func _replace_client_and_connect(generation: int) -> void:
+	if not _session_epoch_current(generation): return
 	map.reset_world()
 	var old_client: ContinuumModuleClient = SpacetimeDB.Continuum
+	_unbind_client(old_client)
 	if old_client.is_connected_db():
 		old_client.disconnect_db()
-	_unbind_client(old_client)
 	# Removing the client also closes a connecting socket, which disconnect_db()
 	# deliberately does not do for the SDK's not-yet-open state.
 	if old_client.get_parent() != null:
@@ -416,18 +461,18 @@ func _replace_client_and_connect(generation: int) -> void:
 	SpacetimeDB.add_child(fresh_client)
 	_bind_client(fresh_client)
 	await get_tree().process_frame
-	if generation != _session_generation or not _session_requested:
+	if not _client_epoch_current(fresh_client, generation):
 		return
 	_start_configured_client(fresh_client, generation)
 
 
 func _start_configured_client(client: ContinuumModuleClient, generation: int) -> void:
-	if generation != _session_generation or not _session_requested:
+	if not _client_epoch_current(client, generation):
 		return
 	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
 	client.handle_window_close = false
 	_access = _create_access(client)
-	_access.changed.connect(_set_permissions)
+	_bind_access(_access, client, generation)
 	_access.start()
 	var options := SpacetimeDBConnectionOptions.new()
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
@@ -441,32 +486,62 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 		client.connect_db(_host, _database, options)
 
 
+func _bind_access(access: ContinuumAccess, client: ContinuumModuleClient, generation: int) -> void:
+	access.changed.connect(func(role: String, can_operate: bool, is_admin: bool) -> void:
+		if _client_epoch_current(client, generation): _set_permissions(role, can_operate, is_admin))
+
 func _bind_client(client: ContinuumModuleClient) -> void:
-	client.connected.connect(_on_connected)
-	client.disconnected.connect(_on_disconnected)
-	client.connection_error.connect(_on_connection_error)
-	client.row_inserted.connect(func(table_name: String, _row: Resource) -> void:
-		_on_table_changed(table_name))
-	client.row_updated.connect(func(table_name: String, _old: Resource, _new: Resource) -> void:
-		_on_table_changed(table_name))
-	client.row_deleted.connect(func(table_name: String, _row: Resource) -> void:
-		_on_table_changed(table_name))
+	if _bound_client != null: _unbind_client(_bound_client)
+	_bound_client = client
+	var generation := _session_generation
+	_bind_client_signal(client.connected, func(identity: PackedByteArray, token: String) -> void:
+		if _client_epoch_current(client, generation): _on_connected(identity, token))
+	_bind_client_signal(client.disconnected, func() -> void:
+		if _client_epoch_current(client, generation): _on_disconnected())
+	_bind_client_signal(client.connection_error, func(code: int, reason: String) -> void:
+		if _client_epoch_current(client, generation): _on_connection_error(code, reason))
+	_bind_client_signal(client.row_inserted, func(table_name: String, _row: Resource) -> void:
+		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+	_bind_client_signal(client.row_updated, func(table_name: String, _old: Resource, _new: Resource) -> void:
+		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+	_bind_client_signal(client.row_deleted, func(table_name: String, _row: Resource) -> void:
+		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+
+func _bind_client_signal(source: Signal, callback: Callable) -> void:
+	source.connect(callback)
+	_client_bindings.append({"source": source, "callback": callback})
+
+func _session_epoch_current(generation: int) -> bool:
+	return generation == _session_generation and _session_requested and not _closing and not _exit_requested
+
+func _client_epoch_current(client: ContinuumModuleClient, generation: int) -> bool:
+	return _session_epoch_current(generation) and is_instance_valid(client) and client == SpacetimeDB.Continuum
+
+func _clear_pending_requests() -> void:
+	_intent_request = null
+	_haul_request = null
+	_meal_request = null
 
 
 func _unbind_client(client: ContinuumModuleClient) -> void:
+	if client != _bound_client: return
 	if _session_ping != null:
 		_session_ping.dispose()
 		_session_ping = null
-	if client.connected.is_connected(_on_connected):
-		client.connected.disconnect(_on_connected)
-	if client.disconnected.is_connected(_on_disconnected):
-		client.disconnected.disconnect(_on_disconnected)
-	if client.connection_error.is_connected(_on_connection_error):
-		client.connection_error.disconnect(_on_connection_error)
+	for binding in _client_bindings:
+		var source: Signal = binding.source
+		var callback: Callable = binding.callback
+		if source.is_connected(callback): source.disconnect(callback)
+	_client_bindings.clear()
+	_bound_client = null
 
 
 func leave_session() -> void:
+	_invalidate_native_join()
 	_session_generation += 1
+	_unbind_client(SpacetimeDB.Continuum)
+	_clear_pending_requests()
+	_set_permissions("Unknown", false, false)
 	_reset_diagnostics_epoch()
 	_session_requested = false
 	_cancel_reconnect()
@@ -491,17 +566,22 @@ func _on_menu_join_requested(host: String, database: String) -> void:
 func _show_server_management() -> void:
 	_menu.visible = false
 	_server_management.visible = true
-	_server_management.set_busy(_session_requested and not _state_ready)
+	_server_management.set_busy(_manual_connection_busy())
 	_server_management.set_browser_visible(true)
 
 func _hide_server_management() -> void:
 	if _server_management == null:
 		return
+	if _native_join_epoch >= 0:
+		cancel_local_setup()
 	_server_management.set_browser_visible(false)
 	_server_management.visible = false
 	if _menu != null:
 		_menu.visible = true
-		_menu.set_busy((_session_requested and not _state_ready) or _server_management._native_busy)
+		_menu.set_busy(_manual_connection_busy() or _server_management._native_busy)
+
+func _manual_connection_busy() -> bool:
+	return _session_requested and not _state_ready and not _direct_launch
 
 func _sync_menu_input() -> void:
 	var blocked := _menu.visible or _server_management.visible
@@ -688,7 +768,7 @@ func _release_main_subscription() -> void:
 
 
 func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if _subscription != subscription or generation != _session_generation or not _session_requested:
+	if _subscription != subscription or not _session_epoch_current(generation):
 		return
 	_state_ready = true
 	_full_ui_refresh = true
@@ -718,6 +798,9 @@ func _on_disconnected() -> void:
 	_set_connection_text("disconnected - the colony keeps running without us",
 			Color("ff5c6c"))
 	if _session_requested and _direct_launch:
+		_server_management.set_status("Disconnected. Retrying in the background; you can join another server.", true)
+		_server_management.set_busy(false)
+		_menu.set_busy(_server_management._native_busy)
 		_schedule_reconnect()
 	elif _session_requested:
 		_fail_manual_session("Disconnected before the server subscription was ready.")
@@ -729,6 +812,9 @@ func _on_connection_error(code: int, reason: String) -> void:
 	_release_main_subscription()
 	_set_connection_text("connection error %d: %s" % [code, reason], Color("ff5c6c"))
 	if _session_requested and _direct_launch:
+		_server_management.set_status("Connection error %d: %s. Retrying in the background; you can join another server." % [code, reason], true)
+		_server_management.set_busy(false)
+		_menu.set_busy(_server_management._native_busy)
 		_schedule_reconnect()
 	elif _session_requested:
 		_fail_manual_session("Connection error %d: %s" % [code, reason])
@@ -739,8 +825,11 @@ func _fail_manual_session(message: String) -> void:
 		return
 	_session_requested = false
 	_session_generation += 1
+	_unbind_client(SpacetimeDB.Continuum)
+	_clear_pending_requests()
 	_reset_diagnostics_epoch()
 	var failed_generation := _session_generation
+	_set_permissions("Unknown", false, false)
 	var failed_client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_cancel_reconnect()
 	_state_ready = false
@@ -1047,6 +1136,7 @@ func _change_speed(speed: float) -> void:
 
 
 func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
+	var generation := _session_generation
 	_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
 	if call.error != OK:
 		_set_feedback(_intent_feedback, "Send failed", "%s could not be sent (%d)." % [description, call.error])
@@ -1057,7 +1147,7 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 	_intent_seconds = 10.0
 	_set_feedback(_intent_feedback, "Pending", "%s: pending. Displayed values follow the server." % description)
 	call.response.connect(func(response: ReducerResultMessage) -> void:
-		if _intent_request != call:
+		if _intent_request != call or not _session_epoch_current(generation):
 			return
 		_intent_request = null
 		_dirty = true
@@ -1096,13 +1186,13 @@ func _toggle_haul_policy() -> void:
 	_haul_request = call
 	_haul_request_seconds = 10.0
 	_set_feedback(_haul_feedback, "Pending", "Request sent. Waiting for the server; displayed mode is not changed locally.")
-	call.response.connect(_on_haul_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
+	call.response.connect(_on_haul_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT)
 	_dirty = true
 	_haul_button.disabled = true
 
 
-func _on_haul_policy_response(response: ReducerResultMessage, request_id: int) -> void:
-	if _haul_request == null or request_id != _haul_request.request_id:
+func _on_haul_policy_response(response: ReducerResultMessage, request_id: int, generation: int) -> void:
+	if not _session_epoch_current(generation) or _haul_request == null or request_id != _haul_request.request_id:
 		return
 	_haul_request = null
 	_dirty = true
@@ -1134,13 +1224,13 @@ func _set_meal_policy(policy: int) -> void:
 	_meal_request = call
 	_meal_request_seconds = 10.0
 	_set_feedback(_meal_feedback, "Pending", "Request sent. Waiting for the server; displayed policy is not changed locally.")
-	call.response.connect(_on_meal_policy_response.bind(call.request_id), CONNECT_ONE_SHOT)
+	call.response.connect(_on_meal_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT)
 	_dirty = true
 	_refresh_controls()
 
 
-func _on_meal_policy_response(response: ReducerResultMessage, request_id: int) -> void:
-	if _meal_request == null or request_id != _meal_request.request_id:
+func _on_meal_policy_response(response: ReducerResultMessage, request_id: int, generation: int) -> void:
+	if not _session_epoch_current(generation) or _meal_request == null or request_id != _meal_request.request_id:
 		return
 	_meal_request = null
 	_dirty = true
@@ -1155,11 +1245,14 @@ func _on_meal_policy_response(response: ReducerResultMessage, request_id: int) -
 
 
 func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
+	var client: ContinuumModuleClient = SpacetimeDB.Continuum
+	var generation := _session_generation
 	if call.error != OK:
 		_set_connection_text("%s could not be sent (%d)" % [reducer_name, call.error],
 				Color("ff5c6c"))
 		return
 	var response: ReducerResultMessage = await call.response
+	if not _client_epoch_current(client, generation): return
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 		_set_connection_text("%s was rejected: %s" % [
 			reducer_name, response.reducer_result.get_err()], Color("ff5c6c"))

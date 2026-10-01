@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_invalid_pid_never_reaches_termination()
 	_test_live_mismatch_keeps_manifest()
 	_test_conflict_never_clears_or_relaunches()
+	_test_database_conflict_keeps_ownership_closed()
 	_test_owned_unhealthy_is_stoppable_not_startable()
 	_test_provisioning_has_long_budget()
 	_test_manifest_validation_and_stale_cleanup()
@@ -36,11 +37,15 @@ func _initialize() -> void:
 func _manager(adapter: RefCounted, suffix: String):
 	var manager = load("res://scripts/native_server_manager.gd").new()
 	manager.platform_adapter = adapter
-	manager.data_dir = "/tmp/continuum-native-%s/data" % suffix
-	manager.manifest_file = "/tmp/continuum-native-%s/server.json" % suffix
+	var fixture := "/tmp/opencode/native-manager-%d-%s" % [OS.get_process_id(), suffix]
+	manager.data_dir = fixture.path_join("data")
+	manager.config_dir = fixture.path_join("config")
+	manager.log_file = fixture.path_join("server.log")
+	manager.manifest_file = fixture.path_join("server.json")
 	manager.lock_file = manager.data_dir + ".lock"
-	manager.module_artifact = "/tmp/continuum-native-%s/module.wasm" % suffix
+	manager.module_artifact = fixture.path_join("module.wasm")
 	manager.executable = "fake-spacetime"
+	manager.cli_executable = "fake-cli"
 	manager.supervisor = "fake-supervisor"
 	DirAccess.remove_absolute(manager.lock_file)
 	DirAccess.remove_absolute(manager.manifest_file)
@@ -79,11 +84,15 @@ func _rediscovery_does_not_start_second_process() -> void:
 func _manager_without_cleanup(adapter: RefCounted, suffix: String):
 	var manager = load("res://scripts/native_server_manager.gd").new()
 	manager.platform_adapter = adapter
-	manager.data_dir = "/tmp/continuum-native-%s/data" % suffix
-	manager.manifest_file = "/tmp/continuum-native-%s/server.json" % suffix
+	var fixture := "/tmp/opencode/native-manager-%d-%s" % [OS.get_process_id(), suffix]
+	manager.data_dir = fixture.path_join("data")
+	manager.config_dir = fixture.path_join("config")
+	manager.log_file = fixture.path_join("server.log")
+	manager.manifest_file = fixture.path_join("server.json")
 	manager.lock_file = manager.data_dir + ".lock"
-	manager.module_artifact = "/tmp/continuum-native-%s/module.wasm" % suffix
+	manager.module_artifact = fixture.path_join("module.wasm")
 	manager.executable = "fake-spacetime"
+	manager.cli_executable = "fake-cli"
 	manager.supervisor = "fake-supervisor"
 	return manager
 
@@ -444,6 +453,20 @@ func _test_conflict_never_clears_or_relaunches() -> void:
 	adapter.healthy = false
 	DirAccess.remove_absolute(second.manifest_file)
 
+func _test_database_conflict_keeps_ownership_closed() -> void:
+	var adapter := FakeNativeAdapter.new()
+	var first = _manager(adapter, "database-conflict")
+	first.start()
+	first.tick()
+	var second = _manager_without_cleanup(adapter, "database-conflict")
+	second.database = "continuum-terrain-demo"
+	var before := FileAccess.get_file_as_string(second.manifest_file)
+	_assert(second.status() == "conflict", "a different configured database completes status as conflict")
+	_assert(not second.start() and not second.stop(false) and not second.stop(true), "database mismatch authorizes no launch or shutdown")
+	_assert(adapter.launch_calls == 1 and adapter.force_calls == 0, "database conflict does not launch or force terminate")
+	_assert(FileAccess.get_file_as_string(second.manifest_file) == before, "database conflict retains the original manifest unchanged")
+	DirAccess.remove_absolute(second.manifest_file)
+
 func _test_owned_unhealthy_is_stoppable_not_startable() -> void:
 	var adapter := FakeNativeAdapter.new()
 	var manager = _manager(adapter, "unhealthy")
@@ -530,12 +553,12 @@ func _prepare_copy_failure(label: String, source_text: String) -> void:
 	var adapter := FakeNativeAdapter.new()
 	var manager = _manager(adapter, "prepare-%s" % label)
 	DirAccess.remove_absolute(manager.module_artifact)
-	var source := "/tmp/continuum-native-prepare-%s-source.wasm" % label
+	var source := "/tmp/opencode/native-prepare-%d-%s-source.wasm" % [OS.get_process_id(), label]
 	var source_file := FileAccess.open(source, FileAccess.WRITE)
 	source_file.store_string(source_text)
 	source_file.close()
 	manager.module_source_override = source
-	var blocked_parent := "/tmp/continuum-native-prepare-%s-blocked" % label
+	var blocked_parent := "/tmp/opencode/native-prepare-%d-%s-blocked" % [OS.get_process_id(), label]
 	var blocked := FileAccess.open(blocked_parent, FileAccess.WRITE)
 	blocked.store_string("not a directory")
 	blocked.close()
@@ -547,7 +570,7 @@ func _prepare_copy_failure(label: String, source_text: String) -> void:
 	_assert(not progress_messages.is_empty() and progress_messages[0].contains("Preparing"),
 		"%s copy failure reports preparation progress" % label)
 	DirAccess.remove_absolute(blocked_parent)
-	manager.module_artifact = "/tmp/continuum-native-prepare-%s-retry/module.wasm" % label
+	manager.module_artifact = "/tmp/opencode/native-prepare-%d-%s-retry/module.wasm" % [OS.get_process_id(), label]
 	_assert(manager.prepare_module(), "%s preparation can be retried" % label)
 	_assert(manager.state() != "preparing", "%s retry does not remain preparing" % label)
 	DirAccess.remove_absolute(source)
