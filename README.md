@@ -141,6 +141,11 @@ Build costs 20 stored wood per cell; the client checks occupied cells and the
 available wood before dispatch, while the server performs the authoritative
 atomic validation and charge.
 
+One atomic block-build request is limited to 4096 inclusive cells. Larger
+requests reject explicitly rather than freezing while planning or silently
+splitting the operation. This construction limit does not limit the map size
+or excavation designation area.
+
 In `Select`, press and drag to select a rectangle. The selected-block panel
 provides `Enable block` and `Disable block`, plus compatible work-order rows for
 `Farming`, `Logging`, `Mining`, and `Hunting`. Each row exposes priority buttons

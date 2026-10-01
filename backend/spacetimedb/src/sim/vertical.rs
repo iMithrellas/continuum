@@ -125,18 +125,12 @@ impl World {
                 "facility needs positive dimensions, full clearance and solid support".into(),
             );
         }
-        for x in tile.x..tile.x + i32::from(tile.width) {
-            for y in tile.y..tile.y + i32::from(tile.depth) {
-                for z in tile.z..tile.z + i32::from(tile.clearance_height) {
-                    if self
-                        .tiles
-                        .iter()
-                        .any(|existing| existing.occupies(Cell(x, y, z)))
-                    {
-                        return Err("facility volumes overlap".into());
-                    }
-                }
-            }
+        if self
+            .tiles
+            .iter()
+            .any(|existing| super::construction::volumes_overlap(existing, tile))
+        {
+            return Err("facility volumes overlap".into());
         }
         Ok(())
     }

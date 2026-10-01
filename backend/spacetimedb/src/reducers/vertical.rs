@@ -1,6 +1,7 @@
 use crate::auth::{authorize, RequiredRole};
 use crate::persistence;
 use crate::schema::*;
+use crate::sim::construction::{self, validate_cost};
 use crate::sim::{self, TileKind, WorkType, FACILITY_BUILD_WOOD_COST};
 use spacetimedb::{reducer, ReducerContext, Table};
 
@@ -62,27 +63,31 @@ fn commit_build(ctx: &ReducerContext, world: &sim::World, cost: f32) -> Result<(
     Ok(())
 }
 
-fn validate_cost(wood: f32, cost: f32) -> Result<(), String> {
-    if !wood.is_finite() || !cost.is_finite() || cost < 0.0 || wood < cost {
-        return Err(format!("building requires {cost} stored wood"));
-    }
-    Ok(())
-}
-
+#[cfg(test)]
 fn plan_block(
     world: &sim::World,
     rect: crate::blocks::Rect,
     z: i32,
     kind: TileKind,
 ) -> Result<(sim::World, f32), String> {
+    let plan = construction::plan_block(
+        world.geometry.as_ref().ok_or("live geometry missing")?,
+        &world.tiles,
+        rect,
+        z,
+        kind,
+        f32::MAX,
+    )?;
+    let mut changes: std::collections::BTreeMap<_, _> =
+        plan.tiles.into_iter().map(|t| (t.id, t)).collect();
     let mut planned = world.clone();
-    for y in rect.min_y..=rect.max_y {
-        for x in rect.min_x..=rect.max_x {
-            let tile = planned_tile(&planned, x, y, z, kind, 1, 1, 4)?;
-            install_tile(&mut planned, tile)?;
+    for existing in &mut planned.tiles {
+        if let Some(tile) = changes.remove(&existing.id) {
+            *existing = tile;
         }
     }
-    Ok((planned, crate::blocks::block_cost(rect)))
+    planned.tiles.extend(changes.into_values());
+    Ok((planned, plan.cost))
 }
 
 fn planned_tile(
@@ -130,16 +135,18 @@ pub fn place_facility(
     clearance_height: u16,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
+    let cost = FACILITY_BUILD_WOOD_COST * f32::from(width) * f32::from(depth);
+    let wood = ctx.db.colony().id().find(0).ok_or("colony missing")?.wood;
+    validate_cost(wood, cost)?;
     let mut world = persistence::load_world(ctx);
     let tile = planned_tile(&world, x, y, z, kind, width, depth, clearance_height)?;
     install_tile(&mut world, tile)?;
-    commit_build(
-        ctx,
-        &world,
-        FACILITY_BUILD_WOOD_COST * f32::from(width) * f32::from(depth),
-    )
+    commit_build(ctx, &world, cost)
 }
 
+/// Build one atomic inclusive rectangle of at most 4096 cells. Cost/size rejection
+/// precedes world loading; placement failure neither charges wood nor saves a
+/// partial block. Excavation designation sizes are unaffected.
 #[reducer]
 #[allow(clippy::too_many_arguments)]
 pub fn build_tile_block_at(
@@ -154,9 +161,23 @@ pub fn build_tile_block_at(
     authorize(ctx, RequiredRole::Operator)?;
     let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
     crate::blocks::validate_elevation(ctx, z)?;
+    let mut colony = ctx.db.colony().id().find(0).ok_or("colony missing")?;
+    // Reject unaffordable and oversized intents before loading any geometry,
+    // actors, job vectors or tiles. The pure planner also guards direct callers.
+    construction::preflight_block(rect, kind, colony.wood)?;
     let world = persistence::load_world(ctx);
-    let (planned, cost) = plan_block(&world, rect, z, kind)?;
-    commit_build(ctx, &planned, cost)
+    let plan = construction::plan_block(
+        world.geometry.as_ref().unwrap(),
+        &world.tiles,
+        rect,
+        z,
+        kind,
+        colony.wood,
+    )?;
+    colony.wood -= plan.cost;
+    ctx.db.colony().id().update(colony);
+    persistence::save_tiles(ctx, &plan.tiles);
+    Ok(())
 }
 
 #[cfg(test)]
