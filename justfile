@@ -186,4 +186,7 @@ test-native:
     scripts/internal/test-native-server-manager
     godot --headless --path client/godot --editor --quit
     godot --headless --path client/godot --script res://tools/native_controller_test.gd
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/native_controls_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/session_handoff_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/native_ready_handoff_test.tscn
     scripts/internal/test-native-server-windows
