@@ -381,7 +381,12 @@ pub(crate) fn save_geometry_and_tiles(ctx: &ReducerContext, world: &World) {
     if let Some(g) = &world.geometry {
         geometry::save(ctx, g);
     }
-    for t in &world.tiles {
+    save_tiles(ctx, &world.tiles);
+}
+
+/// Construction commits only its bounded delta, never all pre-existing tiles.
+pub(crate) fn save_tiles(ctx: &ReducerContext, tiles: &[sim::Tile]) {
+    for t in tiles {
         let row = tile_row(t);
         match ctx.db.tile().id().find(t.id) {
             Some(old)

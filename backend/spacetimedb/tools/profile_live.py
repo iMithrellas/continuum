@@ -33,6 +33,7 @@ def main():
     parser.add_argument("--samples", type=int, default=1, help="cold samples per speed, each after explicit reset")
     parser.add_argument("--scale-gate", action="store_true", help="verify non-destructive upgrades, expansion, authorization and sparse operations")
     parser.add_argument("--gates-only", action="store_true", help="skip speed measurements while exercising private API/upgrade gates")
+    parser.add_argument("--construction-gate", action="store_true", help="verify fast negative bulk intents and a funded maximum atomic construction")
     args = parser.parse_args()
     subprocess.run(["cargo", "build", "--manifest-path", str(MODULE / "Cargo.toml"), "--release", "--target", "wasm32-unknown-unknown"], check=True)
     wasm = MODULE / "target/wasm32-unknown-unknown/release/continuum_module.wasm"
@@ -74,6 +75,7 @@ def main():
                         return False
 
                 wait(healthy)
+                print(f"WASM_OWNED_SERVER host={host} pid={process.pid} data={root / 'data'}", flush=True)
                 db = "backend-profile"
 
                 def call(name, *argv):
@@ -130,6 +132,9 @@ def main():
                 wait(lambda: rows("SELECT game_seconds FROM config")[0]["game_seconds"] >= before + 600)
                 call("set_time_scale", 0)
                 print("WASM_LARGE_DESIGNATION_PASS cells=9216", flush=True)
+                if args.construction_gate:
+                    from construction_live import check_construction
+                    check_construction(cli, host, wasm, root, MODULE, wait, cpu_seconds)
                 if args.scale_gate:
                     from scale_live import check_scale
                     check_scale(cli, host, wasm, root, MODULE.parents[1], wait)
@@ -179,6 +184,7 @@ def main():
                     process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     process.kill(); process.wait(timeout=10)
+                print(f"WASM_OWNED_SERVER_STOPPED pid={process.pid} exit={process.returncode}", flush=True)
 
 
 if __name__ == "__main__":

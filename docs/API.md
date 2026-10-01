@@ -149,7 +149,7 @@ Rust signatures and the generated binding types.
 | `diagnostic_echo` | `(_nonce: u64)` | Permission-independent, nonmutating acknowledgement. The client measures application RTT using the matching SDK request ID and successful reducer outcome; the nonce is not returned as a payload. |
 | `set_tile_enabled` | `(tile_id: u32, enabled: bool)` | Operator/admin. Unknown IDs and `empty` tiles error; the current value is a no-op. |
 | `build_facility` | `(tile_id: u32, kind: TileKind)` | Operator/admin. Only `dining`, `sleep`, or `recreation` may be built on an in-bounds `empty` tile. Deducts exactly `20` stored wood atomically and enables the facility; insufficient wood or invalid targets error. |
-| `build_tile_block` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, kind: TileKind)` | Operator/admin. Inclusive bounds normalize reversed endpoints. Any non-`empty` kind is accepted when every cell is in-bounds, present, and empty. Costs `20 * area` stored wood and enables every cell atomically. Empty kind, missing or occupied cells, invalid bounds, or insufficient/non-finite wood error; rejection changes no rows or audit event. |
+| `build_tile_block` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, kind: TileKind)` | Operator/admin. Inclusive bounds normalize reversed endpoints; at most `4096` cells per atomic request. Any non-`empty` kind is accepted when every cell is in-bounds, supported, clear, and unreserved. Missing operational rows in initialized physical terrain are allocated on successful construction, not treated as missing terrain. Costs `20 * area` stored wood and enables every cell atomically. Empty kind, oversized, occupied or unsupported cells, invalid bounds, or insufficient/non-finite wood error; rejection changes no rows or audit event. |
 | `set_zone_enabled` | `(kind: TileKind, enabled: bool)` | Operator/admin. `empty` errors; changing no matching tiles is a no-op. |
 | `set_tile_block_enabled` | `(start_x: i32, start_y: i32, end_x: i32, end_y: i32, enabled: bool)` | Operator/admin. Inclusive normalized bounds. Applies to all non-`empty` tiles and ignores empty cells. An all-empty rectangle errors; if selected tiles already have the value it is a no-op with no event. |
 | `set_work_order` | `(tile_id: u32, work: WorkType, priority: u8, enabled: bool)` | Operator/admin. Unknown tile, `none`, wrong facility, or priority outside `1..=3` errors; identical row state is a no-op. |
@@ -193,6 +193,13 @@ The current resource abstraction yields one stone unit per excavated block,
 including soil; no separate soil resource or mass-limited hauling is introduced.
 Facilities reserve supported clear volumes and remain traversable room/work
 capabilities, not blocking furniture colliders.
+
+Both `build_tile_block` and `build_tile_block_at` reject rectangles above
+4096 inclusive cells. They check the cap and affordability before loading the
+world, then use a batch planner with one existing-row pass, at most 20480
+material lookups and 4096 tile writes. Oversized intents are not silently split;
+operators can issue smaller separate requests. The cap applies to block
+construction, not world expansion or excavation designation area.
 
 ### Vertical schema migration
 

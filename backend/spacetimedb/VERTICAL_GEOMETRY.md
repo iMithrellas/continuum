@@ -52,7 +52,11 @@ Rectangle reducers use physical bounds and support sparse operational rows.
   or blocking furniture. All dimensions must be positive, all footprint cells
   must have support, all volume cells must be air, and facility volumes cannot
   overlap. A block validates in memory before any cost/entity writes; costs are
-  20 stored wood per footprint cell. Nothing spends pooled resources on failure.
+  20 stored wood per footprint cell. Both block-build reducers cap one atomic
+  request at 4096 inclusive cells and check affordability/cap before loading the
+  world. The batch planner uses one existing-row pass, at most 20480 material
+  lookups and 4096 writes; no repeated growing-vector scans or silent splitting.
+  Nothing spends pooled resources on failure. Excavation area limits are unchanged.
 - Navigation is deterministic cardinal BFS over supported positions, uses each
   actor's full footprint/height/maximum step, and checks the entire vertical
   sweep when stepping up/down. Next-hop fields publish the actual route hop.
@@ -194,6 +198,21 @@ The scale gate covers authorization, non-aligned expansion, sparse rectangle
 operations, existing-world upgrades, and preservation of paused colony state.
 These measurements cover eight founding actors and the starter layout, not
 arbitrary populations or full-map bulk operations. Terrain is not streamed.
+
+The construction gate also exercises unaffordable/oversized large rectangles
+and the maximum supported valid request:
+
+```sh
+cargo run --release --manifest-path backend/spacetimedb/Cargo.toml \
+  --example construction_profile
+python3 backend/spacetimedb/tools/profile_live.py --gates-only --construction-gate
+```
+
+Native guard rejection for 10816/53824-cell unaffordable rectangles measured
+0.064/0.061 microseconds; indexed valid 4096-cell planning against 54400 existing
+reservation/anchor rows measured 0.515 ms. Native timings exclude database
+loading/persistence. Actual-WASM large negative calls measured 14.483–16.291 ms
+wall time including CLI startup; maximum valid construction measured 63.865 ms.
 
 A cold `mining_job` over a valid 9216-solid-cell designation in the 128 world
 takes median 3.701 ms; a completely buried 8640-cell designation returns no job

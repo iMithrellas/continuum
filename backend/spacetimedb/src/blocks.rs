@@ -8,13 +8,7 @@ use spacetimedb::{reducer, ReducerContext, Table};
 
 pub type WorkKind = WorkType;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Rect {
-    pub min_x: i32,
-    pub min_y: i32,
-    pub max_x: i32,
-    pub max_y: i32,
-}
+pub(crate) use sim::construction::BlockRect as Rect;
 
 fn normalize_rect_in_bounds(
     start_x: i32,
@@ -78,7 +72,7 @@ pub(crate) fn normalize_rect(
 }
 
 pub(crate) fn rect_area(rect: Rect) -> u64 {
-    ((rect.max_x - rect.min_x + 1) as u64) * ((rect.max_y - rect.min_y + 1) as u64)
+    rect.cells().expect("validated rectangle")
 }
 
 pub(crate) fn block_cost(rect: Rect) -> f32 {
@@ -163,6 +157,8 @@ fn validate_priority(priority: u8) -> Result<(), String> {
     }
 }
 
+/// Legacy z=0 entry point: the same atomic 4096-cell cap and fast cost preflight
+/// as `build_tile_block_at`, with no implicit subdivision of larger rectangles.
 #[reducer]
 pub fn build_tile_block(
     ctx: &ReducerContext,
