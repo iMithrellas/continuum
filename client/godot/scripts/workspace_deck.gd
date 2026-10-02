@@ -444,8 +444,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		toggle_panel_headers()
 	elif event.ctrl_pressed and event.keycode == KEY_BACKSLASH:
 		toggle_map_only()
-	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F8:
-		toggle_panel(windows.keys()[event.keycode - KEY_F1])
+	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F10:
+		var index: int = event.keycode - KEY_F1
+		if index >= windows.size():
+			return
+		toggle_panel(windows.keys()[index])
 	else:
 		return
 	get_viewport().set_input_as_handled()

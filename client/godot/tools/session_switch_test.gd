@@ -36,6 +36,19 @@ func _ready() -> void:
 		"endpoint switch selects a fresh endpoint identity file")
 	_assert(SpacetimeDB.Continuum.get_token().is_empty(),
 		"endpoint switch does not retain the previous cached token")
+	for profile: String in [ContinuumClientProfile.DEVELOPER, ContinuumClientProfile.ADMIN]:
+		main._profile = profile
+		main._on_menu_join_requested("http://127.0.0.1:3", "menu-db")
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_assert(main._profile == profile and SpacetimeDB.Continuum.token_save_path == ContinuumClientProfile.token_path(profile, "http://127.0.0.1:3", "menu-db"), "Join last preserves selected profile: " + profile)
+		main.leave_session()
+		main._on_server_management_join_requested({"endpoint": "http://127.0.0.1:4", "database": "servers-db"})
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_assert(main._profile == profile and SpacetimeDB.Continuum.token_save_path == ContinuumClientProfile.token_path(profile, "http://127.0.0.1:4", "servers-db"), "Servers join preserves selected profile: " + profile)
+		_assert(SpacetimeDB.Continuum.get_token().is_empty(), "joining with another profile never copies cached credentials")
+		main.leave_session()
 	main.leave_session()
 	var failures := [0]
 	var ready_count := [0]

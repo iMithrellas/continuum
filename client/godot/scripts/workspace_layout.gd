@@ -8,6 +8,7 @@ const PANEL_NAMES := {
 	"inspector": "Tile inspector", "operations": "Build & work orders",
 	"policies": "Colony policies", "alerts": "Alerts",
 	"activity": "Activity feed", "trends": "Session trends",
+	"admin": "Admin", "developer": "Developer",
 }
 const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
@@ -46,6 +47,8 @@ static func defaults() -> Dictionary:
 		var panels := {}
 		for key: String in PANEL_NAMES:
 			panels[key] = panel(presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key))
+		panels.admin = panel([0.30, 0.04, 0.40, 0.28])
+		panels.developer = panel([0.30, 0.34, 0.40, 0.62])
 		result[id] = {"name": presets[id][0], "panels": panels}
 	return result
 

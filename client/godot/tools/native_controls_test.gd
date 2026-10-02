@@ -21,7 +21,8 @@ func _ready() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	var fixture := "/tmp/opencode/native-controls-%d" % OS.get_process_id()
+	var root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
+	var fixture := (root if not root.is_empty() else "/tmp/opencode").path_join("native-controls-%d" % OS.get_process_id())
 	_check(HTTPRequest.RESULT_CANT_CONNECT == 2, "SDK result 2 is HTTP connection failure, not a database authorization response")
 	DirAccess.make_dir_recursive_absolute(fixture)
 	OS.set_environment("CONTINUUM_NATIVE_ROOT", fixture.path_join("native"))

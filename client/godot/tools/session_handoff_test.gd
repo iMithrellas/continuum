@@ -6,7 +6,8 @@ func _ready() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	var fixture := "/tmp/opencode/continuum-local-controls-state/handoff-%d" % OS.get_process_id()
+	var root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
+	var fixture := (root if not root.is_empty() else "/tmp/opencode").path_join("handoff-%d" % OS.get_process_id())
 	DirAccess.make_dir_recursive_absolute(fixture)
 	OS.set_environment("CONTINUUM_NATIVE_ROOT", fixture.path_join("native"))
 	OS.set_environment("HOME", fixture)
