@@ -12,7 +12,7 @@ const PANEL_NAMES := {
 }
 const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
-const GAP := 8.0
+const GAP := 16.0
 
 static func minimum_size(metrics := UiMetrics.new()) -> Vector2:
 	return metrics.min_size(MIN_SIZE.x, MIN_SIZE.y)
@@ -24,7 +24,8 @@ var last_load_status := "missing"
 
 
 static func panel(rect: Array, opened := true) -> Dictionary:
-	return {"rect": rect, "open": opened, "minimized": false, "pinned": false, "z": 0}
+	return {"rect": rect, "open": opened, "minimized": false, "pinned": false, "z": 0,
+		"dock": "floating"}
 
 
 static func defaults() -> Dictionary:
@@ -47,6 +48,8 @@ static func defaults() -> Dictionary:
 		var panels := {}
 		for key: String in PANEL_NAMES:
 			panels[key] = panel(presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key))
+			# Dock state never replaces the remembered personal floating rectangle.
+			panels[key].dock = "left" if panels[key].rect[0] < 0.5 else "right"
 		panels.admin = panel([0.30, 0.04, 0.40, 0.28])
 		panels.developer = panel([0.30, 0.34, 0.40, 0.62])
 		result[id] = {"name": presets[id][0], "panels": panels}
@@ -163,13 +166,14 @@ func reset_active() -> void:
 			state.rect = presets.daily.panels[key].rect.duplicate()
 			state.pinned = false
 			state.minimized = false
+			state.dock = presets.daily.panels[key].dock
 
 
 func save_to(path := SAVE_PATH) -> Error:
 	var file := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
-	file.store_string(JSON.stringify({"version": 1, "active": active, "show_panel_headers": show_panel_headers, "workspaces": workspaces}))
+	file.store_string(JSON.stringify({"version": 2, "active": active, "show_panel_headers": show_panel_headers, "workspaces": workspaces}))
 	file.flush()
 	var error := file.get_error()
 	file.close()
@@ -187,7 +191,7 @@ func load_from(path := SAVE_PATH) -> bool:
 		last_load_status = "unreadable"
 		return false
 	var data: Variant = JSON.parse_string(file.get_as_text())
-	if not data is Dictionary or data.get("version") != 1 or not data.get("workspaces") is Dictionary:
+	if not data is Dictionary or (data.get("version") != 1 and data.get("version") != 2) or not data.get("workspaces") is Dictionary:
 		last_load_status = "corrupt"
 		return false
 	var loaded := defaults()
@@ -215,6 +219,9 @@ func load_from(path := SAVE_PATH) -> bool:
 			for flag: String in ["open", "minimized", "pinned"]:
 				if saved.get(flag) is bool:
 					panels[key][flag] = saved[flag]
+			# v1 represented overlays, not docks. Never silently relocate user work.
+			var dock: Variant = saved.get("dock", "floating") if data.version == 2 else "floating"
+			panels[key].dock = dock if dock in ["left", "right", "floating"] else "floating"
 			var z: Variant = saved.get("z", 0)
 			if (z is int or z is float) and is_finite(float(z)):
 				panels[key].z = clampi(int(z), 0, 10000)
