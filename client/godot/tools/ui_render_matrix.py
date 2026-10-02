@@ -14,11 +14,12 @@ import subprocess
 parser = argparse.ArgumentParser()
 parser.add_argument("--live", action="store_true", help="render actual typed-fixture production main, not phase 2 chrome")
 parser.add_argument("--review-only", action="store_true", help="three focused review-fix GPU cases, not the unchanged full matrix")
+parser.add_argument("--floating-only", action="store_true", help="eight actual-main viewport/scale/status cases for floating integration")
 options = parser.parse_args()
-scene = "ui_composition_fixture" if options.live else "ui_chrome_fixture"
+scene = "ui_composition_fixture" if options.live or options.floating_only else "ui_chrome_fixture"
 if options.review_only:
     scene = "ui_review_regression"
-marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only else "UI_INTEGRATION_FIXTURE_PASS"
+marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only or options.floating_only else "UI_INTEGRATION_FIXTURE_PASS"
 project = Path(__file__).resolve().parents[1]
 base = Path(os.environ.get("UI_RENDER_OUTPUT", "/tmp/opencode/continuum-ui-integration-state/matrix"))
 base.mkdir(parents=True, exist_ok=True)
@@ -54,13 +55,15 @@ with (base / "xvfb.log").open("w") as log:
             cases += [(screen, scale, "problem", True, True, "digest") for screen, scale in [("1440x900", 100), ("960x640", 150)]]
         if options.review_only:
             cases = [("1440x900", 100, "problem", False, True, ""), ("960x640", 125, "problem", False, True, ""), ("960x640", 150, "problem", True, True, "digest")]
+        if options.floating_only:
+            cases = [(screen, scale, status, True, True, "") for screen, scale, status in itertools.product(["1440x900", "960x640"], [100, 150], ["nominal", "problem"])]
         for screen, scale, status, reduced, focus, extra in cases:
             name = f"{screen}-{scale}-{status}-motion{'reduced' if reduced else 'normal'}-focus{int(focus)}"
             if extra:
                 name += "-" + extra
             command = [godot, "--disable-vsync", "--path", str(project), "--display-driver", "x11", "--rendering-method", "gl_compatibility", "--scene", f"res://tools/{scene}.tscn", "--", f"--screen={screen}", f"--scale={scale}", f"--status={status}", f"--capture={base / (name + '.png')}"]
             command += (["--reduced-motion"] if reduced else []) + (["--focus"] if focus else [])
-            if options.live:
+            if options.live or options.floating_only:
                 command.append("--layout-qa")
             if extra:
                 command.append("--" + extra)

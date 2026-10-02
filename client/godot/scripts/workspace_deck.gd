@@ -13,7 +13,7 @@ var compact := false
 var map_only := false
 var _compact_panel := "people"
 var _tabs: HBoxContainer
-var _dock: HBoxContainer
+var _panel_nav: HBoxContainer
 var _ready_layout := false
 var metrics := UiMetrics.new()
 var _save_path := WorkspaceLayout.SAVE_PATH
@@ -30,11 +30,11 @@ var _rows: Array[ScrollContainer] = []
 var diagnostics_host: Control
 var _telemetry_header: HBoxContainer
 var _alert_summaries: Dictionary = {}
-var _dock_scrolls: Dictionary = {}
-var _dock_contents: Dictionary = {}
 var _tab_buttons: Dictionary = {}
 var _tab_alert_nodes: Dictionary = {}
 var _panel_buttons: Dictionary = {}
+var _drag_origins: Dictionary = {}
+var _body_focus_reveal_pending := false
 
 
 func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
@@ -95,25 +95,10 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	stack.add_child(area)
 	map_control.reparent(area)
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for side: String in ["left", "right"]:
-		var scroll := ScrollContainer.new()
-		scroll.name = side.capitalize() + "DockScroll"
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		scroll.follow_focus = true
-		scroll.visible = false
-		area.add_child(scroll)
-		var content := Control.new()
-		content.name = "DockContents"
-		content.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(content)
-		_dock_scrolls[side] = scroll
-		_dock_contents[side] = content
 	area.resized.connect(_apply_layout)
 	_button(workspace_row, "Map", "Show or hide panels (Ctrl+\\)", toggle_map_only)
-	_dock = HBoxContainer.new()
-	workspace_row.add_child(_dock)
-	get_viewport().gui_focus_changed.connect(_follow_dock_focus)
+	_panel_nav = HBoxContainer.new()
+	workspace_row.add_child(_panel_nav)
 	_build_dialog()
 
 func apply_metrics(ui_metrics: UiMetrics) -> void:
@@ -172,9 +157,29 @@ func add_panel(key: String) -> VBoxContainer:
 	area.add_child(window)
 	window.metrics = metrics
 	window.setup(WorkspaceLayout.PANEL_NAMES[key])
+	window.scroll.resized.connect(_queue_body_focus_reveal)
 	windows[key] = window
 	authorized[key] = true
 	window.focused.connect(focus_panel.bind(key))
+	window.interaction_started.connect(func() -> void:
+		_drag_origins[key] = state(key).duplicate(true)
+		var remembered := WorkspaceLayout.to_pixels(state(key).rect, area.size, metrics)
+		remembered.position = remembered.position.round()
+		remembered.size = remembered.size.round()
+		if window.position.distance_to(remembered.position) > 0.01 or window.size.distance_to(remembered.size) > 0.01:
+			_drag_origins[key].rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size))
+	window.headers_requested.connect(func() -> void:
+		if not model.show_panel_headers:
+			toggle_panel_headers())
+	window.interaction_cancelled.connect(func() -> void:
+		if _drag_origins.has(key):
+			model.workspaces[model.active].panels[key] = _drag_origins[key]
+			_drag_origins.erase(key)
+			_apply_layout()
+		else:
+			if not compact:
+				state(key).rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
+		save_layout())
 	window.geometry_requested.connect(func(rect: Rect2, resizing: bool, unsnapped: bool) -> void:
 		var others: Array[Rect2] = []
 		for other: WorkspaceWindow in windows.values():
@@ -187,10 +192,13 @@ func add_panel(key: String) -> VBoxContainer:
 			snapped = WorkspaceLayout.clamp_resize_rect(rect, area.size, window._resize_edges, metrics) if resizing else WorkspaceLayout.clamp_rect(rect, area.size, metrics)
 		else:
 			snapped = WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics, window._resize_edges)
+		snapped.position = snapped.position.round()
+		snapped.size = snapped.size.round()
 		window.position = snapped.position
 		window.size = snapped.size)
 	window.interaction_finished.connect(func() -> void:
-		if not compact and state(key).dock == "floating":
+		_drag_origins.erase(key)
+		if not compact:
 			state(key).rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
 		save_layout())
 	window.minimize_requested.connect(toggle_panel.bind(key))
@@ -200,16 +208,7 @@ func add_panel(key: String) -> VBoxContainer:
 	window.pin_requested.connect(func() -> void:
 		state(key).pinned = not state(key).pinned
 		_changed())
-	window.dock_requested.connect(func() -> void:
-		set_panel_dock(key, "floating" if state(key).dock != "floating" else ("left" if state(key).rect[0] < 0.5 else "right")))
 	return window.content
-
-func set_panel_dock(key: String, side: String) -> void:
-	if not authorized.get(key, false) or side not in ["left", "right", "floating"]:
-		return
-	_cancel_gestures()
-	state(key).dock = side
-	_changed()
 
 ## Alert ownership and aggregation belong to integration, not local preferences.
 func set_workspace_alert_summary(id: String, level: String, count: int) -> void:
@@ -338,32 +337,6 @@ func toggle_panel(key: String) -> void:
 	else:
 		state(key).minimized = true
 	_changed()
-	_reveal_panel.call_deferred(key)
-
-## Both dock and body scrolls follow keyboard focus. F-key restoration also
-## reveals the requested panel without persisting a scroll offset as geometry.
-func _reveal_panel(key: String, focus_control: Control = null, settling_frames := 2) -> void:
-	# Nested body scrolling must settle first: otherwise the outer dock follows
-	# the action's old, off-body position and clips it again after the inner move.
-	if settling_frames > 0:
-		# A node-bound signal disconnects on destruction, unlike an outstanding
-		# coroutine which would resume after its owning workspace was freed.
-		get_tree().create_timer(0.0).timeout.connect(_reveal_panel.bind(key, focus_control, settling_frames - 1), CONNECT_ONE_SHOT)
-		return
-	if focus_control != null and (not is_instance_valid(focus_control) or get_viewport().gui_get_focus_owner() != focus_control):
-		return
-	if not authorized.get(key, false) or not windows.has(key) or not windows[key].is_visible_in_tree():
-		return
-	if not compact and state(key).dock in _dock_scrolls:
-		_dock_scrolls[state(key).dock].ensure_control_visible(windows[key])
-
-func _follow_dock_focus(control: Control) -> void:
-	var parent: Node = control
-	while parent != null:
-		if parent is WorkspaceWindow:
-			_reveal_panel.call_deferred(parent.name, control)
-			return
-		parent = parent.get_parent()
 
 func _visible_control_rect(control: Control) -> Rect2:
 	var rect := control.get_global_rect()
@@ -412,11 +385,10 @@ func save_layout() -> void:
 func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
-	# Policy: two preferred 320px docks plus 400px usable map and four 16px
-	# gutters (1104 logical px). At 1440: 100/125% dock; 150% compact.
-	var gutter := ThemeTokens.number("space-4")
-	var dock_width := ThemeTokens.number("panel-min") + 2 * gutter + 2 * ThemeTokens.number("space-1")
-	compact = area.size.x < 2 * dock_width + 400 + 4 * gutter or area.size.y < 400
+	var was_compact := compact
+	compact = area.size.x < 640 or area.size.y < 400
+	if compact != was_compact:
+		_cancel_gestures()
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
 	if compact and (_compact_panel.is_empty() or not authorized.get(_compact_panel, false) or not state(_compact_panel).open):
@@ -433,66 +405,57 @@ func _apply_layout() -> void:
 		var saved := state(key)
 		window.visible = authorized[key] and saved.open and not map_only and (not compact or key == _compact_panel)
 		window.apply_state(saved.pinned, compact)
-		window.set_docked(not compact and saved.dock != "floating", saved.minimized)
-		if not window.docked and window.get_parent() != area:
-			window.reparent(area, false)
+		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
 		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 		if saved.minimized:
 			rect.size.y = ThemeTokens.number("panel-header")
+		if not compact:
+			rect.position = rect.position.round()
+			rect.size = rect.size.round()
 		window.position = rect.position
 		window.size = rect.size
 		if window.get_parent() == area:
 			area.move_child(window, -1)
 		window.set_focused(key == _compact_panel)
-	for scroll: ScrollContainer in _dock_scrolls.values():
-		scroll.visible = false
-	var left := _layout_dock("left", dock_width, gutter) if not compact and not map_only else false
-	var right := _layout_dock("right", dock_width, gutter) if not compact and not map_only else false
-	_map.offset_left = gutter + (dock_width + gutter if left else 0)
-	_map.offset_right = -gutter - (dock_width + gutter if right else 0)
-	_map.offset_top = gutter
-	_map.offset_bottom = -gutter
+	_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_map.queue_redraw()
+	_queue_body_focus_reveal()
 
-func _layout_dock(side: String, width: float, gap: float) -> bool:
-	var keys: Array[String] = []
-	var weight := 0.0
-	var minimum_height := 0.0
-	var header_height := ThemeTokens.number("panel-header")
-	var expanded_minimum := WorkspaceLayout.MIN_SIZE.y
+
+func _queue_body_focus_reveal() -> void:
+	if _body_focus_reveal_pending or not is_inside_tree():
+		return
+	var control := get_viewport().gui_get_focus_owner()
+	if control == null:
+		return
+	_body_focus_reveal_pending = true
+	# Node-bound callbacks disconnect on teardown; never reacquire/steal focus.
+	get_tree().process_frame.connect(_reveal_retained_body_focus.bind(control, 2), CONNECT_ONE_SHOT)
+
+
+func _reveal_retained_body_focus(control: Control, settling_frames: int) -> void:
+	if settling_frames > 0:
+		get_tree().process_frame.connect(_reveal_retained_body_focus.bind(control, settling_frames - 1), CONNECT_ONE_SHOT)
+		return
+	_body_focus_reveal_pending = false
+	if not is_instance_valid(control) or not control.is_visible_in_tree() or get_viewport().gui_get_focus_owner() != control:
+		return
+	if _dialog.visible or (is_instance_valid(_confirmation) and _confirmation.visible):
+		return
+	for window: WorkspaceWindow in windows.values():
+		if not window._gesture.is_empty():
+			return
 	for key: String in windows:
-		if windows[key].visible and state(key).dock == side:
-			keys.append(key)
-			if state(key).minimized:
-				minimum_height += header_height
-			else:
-				minimum_height += expanded_minimum
-				weight += maxf(0, float(state(key).rect[3]))
-	if keys.is_empty():
-		return false
-	var scroll: ScrollContainer = _dock_scrolls[side]
-	var content: Control = _dock_contents[side]
-	scroll.visible = true
-	scroll.position = Vector2(gap if side == "left" else area.size.x - gap - width, gap)
-	scroll.size = Vector2(width, maxf(0, area.size.y - 2 * gap))
-	# Expanded minima are non-negotiable. Only surplus is weighted; overflow
-	# scrolls rather than stealing body height or changing minimized intent.
-	var required := minimum_height + (keys.size() - 1) * gap
-	var surplus := maxf(0, scroll.size.y - required)
-	content.custom_minimum_size.y = maxf(required, scroll.size.y)
-	var scrollbar_width := scroll.get_v_scroll_bar().get_combined_minimum_size().x if required > scroll.size.y else 0.0
-	var panel_width := width - scrollbar_width
-	var y := 0.0
-	for key: String in keys:
 		var window: WorkspaceWindow = windows[key]
-		if window.get_parent() != content:
-			window.reparent(content, false)
-		var height := header_height if state(key).minimized else expanded_minimum + surplus * maxf(0, float(state(key).rect[3])) / maxf(weight, 0.01)
-		window.position = Vector2(0, y)
-		window.size = Vector2(panel_width, height)
-		y += height + gap
-	return true
+		if not authorized.get(key, false) or not window.is_visible_in_tree() or not window.scroll.is_ancestor_of(control):
+			continue
+		var parent := control.get_parent()
+		while parent != window and parent != null:
+			if parent is ScrollContainer and not parent.get_global_rect().encloses(control.get_global_rect()):
+				parent.ensure_control_visible(control)
+			parent = parent.get_parent()
+		return
 
 
 func _rebuild_navigation() -> void:
@@ -502,7 +465,7 @@ func _rebuild_navigation() -> void:
 	_tab_buttons.clear()
 	_tab_alert_nodes.clear()
 	_panel_buttons.clear()
-	for parent: HBoxContainer in [_tabs, _dock]:
+	for parent: HBoxContainer in [_tabs, _panel_nav]:
 		for child: Node in parent.get_children():
 			parent.remove_child(child)
 			child.queue_free()
@@ -535,7 +498,7 @@ func _rebuild_navigation() -> void:
 		index += 1
 		if not authorized[key] or not state(key).open:
 			continue
-		var button := _button(_dock, "%s %s" % ["+" if state(key).minimized or map_only else "-", WorkspaceLayout.PANEL_NAMES[key]],
+		var button := _button(_panel_nav, "%s %s" % ["+" if state(key).minimized or map_only else "-", WorkspaceLayout.PANEL_NAMES[key]],
 			"Show/minimize panel (F%d)" % index, toggle_panel.bind(key))
 		button.toggle_mode = true
 		button.set_meta("panel_id", key)
@@ -595,7 +558,7 @@ func _build_dialog() -> void:
 		body.add_child(check)
 		_checks[key] = check
 	var note := Label.new()
-	note.text = "Dock reserves map space; Float overlays the map. Pin locks floating geometry.\nCollapse keeps the header; F1–F10 restores panels. Map gives immediate map access.\nDrag floating headers or edges; Alt bypasses snapping. Escape cancels.\nLayout / Ctrl+Shift+H toggles headers. Changes save on this device."
+	note.text = "Panels overlay the full map; pin locks position and size only.\nCollapse keeps the header; F1–F10 restores panels. Map gives immediate map access.\nDrag unpinned headers to move and edges or corners to resize.\nAlt bypasses snapping. Escape cancels and restores starting geometry.\nHidden headers keep a drag strip with Headers access. Layout / Ctrl+Shift+H toggles headers. Changes save on this device."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ThemeTokens.apply_label(note, "small")
 	body.add_child(note)

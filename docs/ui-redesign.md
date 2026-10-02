@@ -21,13 +21,29 @@ Apply the UI redesign to the existing Godot client while preserving current simu
 - Never make presentation data look more authoritative than it is. Missing, warming, stale, estimated and unavailable values need distinct honest treatments; do not fabricate zeroes, actors, trends, alert state, or history.
 - Record divergences from the package as explicit implementation assumptions or unresolved follow-ups; do not silently expand backend scope.
 
+### User override: floating panels only
+
+The user's explicit interaction requirement supersedes the package's illustrative
+docking reference: **remove docking entirely**. The map fills the workspace area;
+panels are overlays and must never reserve map width or artificially shrink its
+viewport. Every panel has discoverable titlebar dragging and resize affordances.
+Pinning locks geometry only; it is not docking. No Dock/Float controls, dock hosts,
+or persisted dock keys remain in the final candidate. Existing v1/v2 workspace
+preferences must migrate to floating geometry without losing panel access.
+
+This override is implemented in the integrated candidate. Compact mode applies
+below 640 logical pixels wide or 400 logical pixels high, retaining the full map
+under the active panel and explicit Map access. It does not impose a fixed
+100%/125% two-dock or 150% compact policy. v1/v2 preferences migrate to v3 while
+retaining remembered geometry and preferences; docking keys are removed.
+
 ## Ownership, phases and dependencies
 
 | Phase / owner | Scope | Depends on / handoff |
 | --- | --- | --- |
 | 1. Foundation worker | `res://ui/theme` token/theme API, type styles, glyphs and fonts/license; provide token-based logical font/theme foundations only. | First. Publish API and theme variant names for component, workspace, map and integration workers. UI-scale and reduced-motion preferences belong to phase 3. |
 | 2. Component worker | Reusable visual components and data presentation: panels, buttons, tabs primitives as appropriate, resource/need/colonist/alert/log/digest/automation rows. | Foundation API. Consume existing client data only; communicate fields that are unavailable rather than inventing them. |
-| 3. Workspace/settings worker | Workspace/tab and dock orchestration, preferences for UI scale and reduced motion, access to existing panels and settings. | Foundation API; coordinate component ownership of shared tab/panel widgets. Preserve diagnostic entry points and host. |
+| 3. Workspace/settings worker | Workspace/tab and floating-panel orchestration, preferences for UI scale and reduced motion, access to existing panels and settings. | Foundation API; coordinate component ownership of shared tab/panel widgets. Preserve diagnostic entry points and host. |
 | 4. Map specialist | Adapt existing map renderer to UI redesign map presentation and overlays. Do not replace renderer or world model. | Foundation colors/glyphs and existing map picking/rendering contracts. Preserve world semantics listed below. |
 | 5. Main/data/diagnostics integration worker | Wire views to current client/server data, app entry/return flow, connection/diagnostics, responsive composition and end-to-end QA. | Phases 1–4 APIs and commits. No schema/API change without separate permission, migration and world-scope contract. |
 | 6. Independent reviewer | Review integrated result against checklist, inspect regressions and run tests/QA; report confidence and fatal findings. | Candidate integration commit. Require confidence ≥0.92 and zero fatal findings before main fast-forward. |
@@ -69,7 +85,7 @@ Adapt the existing renderer, not a new TileMap architecture. Preserve physical c
 - 32px internal raster is acceptable when displayed at 100% as 16 logical px. Zoom/render changes must not alter simulation coordinates or selection.
 - Use `map-ground` / `map-ground-deep` as neutral presentation materials and retain tooltips with actual IDs. Do not apply zone colors to ordinary terrain.
 - Group visual regions by same kind and base z using four-neighbour occupied physical cells. Give stable type/count labels; do not invent authored zone names. Excavation designations are labelled excavation, never a planned/built mine. Draw pins only where alert location is known.
-- Preserve paper casing, zone patterns/plates where applicable, selection and z-level cues without changing map domain meaning. Docked/floating status and panel pinning are separate. Respect real map-space reservations; compact panels when dock minimums and a usable map cannot all fit.
+- Preserve paper casing, zone patterns/plates where applicable, selection and z-level cues without changing map domain meaning. The map fills the workspace area beneath floating overlays; opening, moving, resizing or pinning panels must not reserve or shrink its viewport. Compact panels only as required by viewport bounds and floating-panel minimums.
 
 ## Component scope and acceptance criteria
 
@@ -77,7 +93,7 @@ All ten documented components are in scope. Build reusable UI from real client s
 
 | Component | Acceptance |
 | --- | --- |
-| **Panel** | Sentence-case title, optional live count, body; docked/floating/collapsed/pinned states; docked has no shadow, floating uses `shadow-float`; body padding/flush rows and minimum width rules are respected where layout permits. Pin is independent of floating. |
+| **Panel** | Sentence-case visible title, optional live count, body; floating/collapsed/pinned states only. Use `shadow-float`, canonical-token headers/rims, discoverable titlebar drag and resize affordances. Pin locks geometry only. Body padding/flush rows and minimum width rules are respected where layout permits. No Dock/Float UI or map reservation. |
 | **Button** | Verb-first labels; default/primary/quiet/critical/disabled styles and 24/28px sizes; disabled reason in label where applicable; one primary per view; keyboard/gamepad focus ring. Critical action is outlined, not solid red. |
 | **Tabs** | Workspace selection, accent underline, fixed/new separator, highest available warn/critical count/glyph when data exists; tab label itself does not take status color. No fabricated counts. |
 | **ResourceReadout** | Name/value/rate with units and in-game-hour horizon; nominal grey; threshold glyph and color apply together; connection and player/role only from available data. Estimated local rates are explicitly provisional. |
@@ -96,7 +112,8 @@ Manual QA at **1440×900** and **960×640**, at **100%, 125%, 150%** scale:
 
 - nominal and problem states; no fabricated zero, trend, actor, history or automation;
 - keyboard and gamepad focus, primary/disabled/critical controls, and reduced-motion preference;
-- no clipping or illegible text; small layout compacts when docks plus usable map do not fit;
+- no clipping or illegible text; floating panels remain reachable and compact to actual viewport constraints;
+- titlebar drag, resize affordances and pin geometry lock work; v1/v2 preferences migrate without persisted dock keys, and panels never change map viewport geometry or picking;
 - map coordinate/picking and z-depth behavior unchanged; world movement remains; only the unacknowledged critical alert chrome pulses;
 - connection-loss/diagnostic workflows, F9/F10, admin/developer access, and inline diagnostics remain available;
 - no server mutation during QA, and no unexpected backend/schema changes in candidate diff.
@@ -117,7 +134,9 @@ controls; no fictional automation or rest reducer is exposed.
 Scale is owned only by `Window.content_scale_factor`; the legacy fixed viewport
 stretch has been removed. Old font preferences migrate to 100/125/150%, while
 logical type stays at least 11px. Floating frames use the foundation's two-layer
-shadow; docks are square and shadowless. Licensed Lucide geometry is embedded in
+shadow. The floating-only user override above is integrated; earlier dock
+behavior is no longer an acceptance target. Licensed
+Lucide geometry with literal square caps is embedded in
 `UiIcons`, including runtime token-colored frame/toolbar icons.
 
 Observed rates use a constant-size connection origin and minute-throttled,
@@ -131,7 +150,11 @@ game clock and event watermark persist, never credentials, roles or tokens.
 Generation/backward-clock/watermark changes invalidate baselines. Same-generation
 database replacement cannot always be detected. The digest explicitly caveats
 the 200-event cap and unavailable player attribution/handled summaries; it is not
-permanent history.
+permanent history. Resource comparisons explicitly retain their reconnect capture
+boundary, while “Needs you now” follows live alert acknowledgement, activity and
+severity. Open comparisons are invalidated immediately on observed reset; modal
+focus and scroll survive meaningful updates. Reducer failures remain visible in
+a dismissible action banner independent of neutral Live connection health.
 
 ```sh
 just test-ui
@@ -146,11 +169,32 @@ backend-free contracts and typed production-main composition, then exports a rea
 PCK and runs its widgets from an empty directory. The render recipe captures 48
 actual-main scale/state/focus/reduced-motion cases plus four floating-frame and
 two return-modal cases (54 total), and checks roster GUI input,
-280px panel floors, selected critical contrast, real map reservation, modal
+280px panel floors, selected critical contrast, modal
 blocking, changing-value control-focus retention and focus restoration. The
 telemetry body stays at the logical topbar height; its horizontal scroll track
 is always reserved so inline diagnostics cannot cause map geometry to jump.
 These are not the earlier chrome-only fixture.
+The production-main fixture replaces the earlier dock-reservation checks with
+full-workspace map geometry, direct overlay ownership and absence of Dock/Float
+controls. Actual native-window input at current global UI scale exercises titlebar
+drag, corner resize, hidden-header strip drag and pin lock, then validates map
+global picking and workspace-popup focus/input isolation. Workspace tests cover
+v1/v2 migration, all resize handles, overlap/z-order and permission cancellation.
+The focused floating matrix runs eight actual-main cases at 1440×900 and 960×640,
+100% and 150%, nominal and problem states; the review matrix additionally checks
+the action-failure/digest callbacks at 125%. Private captures disable vsync only
+for the test process and retain timeout diagnostics. Historical dock-based passes
+are not approval of the new interaction contract.
+
+```sh
+UI_CHECK_OUTPUT=/tmp/opencode/continuum-ui-integration-state/floating-combined-gates \
+  just test-ui
+GODOT=/path/to/godot-private PATH=/path/to/private-xvfb/bin:$PATH \
+  UI_RENDER_OUTPUT=/tmp/opencode/continuum-ui-integration-state/floating-combined-gpu \
+  python3 client/godot/tools/ui_render_matrix.py --live --floating-only
+# Target the two combined-review fatal regressions, including an actual PCK:
+python3 client/godot/tools/ui_check.py --review-only
+```
 Fixtures never connect to a server or dispatch a live reducer. Combined review
 must still inspect the candidate and actual PNGs; successful fixture tests are
 not independent approval.

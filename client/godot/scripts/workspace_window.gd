@@ -8,7 +8,9 @@ signal interaction_finished
 signal minimize_requested
 signal close_requested
 signal pin_requested
-signal dock_requested
+signal interaction_cancelled
+signal interaction_started
+signal headers_requested
 
 const Icons = preload("res://ui/theme/icons.gd")
 const RESIZE_DIRECTIONS := {
@@ -26,9 +28,7 @@ var resize_handles: Dictionary = {}
 var divider: ColorRect
 var scroll: ScrollContainer
 var pinned := false
-var docked := false
 var collapsed := false
-var dock_button: Button
 var live_count: Label
 var header_ground: ColorRect
 var compact := false
@@ -38,6 +38,8 @@ var _gesture := ""
 var _resize_edges := Vector2i.ZERO
 var _start_pointer := Vector2.ZERO
 var _start_rect := Rect2()
+var drag_strip: HBoxContainer
+var _focused := false
 
 
 func setup(title: String) -> void:
@@ -57,6 +59,12 @@ func setup(title: String) -> void:
 	titlebar.mouse_default_cursor_shape = Control.CURSOR_MOVE
 	titlebar.gui_input.connect(_title_input)
 	add_child(titlebar)
+	var drag_icon := TextureRect.new()
+	drag_icon.texture = Icons.texture("menu")
+	drag_icon.custom_minimum_size = Vector2(16, 16)
+	drag_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	drag_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	titlebar.add_child(drag_icon)
 	var title_label := Label.new()
 	title_label.text = title
 	ThemeTokens.apply_label(title_label, "body-strong")
@@ -68,15 +76,28 @@ func setup(title: String) -> void:
 	ThemeTokens.apply_label(live_count, "readout")
 	live_count.visible = false
 	titlebar.add_child(live_count)
-	dock_button = Button.new()
-	dock_button.theme_type_variation = "ButtonQuiet"
-	dock_button.text = "Float"
-	dock_button.pressed.connect(func() -> void: dock_requested.emit())
-	titlebar.add_child(dock_button)
 	pin_button = _action("pin", "Pin position and size", func() -> void: pin_requested.emit())
 	pin_button.toggle_mode = true
 	_action("minimize", "Collapse to header / restore", func() -> void: minimize_requested.emit())
 	_action("close", "Remove panel from workspace (reopen with Panels)", func() -> void: close_requested.emit())
+	drag_strip = HBoxContainer.new()
+	drag_strip.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
+	drag_strip.mouse_filter = Control.MOUSE_FILTER_STOP
+	drag_strip.gui_input.connect(func(event: InputEvent) -> void: _begin(event, "move", drag_strip))
+	add_child(drag_strip)
+	var strip_label := Label.new()
+	strip_label.text = "Drag panel"
+	ThemeTokens.apply_label(strip_label, "small")
+	strip_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	strip_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	drag_strip.add_child(strip_label)
+	var restore := Button.new()
+	restore.text = "Headers"
+	restore.icon = Icons.texture("menu")
+	restore.theme_type_variation = "ButtonQuiet"
+	restore.tooltip_text = "Show panel headers (Layout / Ctrl+Shift+H)"
+	restore.pressed.connect(func() -> void: headers_requested.emit())
+	drag_strip.add_child(restore)
 	divider = ColorRect.new()
 	divider.color = DeckTheme.LINE
 	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -104,6 +125,13 @@ func setup(title: String) -> void:
 		add_child(handle)
 		resize_handles[key] = handle
 	grip = resize_handles.bottom_right
+	var resize_icon := TextureRect.new()
+	resize_icon.texture = Icons.texture("minimize")
+	resize_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	resize_icon.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	grip.add_child(resize_icon)
+	add_theme_stylebox_override("panel", DeckTheme.create().get_stylebox("panel", "PanelFloating"))
+	set_focused(false)
 	refresh_metrics()
 	gui_input.connect(func(event: InputEvent) -> void:
 		if event is InputEventMouseButton and event.pressed:
@@ -128,11 +156,14 @@ func _action(icon: String, hint: String, callback: Callable) -> Button:
 
 
 func set_focused(value: bool) -> void:
+	_focused = value
 	var surface: StyleBox = get_theme_stylebox("panel").duplicate(true)
 	if surface is StyleBoxFlat:
-		surface.border_color = DeckTheme.ACCENT if value else DeckTheme.LINE
+		surface.set_border_width_all(3)
+		surface.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("bg-400")
 	else:
-		surface.body.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("line-200")
+		surface.body.set_border_width_all(3)
+		surface.body.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("bg-400")
 	add_theme_stylebox_override("panel", surface)
 
 ## Integration supplies a real count; chrome never guesses backend ownership.
@@ -140,39 +171,42 @@ func set_live_count(count: int = -1) -> void:
 	live_count.visible = count >= 0
 	live_count.text = str(maxi(0, count))
 
-func set_docked(value: bool, is_collapsed: bool) -> void:
-	docked = value
-	if docked:
-		var surface := DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 0)
-		surface.set_corner_radius_all(0)
-		add_theme_stylebox_override("panel", surface)
-	else:
-		add_theme_stylebox_override("panel", DeckTheme.create().get_stylebox("panel", "PanelFloating"))
+func set_collapsed(is_collapsed: bool) -> void:
 	collapsed = is_collapsed
-	dock_button.text = "Float" if docked else "Dock"
-	dock_button.tooltip_text = "Float over the map" if docked else "Reserve a dock beside the map"
 	scroll.visible = not collapsed
 	apply_state(pinned, compact)
+	set_focused(_focused)
 
 func refresh_metrics() -> void:
 	if not is_instance_valid(titlebar):
 		return
 	titlebar.offset_left = ThemeTokens.number("space-3")
 	titlebar.offset_right = -ThemeTokens.number("space-4")
-	titlebar.offset_top = ThemeTokens.number("space-1")
-	titlebar.offset_bottom = ThemeTokens.number("panel-header") - ThemeTokens.number("space-1")
-	divider.offset_top = ThemeTokens.number("panel-header") - 1
-	divider.offset_bottom = ThemeTokens.number("panel-header")
+	titlebar.offset_top = ThemeTokens.number("space-2")
+	titlebar.offset_bottom = ThemeTokens.number("panel-header")
+	var chrome_height := ThemeTokens.number("panel-header") if header_visible else ThemeTokens.number("control-sm")
+	header_ground.offset_left = 3
+	header_ground.offset_right = -3
+	header_ground.offset_top = 3
+	header_ground.offset_bottom = chrome_height
+	drag_strip.offset_left = 12
+	drag_strip.offset_right = -12
+	drag_strip.offset_top = 0
+	drag_strip.offset_bottom = chrome_height
+	divider.offset_left = 3
+	divider.offset_right = -3
+	divider.offset_top = chrome_height - 1
+	divider.offset_bottom = chrome_height
 	scroll.offset_left = ThemeTokens.number("space-3")
 	scroll.offset_right = -ThemeTokens.number("space-3")
-	scroll.offset_top = ThemeTokens.number("panel-header") + ThemeTokens.number("space-3") if header_visible else ThemeTokens.number("space-3")
+	scroll.offset_top = chrome_height + ThemeTokens.number("space-3")
 	scroll.offset_bottom = -ThemeTokens.number("space-3")
 	for child: Node in titlebar.get_children():
 		if child is Button:
 			child.custom_minimum_size = Vector2(ThemeTokens.number("control-sm"), ThemeTokens.number("control-sm"))
 			child.add_theme_constant_override("icon_max_width", metrics.px(16))
-	var corner := metrics.px(14)
-	var border := ThemeTokens.number("space-1")
+	var corner := metrics.px(16)
+	var border := ThemeTokens.number("space-2")
 	for key: String in resize_handles:
 		var handle: Control = resize_handles[key]
 		var edges: Vector2i = RESIZE_DIRECTIONS[key]
@@ -188,10 +222,11 @@ func refresh_metrics() -> void:
 
 func set_header_visible(value: bool) -> void:
 	header_visible = value
-	header_ground.visible = value
+	header_ground.visible = true
 	titlebar.visible = value
-	divider.visible = value
-	tooltip_text = "" if value else "Alt-drag to move. Restore panel headers from Layout or Ctrl+Shift+H."
+	drag_strip.visible = not value
+	divider.visible = true
+	tooltip_text = "" if value else "Drag the strip to move. Headers restores controls; Layout / Ctrl+Shift+H toggles headers."
 	refresh_metrics()
 
 
@@ -200,12 +235,15 @@ func apply_state(is_pinned: bool, is_compact: bool) -> void:
 	compact = is_compact
 	pin_button.set_pressed_no_signal(pinned)
 	pin_button.icon = Icons.texture("pin-off" if pinned else "pin")
-	pin_button.tooltip_text = "Unpin position and size" if pinned else "Pin position and size"
+	pin_button.tooltip_text = "Unpin to move or resize; pin locks geometry only" if pinned else "Pin position and size only (does not restrict access)"
 	pin_button.visible = not compact
 	for handle: Control in resize_handles.values():
-		handle.visible = not pinned and not compact and not docked and not collapsed
-	dock_button.visible = not compact
-	titlebar.mouse_default_cursor_shape = Control.CURSOR_ARROW if pinned or compact or docked or collapsed else Control.CURSOR_MOVE
+		handle.visible = not pinned and not compact and not collapsed
+		handle.tooltip_text = "Drag to resize. Hold Alt to bypass snapping. Escape cancels."
+	titlebar.mouse_default_cursor_shape = Control.CURSOR_ARROW if pinned or compact or collapsed else Control.CURSOR_MOVE
+	drag_strip.mouse_default_cursor_shape = titlebar.mouse_default_cursor_shape
+	titlebar.tooltip_text = "Unpin to move or resize (geometry only)" if pinned else "Drag to move. Drag edges to resize; Alt bypasses snapping. Escape cancels."
+	drag_strip.tooltip_text = titlebar.tooltip_text + " Show controls with Headers or Ctrl+Shift+H."
 
 
 func _title_input(event: InputEvent) -> void:
@@ -219,13 +257,13 @@ func _resize_input(event: InputEvent, handle: Control, edges: Vector2i) -> void:
 func _begin(event: InputEvent, gesture: String, handle: Control, edges := Vector2i.ZERO) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		focused.emit()
-		if not pinned and not compact and not docked and not collapsed:
-			_start_gesture(gesture, handle.get_global_transform() * event.position, edges)
+		if not pinned and not compact and not collapsed:
+			_start_gesture(gesture, handle.get_global_transform_with_canvas() * event.position, edges)
 		accept_event()
 
 
 func begin_move_from_global(pointer: Vector2) -> void:
-	if not pinned and not compact and not docked and not collapsed:
+	if not pinned and not compact and not collapsed:
 		_start_gesture("move", pointer)
 
 
@@ -234,6 +272,7 @@ func _start_gesture(gesture: String, pointer: Vector2, edges := Vector2i.ZERO) -
 	_resize_edges = edges
 	_start_pointer = pointer
 	_start_rect = Rect2(position, size)
+	interaction_started.emit()
 	set_process_input(true)
 
 
@@ -244,7 +283,7 @@ func cancel_interaction() -> void:
 	size = _start_rect.size
 	_gesture = ""
 	set_process_input(false)
-	interaction_finished.emit()
+	interaction_cancelled.emit()
 
 
 func _notification(what: int) -> void:
@@ -259,7 +298,8 @@ func _input(event: InputEvent) -> void:
 		event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed):
 		cancel_interaction()
 	elif event is InputEventMouseMotion:
-		var delta: Vector2 = event.position - _start_pointer
+		var transform: Transform2D = get_parent().get_global_transform_with_canvas().affine_inverse()
+		var delta: Vector2 = transform * event.position - transform * _start_pointer
 		var rect := _start_rect
 		if _gesture == "resize":
 			for axis in 2:

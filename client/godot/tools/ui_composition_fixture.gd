@@ -77,12 +77,14 @@ func _ready() -> void:
 		if main.workspace.compact and main.workspace._compact_panel != "people":
 			main.workspace.toggle_panel("people")
 	if _floating:
-		main.workspace.set_panel_dock("people", "floating")
+		if not main.workspace.windows.people.visible:
+			main.workspace.toggle_panel("people")
 	for frame in 8:
 		await get_tree().process_frame
 	await _check_functional_contracts()
 	_check_typography(main)
 	if _layout_qa:
+		await _check_floating_input()
 		await _check_roster_layout_and_input()
 		await _check_tick_focus()
 		_check_day_readouts(main._feed)
@@ -236,7 +238,7 @@ func _check_functional_contracts() -> void:
 	check(main.map.selected_colonist_id == 0, "roster selection reaches actual map selection contract including ID zero")
 	var center: Vector2 = main.map.world_to_screen(Vector2(8.5, 8.5))
 	check(center.distance_to(main.map.size * 0.5) < 1.0, "Go to centers actual observed coordinates")
-	check(main.map.screen_to_world(center).distance_to(Vector2(8.5, 8.5)) < 0.001, "actual map coordinate picking survives global scale and reserved docks")
+	check(main.map.screen_to_world(center).distance_to(Vector2(8.5, 8.5)) < 0.001, "actual map coordinate picking survives global scale and floating overlays")
 	var focus: Control = main._colonist_cards[0] if main._colonist_cards[0].is_visible_in_tree() else _find_button(main, "Menu")
 	if _focus and focus != null:
 		focus.grab_focus()
@@ -249,15 +251,16 @@ func _check_functional_contracts() -> void:
 	for row: Dictionary in _all_event_models():
 		check(not row.has("actor") and not row.has("source"), "raw event messages stay unattributed")
 	var map_rect: Rect2 = main.map.get_global_rect()
-	check(map_rect.size.x > 0 and map_rect.size.y > 0, "real docks reserve nonzero map geometry")
+	check(map_rect == main.workspace.area.get_global_rect(), "all panels overlay the full workspace map without reserving geometry")
+	check(not main.workspace.has_method("set_panel_dock"), "no docking API remains")
 	for window: WorkspaceWindow in main.workspace.windows.values():
+		check(window.get_parent() == main.workspace.area and not window.has_signal("dock_requested"), "every panel is a direct overlay with no docking controls")
 		if window.visible:
 			check(window.size.x >= 280, "visible panels retain 280 logical pixel minimum")
-			if window.docked:
-				check(not window.get_global_rect().intersects(map_rect), "docked panels do not overlay actual map picking rectangle")
-			elif not main.workspace.compact:
+			if not main.workspace.compact:
 				var surface: StyleBox = window.get_theme_stylebox("panel")
 				check(not surface is StyleBoxFlat and surface.shadows.size() == 2, "actual floating frame uses the foundation two-layer shadow")
+			check(_find_button(window, "Dock") == null and _find_button(window, "Float") == null, "no Dock/Float UI is exposed")
 	check(main._session_observations.resource("food").rate_available, "rendered composition retains its actual observed one-hour rate")
 
 
@@ -266,6 +269,76 @@ func _all_event_models() -> Array:
 	for row: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
 		rows.append(UiData.event(row))
 	return rows
+
+func _pointer_button(pressed: bool, point: Vector2) -> InputEventMouseButton:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	event.position = point
+	event.global_position = point
+	return event
+
+func _pointer_drag(start: Vector2, delta: Vector2) -> void:
+	await _native_pointer(_pointer_button(true, start))
+	var motion := InputEventMouseMotion.new()
+	motion.position = start + delta
+	motion.global_position = motion.position
+	motion.relative = delta
+	motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	motion.alt_pressed = true
+	await _native_pointer(motion)
+	await _native_pointer(_pointer_button(false, start + delta))
+
+func _native_pointer(event: InputEventMouse) -> void:
+	event.position = get_viewport().get_final_transform() * event.position
+	event.global_position = event.position
+	Input.parse_input_event(event)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+func _check_floating_input() -> void:
+	for frame in 4:
+		await get_tree().process_frame
+	var window: WorkspaceWindow = main.workspace.windows.people
+	var map_rect: Rect2 = main.map.get_global_rect()
+	if not main.workspace.compact:
+		var saved: Dictionary = main.workspace.state("people").duplicate(true)
+		main.workspace.state("people").pinned = false
+		main.workspace.state("people").rect = [0.15, 0.15, 0.5, 0.65]
+		main.workspace._apply_layout()
+		window.move_to_front()
+		await get_tree().process_frame
+		var origin := window.position
+		await _pointer_drag(window.titlebar.global_position + Vector2(70, 14), Vector2(18, 12))
+		check(window.position.distance_to(origin + Vector2(18, 12)) < 1, "production titlebar pointer drag uses logical global coordinates at current UI scale")
+		var before := window.size
+		await _pointer_drag(window.grip.get_global_rect().get_center(), Vector2(20, 16))
+		check(window.size.distance_to(before + Vector2(20, 16)) < 1, "production resize corner receives pointer input without clipping")
+		main.workspace.model.show_panel_headers = false
+		main.workspace._apply_layout()
+		await get_tree().process_frame
+		origin = window.position
+		await _pointer_drag(window.drag_strip.global_position + Vector2(70, 12), Vector2(16, 10))
+		check(window.position.distance_to(origin + Vector2(16, 10)) < 1 and window.drag_strip.visible, "hidden headers retain a working discoverable pointer drag strip")
+		main.workspace.state("people").pinned = true
+		main.workspace._apply_layout()
+		origin = window.position
+		await _pointer_drag(window.drag_strip.global_position + Vector2(70, 12), Vector2(16, 10))
+		check(window.position == origin and not window.grip.visible, "pin alone locks floating geometry")
+		main.workspace.model.show_panel_headers = true
+		main.workspace.model.workspaces[main.workspace.model.active].panels.people = saved
+		main.workspace._apply_layout()
+	check(main.map.get_global_rect() == map_rect, "moving/resizing/pinning overlays never changes map geometry")
+	var world_point := Vector2(8.5, 8.5)
+	var global_point: Vector2 = main.map.get_global_transform() * main.map.world_to_screen(world_point)
+	check(main.map.screen_to_world(main.map.get_global_transform().affine_inverse() * global_point).distance_to(world_point) < 0.001, "global map picking round-trips at actual UI scale after panel input")
+	main.workspace.edit_workspace(false)
+	await get_tree().process_frame
+	check(main.workspace._dialog.visible and main.workspace.blocks_map_input(map_rect.get_center()), "workspace popup blocks map input over the full map")
+	var popup_focus: Control = main.workspace._dialog.gui_get_focus_owner()
+	check(popup_focus != null and main.workspace._dialog.is_ancestor_of(popup_focus), "workspace popup retains keyboard focus inside its own viewport controls")
+	main.workspace._dialog.hide()
+	await get_tree().process_frame
 
 
 func _find_button(node: Node, text: String) -> Button:
