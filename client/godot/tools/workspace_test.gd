@@ -32,20 +32,27 @@ func _ready() -> void:
 			restored.workspaces[id].panels.people.minimized and restored.workspaces[id].panels.people.pinned and
 			restored.workspaces[id].panels.people.z == 17, "saved custom geometry and flags round-trip")
 	_assert(not restored.show_panel_headers, "header visibility persists independently of panel geometry")
+	_assert(restored.workspaces[id].panels.people.dock == "left", "dock state round-trips separately from floating geometry")
 	# New panel keys are optional in version-one layouts, including custom layouts.
 	var legacy_data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	legacy_data.version = 1
 	for entry: Dictionary in legacy_data.workspaces.values():
 		entry.panels.erase("admin")
 		entry.panels.erase("developer")
+		for saved: Dictionary in entry.panels.values():
+			saved.erase("dock")
 	var legacy_file := FileAccess.open(path, FileAccess.WRITE)
 	legacy_file.store_string(JSON.stringify(legacy_data))
 	legacy_file.close()
 	var migrated := WorkspaceLayout.new()
 	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.size() == 10,
 		"version-one layouts migrate optional admin and developer panel keys")
-	_assert(migrated.workspaces[id].panels.people == restored.workspaces[id].panels.people and
+	var migrated_people: Dictionary = migrated.workspaces[id].panels.people.duplicate(true)
+	migrated_people.dock = restored.workspaces[id].panels.people.dock
+	_assert(migrated_people == restored.workspaces[id].panels.people and
 		not migrated.show_panel_headers and migrated.active == id,
 		"migration preserves old geometry, open/minimized/pinned/layer, headers and workspace")
+	_assert(migrated.workspaces[id].panels.people.dock == "floating", "v1 overlays remain floating instead of silently moving personal geometry")
 	_assert(migrated.workspaces[id].panels.admin.open and migrated.workspaces[id].panels.developer.open,
 		"new panels default open without changing old panel preferences")
 	var other_id := restored.create_workspace("Other", ["overview"], false)
@@ -83,7 +90,7 @@ func _ready() -> void:
 func _test_geometry(_model: WorkspaceLayout) -> void:
 	var area := Vector2(1000, 700)
 	var first := Rect2(100, 100, 300, 220)
-	var neighbor := Rect2(408, 100, 300, 220)
+	var neighbor := Rect2(416, 100, 300, 220)
 	var snapped := WorkspaceLayout.snap_rect(Rect2(394, 100, 300, 220), area, [first, neighbor])
 	_assert(is_equal_approx(snapped.position.x, 400.0), "neighboring edge alignment snaps")
 	var viewport := WorkspaceLayout.to_pixels([0.1, 0.1, 0.4, 0.5], area)
@@ -92,7 +99,7 @@ func _test_geometry(_model: WorkspaceLayout) -> void:
 	_assert(is_equal_approx(normalized[0], 0.1) and is_equal_approx(normalized[1], 0.1) and
 			is_equal_approx(normalized[2], 0.4) and is_equal_approx(normalized[3], 0.5),
 		"desktop geometry round-trips without viewport scaling")
-	var resized := WorkspaceLayout.snap_rect(Rect2(100, 100, 296, 220), area, [Rect2(408, 100, 300, 220)], true)
+	var resized := WorkspaceLayout.snap_rect(Rect2(100, 100, 296, 220), area, [Rect2(416, 100, 300, 220)], true)
 	_assert(resized.size.x == 300 and resized.position.x == 100, "resize snaps trailing edge to neighbor gutter")
 	var viewport_snap := WorkspaceLayout.snap_rect(Rect2(712, 484, 280, 210), area, [])
 	_assert(viewport_snap.end == area, "move snaps both edges to viewport")
@@ -113,6 +120,8 @@ func _test_geometry(_model: WorkspaceLayout) -> void:
 		"top-left resize cannot escape the workspace")
 
 func _test_manager() -> void:
+	# Headless defaults to a tiny native Window; dialogs need a real host budget.
+	get_tree().root.size = Vector2i(1440, 900)
 	var previous_db := SpacetimeDB.Continuum.db
 	var local := preload("res://tools/terrain_fixture.gd").database(false)
 	var map := ColonyMap.new()
@@ -137,10 +146,10 @@ func _test_manager() -> void:
 	deck.finish_setup()
 	await get_tree().process_frame
 	deck.apply_metrics(UiMetrics.new(24))
-	_assert(deck.metrics.base_font_size == 24 and deck.windows["people"].metrics.base_font_size == 24,
-		"runtime metric application reaches the deck and every window")
-	_assert(deck._dialog.min_size.x >= 550, "workspace dialog minimum scales with runtime metrics")
-	_assert(deck._rows[0].custom_minimum_size.y >= 70, "telemetry header row scales at runtime")
+	_assert(deck.metrics.base_font_size == 13 and deck.windows["people"].metrics.base_font_size == 13,
+		"whole-UI scaling never doubles logical workspace measurements")
+	_assert(deck._dialog.min_size.x == 300, "workspace dialog retains logical minimum")
+	_assert(deck._rows[0].custom_minimum_size.y == 40, "telemetry header is the 40px token")
 	await get_tree().process_frame
 	var scaled: WorkspaceWindow = deck.windows.people
 	for child: Node in scaled.titlebar.get_children():
@@ -149,7 +158,7 @@ func _test_manager() -> void:
 			for handle: Control in scaled.resize_handles.values():
 				_assert(not child.get_global_rect().intersects(handle.get_global_rect()), "scaled action buttons do not overlap resize hit areas")
 	deck.apply_metrics(UiMetrics.new(13))
-	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 38), "header row returns without compounding")
+	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 40), "header row returns without compounding")
 	map.input_blocked = deck.blocks_map_input
 	_assert(deck.windows.size() == 10 and deck.authorized.size() == 10, "manager creates all actual game panels")
 	_assert(deck.windows.keys() == ["overview", "people", "inspector", "operations", "policies", "alerts", "activity", "trends", "admin", "developer"], "F1-F8 keep existing order with Admin F9 and Developer F10")
@@ -178,9 +187,22 @@ func _test_manager() -> void:
 	deck.windows.developer = developer_window
 	deck.model.workspaces.daily = WorkspaceLayout.defaults().daily
 	deck._apply_layout()
+	_assert(not deck.compact and not map.get_global_rect().intersects(deck.windows.people.get_global_rect()), "docked panels reserve actual map Control space")
+	_assert(deck.windows.people.get_theme_stylebox("panel").shadow_size == 0, "docked chrome has no shadow")
+	var floating_geometry: Array = deck.state("people").rect.duplicate()
+	deck.set_panel_dock("people", "floating")
+	_assert(deck.state("people").rect == floating_geometry and not deck.windows.people.docked, "floating preserves remembered geometry independently from dock")
+	deck.set_panel_dock("people", "left")
+	deck.windows.people.set_live_count(8)
+	_assert(deck.windows.people.live_count.text == "8", "integration can set a live mono panel-header count")
+	deck.set_workspace_alert_summary("daily", "warn", 2)
+	_assert(deck._alert_summaries.daily.count == 2, "workspace alert summaries are transient integration inputs")
+	deck.set_panel_authorized("admin", false)
+	_assert(deck._alert_summaries.is_empty(), "access revocation clears potentially stale restricted counts")
+	deck.set_panel_authorized("admin", true)
 	var framed: WorkspaceWindow = deck.windows.people
 	for child: Node in framed.titlebar.get_children():
-		if child is Button:
+		if child is Button and child != framed.dock_button:
 			_assert(child.text.is_empty() and child.icon != null and not child.tooltip_text.is_empty(),
 				"window actions use actual icons with descriptive tooltips")
 	_assert(framed.resize_handles.size() == 8, "every edge and corner has a resize hit area")
@@ -188,6 +210,7 @@ func _test_manager() -> void:
 	var active := deck.model.active
 	deck.toggle_panel("people")
 	_assert(deck.state("people").minimized, "panel minimizes to the dock")
+	_assert(deck.windows.people.visible and deck.windows.people.size.y == 32 and not deck.windows.people.scroll.visible, "collapse retains a real 32px header")
 	deck.toggle_panel("people")
 	_assert(not deck.state("people").minimized and deck.windows["people"].visible, "panel restores from the dock")
 	deck.state("people").pinned = true
@@ -219,8 +242,18 @@ func _test_manager() -> void:
 	await get_tree().process_frame
 	_assert(not deck.compact and deck.state("people").rect == desktop_rect,
 		"returning to desktop preserves preferred geometry")
+	for scale_percent: int in [100, 125, 150]:
+		deck.size = Vector2(1440, 900) / (float(scale_percent) / 100.0)
+		await get_tree().process_frame
+		await get_tree().process_frame
+		_assert(deck.compact == (scale_percent == 150), "1440px breakpoint policy at %d percent" % scale_percent)
+	deck.size = Vector2(1200, 800)
+	await get_tree().process_frame
+	await get_tree().process_frame
 	await _test_viewport_input(deck, map)
 	await _test_resize_edges(deck)
+	await _test_dock_overflow(deck)
+	await _test_navigation_focus(deck)
 	deck.toggle_map_only()
 	var map_point := deck.area.get_global_rect().position + Vector2(500, 300)
 	_assert(not deck.blocks_map_input(map_point), "map-only mode passes map input")
@@ -282,6 +315,7 @@ func _test_headers(deck: WorkspaceDeck, manager_path: String) -> void:
 	await get_tree().process_frame
 
 func _test_resize_edges(deck: WorkspaceDeck) -> void:
+	deck.set_panel_dock("people", "floating")
 	deck.state("people").pinned = false
 	deck.state("people").rect = [0.35, 0.3, 0.3, 0.45]
 	deck._apply_layout()
@@ -386,6 +420,7 @@ func _test_resize_edges(deck: WorkspaceDeck) -> void:
 	deck.toggle_panel_headers()
 
 func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
+	deck.set_panel_dock("people", "floating")
 	for key: String in deck.windows:
 		deck.state(key).open = key == "people"
 	deck.state("people").pinned = false
@@ -441,6 +476,194 @@ func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
 	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, true, title))
 	_assert(window._gesture.is_empty(), "pinned headers cannot arm a drag")
 	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, title))
+
+## Real Window scaling plus nested clipping checks: assigned panel heights alone
+## cannot prove that an overflowed body's final action is reachable.
+func _test_dock_overflow(deck: WorkspaceDeck) -> void:
+	var original_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
+	var original_authorized := deck.authorized.duplicate()
+	var original_size := deck.size
+	var original_compact_panel := deck._compact_panel
+	var host := get_tree().root
+	var original_host_size := host.size
+	var original_scale := host.content_scale_factor
+	var original_scale_mode := host.content_scale_mode
+	var original_scale_size := host.content_scale_size
+	var probes := {}
+	var activated := [0]
+	for key: String in deck.windows:
+		deck.authorized[key] = true
+		var fixture := VBoxContainer.new()
+		var spacer := Control.new()
+		spacer.custom_minimum_size.y = WorkspaceLayout.MIN_SIZE.y * 2
+		fixture.add_child(spacer)
+		var action := Button.new()
+		action.text = "Reach %s action" % key
+		action.custom_minimum_size.y = ThemeTokens.number("control-md")
+		action.pressed.connect(func() -> void: activated[0] += 1)
+		fixture.add_child(action)
+		deck.windows[key].content.add_child(fixture)
+		probes[key] = {"fixture": fixture, "action": action}
+	for side: String in ["left", "right"]:
+		for disproportionate: bool in [false, true]:
+			for key: String in deck.windows:
+				deck.state(key).open = true
+				deck.state(key).minimized = false
+				deck.state(key).dock = side
+				deck.state(key).rect[3] = 1.0 if not disproportionate or key == "people" else 0.05
+			var remembered := {}
+			for key: String in deck.windows:
+				remembered[key] = deck.state(key).rect.duplicate()
+			for budget: Dictionary in [
+				{"physical": Vector2i(1440, 900), "scale": 100, "compact": false},
+				{"physical": Vector2i(1440, 900), "scale": 125, "compact": false},
+				{"physical": Vector2i(1440, 600), "scale": 100, "compact": false},
+				{"physical": Vector2i(1440, 900), "scale": 150, "compact": true},
+				{"physical": Vector2i(360, 480), "scale": 150, "compact": true},
+			]:
+				host.content_scale_size = Vector2i.ZERO
+				host.size = budget.physical
+				host.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
+				host.content_scale_factor = float(budget.scale) / 100.0
+				await _settle_layout()
+				deck.size = host.get_visible_rect().size
+				deck._apply_layout()
+				await _settle_layout()
+				_assert(deck.compact == budget.compact, "actual Window dock/compact policy at %s / %s%%" % [budget.physical, budget.scale])
+				if not deck.compact:
+					var dock_scroll: ScrollContainer = deck._dock_scrolls[side]
+					_assert(dock_scroll.get_v_scroll_bar().visible and dock_scroll.follow_focus,
+						"dense %s dock exposes keyboard-following overflow" % side)
+					_assert(dock_scroll.get_global_rect().size.y > 0, "dock viewport remains usable on height rescale")
+				for key: String in deck.windows:
+					var window: WorkspaceWindow = deck.windows[key]
+					if deck.compact:
+						if deck._compact_panel != key:
+							deck.toggle_panel(key)
+							await _settle_layout()
+					_assert(window.is_visible_in_tree() and window.scroll.size.y > 0 and window.scroll.size.x > 0,
+						"%s has a positive real body viewport at %s%%" % [key, budget.scale])
+					if not deck.compact:
+						_assert(window.size.y >= WorkspaceLayout.MIN_SIZE.y and window.size.x >= WorkspaceLayout.MIN_SIZE.x,
+							"dense/disproportionate dock cannot starve %s below its usable minimum" % key)
+					var action: Button = probes[key].action
+					action.grab_focus()
+					await _settle_layout()
+					_assert(_unclipped_control_rect(action).encloses(action.get_global_rect()),
+						"keyboard focus reveals %s final action through every clipping ancestor at %s%%: action %s visible %s inner %s/%s outer %s/%s" % [key, budget.scale, action.get_global_rect(), _unclipped_control_rect(action), window.scroll.get_global_rect(), window.scroll.scroll_vertical, deck._dock_scrolls[side].get_global_rect(), deck._dock_scrolls[side].scroll_vertical])
+					_assert(_unclipped_control_rect(window.scroll).has_area(), "overflow reveals a nonzero body viewport for %s" % key)
+					var before: int = activated[0]
+					var enter := InputEventKey.new()
+					enter.keycode = KEY_SPACE
+					enter.pressed = true
+					get_viewport().push_input(enter)
+					enter = InputEventKey.new()
+					enter.keycode = KEY_SPACE
+					get_viewport().push_input(enter)
+					_assert(activated[0] == before + 1, "actual viewport keyboard input activates revealed %s action" % key)
+					_assert(deck.state(key).open and not deck.state(key).minimized and deck.state(key).rect == remembered[key],
+						"overflow/scale changes never close panels or rewrite personal geometry")
+				# Collapse/restore preserves explicit intent at every budget.
+				var collapse_key := InputEventKey.new()
+				collapse_key.keycode = KEY_F10
+				collapse_key.pressed = true
+				get_viewport().push_input(collapse_key)
+				await _settle_layout()
+				_assert(deck.state("developer").minimized and deck.windows.developer.visible and deck.windows.developer.size.y == 32,
+					"dense/compact minimize retains the requested 32px header")
+				get_viewport().push_input(collapse_key)
+				await _settle_layout()
+				_assert(not deck.state("developer").minimized and _unclipped_control_rect(deck.windows.developer.titlebar).has_area(),
+					"F-key-equivalent restore reveals the last overflowed panel")
+	for key: String in probes:
+		deck.windows[key].content.remove_child(probes[key].fixture)
+		probes[key].fixture.queue_free()
+	deck.model.workspaces[deck.model.active].panels = original_panels
+	deck.authorized = original_authorized
+	deck._compact_panel = original_compact_panel
+	host.content_scale_factor = original_scale
+	host.content_scale_mode = original_scale_mode
+	host.content_scale_size = original_scale_size
+	host.size = original_host_size
+	deck.size = original_size
+	deck._apply_layout()
+	await _settle_layout()
+	print("WORKSPACE_DOCK_OVERFLOW_PASS ten-left ten-right disproportionate actual-window-scale nested-clipping keyboard-actions")
+
+func _test_navigation_focus(deck: WorkspaceDeck) -> void:
+	var viewport := get_viewport()
+	deck._rebuild_navigation()
+	var tab: Button = deck._tab_buttons.daily
+	tab.grab_focus()
+	deck.set_workspace_alert_summary("daily", "warn", 3)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == tab and deck._tab_buttons.daily == tab,
+		"changed alert count retains the same actual focused tab node")
+	deck.set_workspace_alert_summary("daily", "warn", 3)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == tab, "unchanged alert summary is a focus-preserving no-op")
+	deck.set_workspace_alert_summary("daily", "critical", 4)
+	deck.set_workspace_alert_summary("daily", "warn", 0)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == tab and not deck._tab_alert_nodes.daily.count.visible,
+		"severity and count removal update glyph/count in place without discarding focus")
+	deck.switch_workspace("build")
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == deck._tab_buttons.daily and deck.model.active == "build",
+		"workspace selection preserves valid navigation identity across structural rebuild")
+	var new_button: Button
+	for button: Button in deck.find_children("*", "Button", true, false):
+		if button.text == "+ New":
+			new_button = button
+	new_button.grab_focus()
+	deck.set_workspace_alert_summary("build", "warn", 2)
+	deck.set_panel_authorized("admin", false)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == new_button, "alert updates and revocation never steal New-button focus")
+	deck.edit_workspace(false)
+	await _settle_layout()
+	deck._name_input.grab_focus()
+	deck.set_workspace_alert_summary("build", "critical", 5)
+	deck.set_panel_authorized("developer", false)
+	await _settle_layout()
+	_assert(deck._dialog.gui_get_focus_owner() == deck._name_input,
+		"alert updates and role changes preserve chooser text focus")
+	deck._dialog.hide()
+	deck.switch_workspace("daily")
+	deck.set_panel_authorized("admin", true)
+	deck.set_panel_authorized("developer", true)
+	deck.state("admin").open = true
+	deck._changed()
+	await _settle_layout()
+	deck._panel_buttons.admin.grab_focus()
+	deck.set_panel_authorized("admin", false)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == null and not deck._panel_buttons.has("admin"),
+		"revoked panel-navigation identity is cleared rather than restored")
+	deck.set_panel_authorized("admin", true)
+	deck.windows.admin.pin_button.grab_focus()
+	deck.set_panel_authorized("admin", false)
+	await _settle_layout()
+	_assert(viewport.gui_get_focus_owner() == null and not deck.windows.admin.visible,
+		"revocation clears focus within the denied live panel")
+	deck.set_panel_authorized("admin", true)
+	deck.state("admin").open = false
+	deck._changed()
+	await _settle_layout()
+	print("WORKSPACE_NAVIGATION_FOCUS_PASS changed unchanged removed selection new chooser revocation")
+
+func _settle_layout() -> void:
+	for _frame in 4:
+		await get_tree().process_frame
+
+func _unclipped_control_rect(control: Control) -> Rect2:
+	var visible := control.get_global_rect().intersection(control.get_viewport().get_visible_rect())
+	var parent := control.get_parent()
+	while parent != null:
+		if parent is Control and parent.clip_contents:
+			visible = visible.intersection(parent.get_global_rect())
+		parent = parent.get_parent()
+	return visible
 
 func _mouse_button(button: MouseButton, pressed: bool, position: Vector2) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()

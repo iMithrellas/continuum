@@ -11,7 +11,7 @@ func _init(font_size: int = ClientSettings.DEFAULT_FONT_SIZE) -> void:
 	scale = float(base_font_size) / REFERENCE_FONT_SIZE
 
 func font(reference: float) -> int:
-	return maxi(1, roundi(reference * scale))
+	return maxi(11, roundi(reference * scale))
 
 func px(reference: float) -> float:
 	return reference * scale

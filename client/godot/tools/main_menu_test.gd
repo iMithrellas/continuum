@@ -24,12 +24,12 @@ func _ready() -> void:
 	add_child(menu)
 	menu.setup(null, ClientSettings.new(), UiMetrics.new())
 	var buttons := menu.find_children("*", "Button", true, false)
-	var expected_buttons := ["Join last server", "Servers", "Settings", "Exit", "Show diagnostics", "Show frame/RTT graph"]
+	var expected_buttons := ["Join last server", "Servers", "Settings", "Exit", "Reduce motion", "Show diagnostics", "Show frame/RTT graph", "100%"]
 	_assert(buttons.size() == expected_buttons.size(), "menu contains only navigation, join-last, and display/diagnostics controls")
 	for button: Button in buttons:
 		_assert(expected_buttons.has(button.text), "no direct join, local lifecycle, or autostart control: " + button.text)
 	for line: LineEdit in menu.find_children("*", "LineEdit", true, false):
-		_assert(line.get_parent() == menu._font_size, "no host or database input remains in the launch menu")
+		_assert(menu._ui_scale.is_ancestor_of(line), "only the UI-scale popup may contain an internal search input: " + str(line.get_path()))
 	var server_menu_opened := [0]
 	menu.server_management_requested.connect(func() -> void: server_menu_opened[0] += 1)
 	_button(menu, "Servers").pressed.emit()
@@ -47,8 +47,8 @@ func _ready() -> void:
 	menu._join_last()
 	menu.set_busy(false)
 	_assert(joins.is_empty() and menu._last_button.disabled, "clearing busy does not enable an absent last endpoint")
-	_assert(menu._font_size.min_value == ClientSettings.MIN_FONT_SIZE and
-			menu._font_size.max_value == ClientSettings.MAX_FONT_SIZE, "settings enforce font bounds")
+	_assert(menu._ui_scale.item_count == 3 and menu._ui_scale.get_item_id(2) == 150,
+		"settings expose only 100/125/150 percent UI scales")
 	_button(menu, "Settings").pressed.emit()
 	_assert(menu._settings_panel.visible, "settings are reachable from the menu")
 	_assert(not menu._diagnostics_toggle.button_pressed and menu._graph_toggle.disabled, "diagnostics graph is subordinate by default")
@@ -60,13 +60,12 @@ func _ready() -> void:
 	_assert(menu.settings.diagnostics_graph_enabled, "graph toggle persists independently")
 	menu._diagnostics_toggle.button_pressed = false
 	_assert(not menu.settings.diagnostics_enabled and not menu.settings.diagnostics_graph_enabled and menu._graph_toggle.disabled, "disabling diagnostics clears subordinate graph")
-	menu._font_size.value = 24
-	_assert(menu.settings.font_size == 24, "font control updates display settings")
-	menu._font_size.value = 10
-	_assert(menu.settings.font_size == 10 and settings_changes[0] >= 5, "display and diagnostics changes emit settings updates")
-	_assert(menu._font_size.min_value == 10 and menu._font_size.max_value == 24, "repeated font changes preserve bounded control")
+	menu._ui_scale.item_selected.emit(2)
+	_assert(menu.settings.ui_scale_percent == 150 and menu.settings.font_size == 13, "scale control keeps base token fonts normalized")
+	menu._reduced_motion.button_pressed = true
+	_assert(menu.settings.reduced_motion and settings_changes[0] >= 5, "motion and scale controls emit settings updates")
 	menu.apply_metrics(UiMetrics.new(24))
-	_assert(menu.theme.default_font_size == 24 and menu.metrics.base_font_size == 24, "menu accepts updated theme metrics")
+	_assert(menu.theme.default_font_size == 13 and menu.metrics.scale == 1, "legacy metrics cannot double-scale the new menu")
 	menu._toggle_settings()
 
 	for endpoint: Array in [["localhost:3000", "continuum"], ["http://localhost", "bad name"]]:
@@ -89,10 +88,10 @@ func _ready() -> void:
 	_assert(joins.size() == 1, "busy join-last cannot dispatch twice")
 	for text: String in ["Servers", "Settings", "Exit"]:
 		_assert(not _button(menu, text).disabled, "busy leaves " + text + " available")
-	_assert(menu._font_size.editable and not menu._diagnostics_toggle.disabled, "busy leaves display and diagnostics settings available")
+	_assert(not menu._ui_scale.disabled and not menu._diagnostics_toggle.disabled, "busy leaves display and diagnostics settings available")
 	menu.join_failed("Connection failed")
-	_assert(not menu._last_button.disabled and menu._status.text == "Connection failed", "failed joins release busy and show the failure")
-	_assert(menu._status.get_theme_color("font_color") == Color("ffb74d"), "failed join uses warning styling")
+	_assert(not menu._last_button.disabled and menu._status.text == "Warning · Connection failed", "failed joins release busy and show the failure")
+	_assert(menu._status.get_theme_color("font_color") == ThemeTokens.color("warn") and menu._status_glyph.texture != null, "failed join uses warning glyph and token")
 	menu._last_button.pressed.emit()
 	_assert(joins.size() == 2, "failed join can be retried")
 	menu.show_menu()
@@ -107,14 +106,15 @@ func _ready() -> void:
 	get_tree().quit(0)
 
 func _test_layout() -> void:
-	for font_size: int in [ClientSettings.DEFAULT_FONT_SIZE, ClientSettings.MAX_FONT_SIZE]:
+	for font_size: int in [100, 125, 150]:
 		var menu: ContinuumMainMenu = MenuScene.instantiate()
 		add_child(menu)
 		menu.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-		menu.size = Vector2(360, 480)
+		var logical_size := Vector2(360, 480) / (float(font_size) / 100.0)
+		menu.size = logical_size
 		var settings := ClientSettings.new()
-		settings.font_size = font_size
-		menu.setup(null, settings, UiMetrics.new(font_size))
+		settings.ui_scale_percent = font_size
+		menu.setup(null, settings, settings.ui_metrics())
 		menu._toggle_settings()
 		menu.set_status("Connecting to http://" + "longhostname".repeat(8) + " / continuum-home ...")
 		menu._error.text = "A long connection failure remains readable without widening the launch menu."
@@ -127,7 +127,7 @@ func _test_layout() -> void:
 			if not control.is_visible_in_tree():
 				continue
 			var rect := control.get_global_rect()
-			_assert(rect.position.x >= -0.5 and rect.end.x <= 360.5, "font %d control fits horizontally: %s" % [font_size, control.name])
+			_assert(rect.position.x >= -0.5 and rect.end.x <= logical_size.x + 0.5, "scale %d control fits horizontally: %s" % [font_size, control.name])
 		_assert(menu._status.get_line_count() > 1 and menu._error.get_line_count() > 1, "status and errors wrap in narrow menus")
 		_assert(not scroll.get_h_scroll_bar().visible, "narrow menu never needs horizontal scrolling")
 		scroll.ensure_control_visible(menu._graph_toggle)

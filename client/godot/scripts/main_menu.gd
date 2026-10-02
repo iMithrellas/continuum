@@ -13,14 +13,18 @@ var _status: Label
 var _last_button: Button
 var _settings_panel: VBoxContainer
 var _font_size: SpinBox
+var _ui_scale: OptionButton
+var _reduced_motion: CheckButton
 var _diagnostics_toggle: CheckButton
 var _graph_toggle: CheckButton
 var _error: Label
+var _status_glyph: TextureRect
+var _error_glyph: TextureRect
 
 func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetrics) -> void:
 	main = owner
 	settings = loaded_settings
-	metrics = ui_metrics
+	metrics = UiMetrics.new()
 	theme = DeckTheme.create(metrics)
 	_build()
 	_refresh_last_button()
@@ -28,16 +32,14 @@ func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetric
 func _build() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var background := ColorRect.new()
-	background.color = Color("17191b")
+	background.color = ThemeTokens.color("bg-000")
 	background.mouse_filter = Control.MOUSE_FILTER_STOP
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(background)
 	var margin := MarginContainer.new()
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	margin.add_theme_constant_override("margin_left", metrics.px(24))
-	margin.add_theme_constant_override("margin_right", metrics.px(24))
-	margin.add_theme_constant_override("margin_top", metrics.px(36))
-	margin.add_theme_constant_override("margin_bottom", metrics.px(36))
+	for edge: String in ["left", "right", "top", "bottom"]:
+		margin.add_theme_constant_override("margin_" + edge, ThemeTokens.number("space-8"))
 	add_child(margin)
 	var scroll := ScrollContainer.new()
 	scroll.name = "MenuScroll"
@@ -49,59 +51,84 @@ func _build() -> void:
 	column.add_theme_constant_override("separation", metrics.px(12))
 	scroll.add_child(column)
 
-	var title := _label("CONTINUUM")
-	title.add_theme_font_size_override("font_size", metrics.font(24))
-	title.add_theme_color_override("font_color", DeckTheme.ACCENT)
+	var title := _label("Continuum")
+	ThemeTokens.apply_label(title, "display")
 	column.add_child(title)
 	var subtitle := _label("A quiet place to build a life.")
 	column.add_child(subtitle)
 	_status = _label("Offline")
-	column.add_child(_status)
+	var status_row := HBoxContainer.new()
+	column.add_child(status_row)
+	_status_glyph = _glyph(status_row, "notice")
+	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_row.add_child(_status)
 
 	_last_button = _button("Join last server", _join_last)
+	_last_button.theme_type_variation = "ButtonPrimary"
 	column.add_child(_last_button)
 	var servers_button := _button("Servers", _open_server_management)
 	column.add_child(servers_button)
 	var settings_button := _button("Settings", _toggle_settings)
 	column.add_child(settings_button)
 	var exit_button := _button("Exit", func() -> void: exit_requested.emit())
+	exit_button.theme_type_variation = "ButtonQuiet"
 	column.add_child(exit_button)
 
 	_error = _label("")
-	_error.add_theme_color_override("font_color", Color("ffb74d"))
-	column.add_child(_error)
+	_error.add_theme_color_override("font_color", ThemeTokens.color("warn"))
+	var error_row := HBoxContainer.new()
+	column.add_child(error_row)
+	_error_glyph = _glyph(error_row, "warn")
+	_error_glyph.visible = false
+	_error.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	error_row.add_child(_error)
 	_settings_panel = VBoxContainer.new()
 	_settings_panel.visible = false
-	_settings_panel.add_theme_constant_override("separation", metrics.px(6))
+	_settings_panel.add_theme_constant_override("separation", ThemeTokens.number("space-2"))
 	column.add_child(_settings_panel)
-	_settings_panel.add_child(_label("DISPLAY"))
-	_font_size = SpinBox.new()
-	_font_size.name = "BaseFontSize"
-	_font_size.min_value = ClientSettings.MIN_FONT_SIZE
-	_font_size.max_value = ClientSettings.MAX_FONT_SIZE
-	_font_size.step = 1
-	_font_size.value = settings.font_size
-	_font_size.value_changed.connect(_font_size_changed)
-	_settings_panel.add_child(_font_size)
+	var section := _label("Display")
+	ThemeTokens.apply_label(section, "section")
+	_settings_panel.add_child(section)
+	_settings_panel.add_child(_label("UI scale"))
+	_ui_scale = OptionButton.new()
+	_ui_scale.name = "UiScale"
+	for value: int in ClientSettings.UI_SCALES:
+		_ui_scale.add_item("%d%%" % value, value)
+	_ui_scale.select(ClientSettings.UI_SCALES.find(ClientSettings.normalize_ui_scale(settings.ui_scale_percent)))
+	_ui_scale.item_selected.connect(func(index: int) -> void:
+		settings.ui_scale_percent = _ui_scale.get_item_id(index)
+		settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
+		_apply_settings())
+	_settings_panel.add_child(_ui_scale)
+	_reduced_motion = CheckButton.new()
+	_reduced_motion.name = "ReducedMotion"
+	_reduced_motion.text = "Reduce motion"
+	_reduced_motion.tooltip_text = "Keep critical alert borders steady rather than pulsing."
+	_reduced_motion.button_pressed = settings.reduced_motion
+	_reduced_motion.toggled.connect(func(value: bool) -> void:
+		settings.reduced_motion = value
+		_apply_settings())
+	_settings_panel.add_child(_reduced_motion)
 	_diagnostics_toggle = CheckButton.new()
 	_diagnostics_toggle.text = "Show diagnostics"
 	_diagnostics_toggle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_diagnostics_toggle.custom_minimum_size = Vector2(1, metrics.px(34))
+	_diagnostics_toggle.custom_minimum_size = Vector2(1, ThemeTokens.number("control-md"))
 	_diagnostics_toggle.button_pressed = settings.diagnostics_enabled
 	_diagnostics_toggle.toggled.connect(_diagnostics_changed)
 	_settings_panel.add_child(_diagnostics_toggle)
 	_graph_toggle = CheckButton.new()
 	_graph_toggle.text = "Show frame/RTT graph"
 	_graph_toggle.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_graph_toggle.custom_minimum_size = Vector2(1, metrics.px(34))
+	_graph_toggle.custom_minimum_size = Vector2(1, ThemeTokens.number("control-md"))
 	_graph_toggle.button_pressed = settings.diagnostics_graph_enabled
 	_graph_toggle.disabled = not settings.diagnostics_enabled
 	_graph_toggle.toggled.connect(_graph_changed)
 	_settings_panel.add_child(_graph_toggle)
 
 func set_status(message: String, warning := false) -> void:
-	_status.text = message
-	_status.add_theme_color_override("font_color", Color("ffb74d") if warning else DeckTheme.MUTED)
+	_status.text = "Warning · " + message if warning else message
+	_status_glyph.texture = ThemeTokens.glyph("warn" if warning else "notice")
+	_status.add_theme_color_override("font_color", ThemeTokens.color("warn") if warning else ThemeTokens.color("ink-muted"))
 
 func set_busy(busy: bool) -> void:
 	_last_button.disabled = busy or not _has_last_server()
@@ -119,8 +146,10 @@ func _join_last() -> void:
 	var validation := ContinuumServerManagement.validate_endpoint(host, database)
 	if not validation.is_empty():
 		_error.text = validation
+		_error_glyph.visible = true
 		return
 	_error.text = ""
+	_error_glyph.visible = false
 	set_busy(true)
 	set_status("Connecting to %s / %s ..." % [host, database])
 	join_requested.emit(host, database)
@@ -136,7 +165,9 @@ func _open_server_management() -> void:
 	server_management_requested.emit()
 
 func _font_size_changed(value: float) -> void:
-	settings.font_size = clampi(roundi(value), ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE)
+	# Legacy caller compatibility; the visible surface only offers whole-UI scales.
+	settings.ui_scale_percent = ClientSettings.legacy_ui_scale(roundi(value))
+	settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
 	if main != null and main.has_method("apply_settings"):
 		main.apply_settings(settings)
 	settings_changed.emit(settings)
@@ -159,7 +190,7 @@ func _apply_settings() -> void:
 	settings_changed.emit(settings)
 
 func apply_metrics(next_metrics: UiMetrics) -> void:
-	metrics = next_metrics
+	metrics = UiMetrics.new()
 	theme = DeckTheme.create(metrics)
 
 func _refresh_last_button() -> void:
@@ -173,14 +204,24 @@ func _button(text: String, action: Callable) -> Button:
 	var result := Button.new()
 	result.text = text
 	result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	result.custom_minimum_size = Vector2(1, metrics.px(34))
+	result.custom_minimum_size = Vector2(1, ThemeTokens.number("control-md"))
 	result.pressed.connect(action)
 	return result
 
 func _label(text: String) -> Label:
 	var result := Label.new()
 	result.text = text
+	ThemeTokens.apply_label(result, "body")
 	result.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result.custom_minimum_size = Vector2(1, 0)
 	result.add_theme_color_override("font_color", DeckTheme.MUTED)
 	return result
+
+func _glyph(parent: Node, name: String) -> TextureRect:
+	var icon := TextureRect.new()
+	icon.texture = ThemeTokens.glyph(name)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.custom_minimum_size = Vector2(16, 16)
+	parent.add_child(icon)
+	return icon
