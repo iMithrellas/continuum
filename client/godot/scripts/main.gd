@@ -901,6 +901,7 @@ func _create_diagnostics_overlay() -> void:
 	_diagnostics_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(_diagnostics_overlay)
 	add_child(layer)
+	get_viewport().size_changed.connect(_resize_diagnostics_overlay)
 	_resize_diagnostics_overlay()
 
 
@@ -908,6 +909,7 @@ func _resize_diagnostics_overlay() -> void:
 	if _diagnostics_overlay != null and get_viewport() != null:
 		_diagnostics_overlay.position = Vector2.ZERO
 		_diagnostics_overlay.size = get_viewport_rect().size
+		_diagnostics_overlay.queue_redraw()
 
 
 func _configure_diagnostics_overlay() -> void:
@@ -1477,11 +1479,6 @@ func _build_panels() -> void:
 
 
 func _build_telemetry() -> void:
-	var brand := Label.new()
-	brand.text = "CONTINUUM  /"
-	brand.add_theme_font_size_override("font_size", _metrics.font(17))
-	brand.add_theme_color_override("font_color", DeckTheme.ACCENT)
-	workspace.telemetry.add_child(brand)
 	_clock = Label.new()
 	_clock.text = "DAY --  --:--"
 	_clock.custom_minimum_size.x = _metrics.px(140)

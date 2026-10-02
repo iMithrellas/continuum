@@ -58,13 +58,15 @@ func _safe_rect() -> Rect2:
 	var viewport_size := size
 	if viewport_size == Vector2.ZERO and get_viewport():
 		viewport_size = get_viewport_rect().size
-	if DisplayServer.get_name() == "headless":
+	# Desktop safe areas are monitor-relative, not game-window-relative.
+	if not OS.has_feature("mobile") or DisplayServer.get_name() == "headless":
 		return Rect2(Vector2.ZERO, viewport_size)
 	var display_safe := Rect2(DisplayServer.get_display_safe_area())
 	if display_safe.size.x <= 0.0 or display_safe.size.y <= 0.0:
 		return Rect2(Vector2.ZERO, viewport_size)
 	var inverse := get_viewport().get_screen_transform().affine_inverse()
-	return Rect2(inverse * display_safe.position, inverse * display_safe.end).intersection(Rect2(Vector2.ZERO, viewport_size))
+	var start := inverse * display_safe.position
+	return Rect2(start, inverse * display_safe.end - start).intersection(Rect2(Vector2.ZERO, viewport_size))
 
 func _graph_fits(safe: Rect2) -> bool:
 	return show_graph and safe.size.y >= metrics.px(150.0) + metrics.px(16.0)

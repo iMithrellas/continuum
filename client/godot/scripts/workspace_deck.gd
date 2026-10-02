@@ -63,6 +63,8 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	workspace_row.add_child(_menu)
 	_menu.get_popup().add_item("Reset current layout", 0)
 	_menu.get_popup().add_item("Delete custom workspace", 1)
+	_menu.get_popup().add_separator()
+	_menu.get_popup().add_check_item("Show panel headers (Ctrl+Shift+H)", 2)
 	_menu.get_popup().id_pressed.connect(_layout_action)
 	area = Control.new()
 	area.name = "WindowArea"
@@ -145,7 +147,11 @@ func add_panel(key: String) -> VBoxContainer:
 		for other: WorkspaceWindow in windows.values():
 			if other != window and other.visible:
 				others.append(Rect2(other.position, other.size))
-		var snapped := WorkspaceLayout.clamp_rect(rect, area.size, metrics) if unsnapped else WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics)
+		var snapped: Rect2
+		if unsnapped:
+			snapped = WorkspaceLayout.clamp_resize_rect(rect, area.size, window._resize_edges, metrics) if resizing else WorkspaceLayout.clamp_rect(rect, area.size, metrics)
+		else:
+			snapped = WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics, window._resize_edges)
 		window.position = snapped.position
 		window.size = snapped.size)
 	window.interaction_finished.connect(func() -> void:
@@ -231,6 +237,15 @@ func _input(event: InputEvent) -> void:
 		var child := area.get_child(index)
 		if child is WorkspaceWindow and child.visible and child.get_global_rect().has_point(event.position):
 			focus_panel(child.name)
+			if event.alt_pressed and not child.header_visible and not child.pinned and not child.compact:
+				var on_handle := false
+				for handle: Control in child.resize_handles.values():
+					if handle.visible and handle.get_global_rect().has_point(event.position):
+						on_handle = true
+						break
+				if not on_handle:
+					child.begin_move_from_global(event.position)
+					get_viewport().set_input_as_handled()
 			break
 
 
@@ -253,6 +268,12 @@ func toggle_map_only() -> void:
 	map_only = not map_only
 	_apply_layout()
 	_rebuild_navigation()
+
+
+func toggle_panel_headers() -> void:
+	_cancel_gestures()
+	model.show_panel_headers = not model.show_panel_headers
+	_changed()
 
 
 func _cancel_gestures() -> void:
@@ -290,6 +311,7 @@ func _apply_layout() -> void:
 		var saved := state(key)
 		window.visible = authorized[key] and saved.open and not saved.minimized and not map_only and (not compact or key == _compact_panel)
 		window.apply_state(saved.pinned, compact)
+		window.set_header_visible(model.show_panel_headers)
 		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 		window.position = rect.position
 		window.size = rect.size
@@ -317,6 +339,7 @@ func _rebuild_navigation() -> void:
 		button.toggle_mode = true
 		button.set_pressed_no_signal(not state(key).minimized and not map_only)
 	_menu.get_popup().set_item_disabled(1, WorkspaceLayout.defaults().has(model.active))
+	_menu.get_popup().set_item_checked(_menu.get_popup().get_item_index(2), model.show_panel_headers)
 
 
 func _build_dialog() -> void:
@@ -343,7 +366,7 @@ func _build_dialog() -> void:
 		body.add_child(check)
 		_checks[key] = check
 	var note := Label.new()
-	note.text = "Drag panel headers and resize their corners.\nEdges snap together; hold Alt for free placement.\nChanges save on this device, separately from the colony."
+	note.text = "Drag headers to move; drag any edge or corner to resize.\nHold Alt to bypass snapping, or Alt-drag to move with headers hidden.\nLayout / Ctrl+Shift+H toggles headers. Changes save on this device."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	note.add_theme_font_size_override("font_size", metrics.font(11))
 	note.add_theme_color_override("font_color", DeckTheme.MUTED)
@@ -390,6 +413,9 @@ func _confirm_workspace() -> void:
 
 
 func _layout_action(id: int) -> void:
+	if id == 2:
+		toggle_panel_headers()
+		return
 	var confirmation := ConfirmationDialog.new()
 	_confirmation = confirmation
 	confirmation.title = "Reset layout" if id == 0 else "Delete workspace"
@@ -414,6 +440,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		return
 	if event.ctrl_pressed and event.keycode == KEY_F:
 		edit_workspace(false)
+	elif event.ctrl_pressed and event.shift_pressed and event.keycode == KEY_H:
+		toggle_panel_headers()
 	elif event.ctrl_pressed and event.keycode == KEY_BACKSLASH:
 		toggle_map_only()
 	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F8:
