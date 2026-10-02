@@ -1,8 +1,8 @@
 ## Live colony panels inside the player's personal workspace deck.
 ##
-## Every value shown here comes from the SpacetimeDB subscription, and every button
-## issues an intent-level reducer through the generated bindings. Nothing is
-## predicted or mutated locally, so what you see is always what the server believes.
+## Replicated values remain authoritative and mutation commands use guarded reducers.
+## Resource forecasts are labelled local-observation estimates, never new server
+## alerts. Workspace preferences, selection and return baselines stay client-local.
 extends Control
 
 signal session_ready
@@ -18,6 +18,16 @@ const ConnectionHistoryModel = preload("res://scripts/connection_history.gd")
 const ServerProbesControl = preload("res://scripts/server_probes.gd")
 const ServerManagementControl = preload("res://scripts/server_management.gd")
 const NativeServerController = preload("res://scripts/native_server_controller.gd")
+const SessionSamples = preload("res://scripts/session_observations.gd")
+const ReturnStore = preload("res://scripts/return_snapshots.gd")
+const ResourceControl = preload("res://ui/components/resource_readout.gd")
+const RosterControl = preload("res://ui/components/roster_row.gd")
+const ColonistControl = preload("res://ui/components/colonist_card.gd")
+const AlertsControl = preload("res://ui/components/alert_list.gd")
+const ActivityControl = preload("res://ui/components/activity_feed.gd")
+const DigestControl = preload("res://ui/components/away_digest.gd")
+const InterfaceIcons = preload("res://ui/theme/icons.gd")
+const ALERT_PANEL_OWNERS := {"low_food": "overview", "low_mood": "people", "low_productivity": "overview", "recreation_unavailable": "policies"}
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
@@ -38,19 +48,6 @@ static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM terrain_material", "SELECT * FROM excavation_designation",
 ])
 
-const SEVERITY_COLORS: Array[Color] = [
-	Color("9aa4b2"), Color("ffb74d"), Color("ff5c6c"),
-]
-
-## `invert` marks a need where high is bad, so the colour ramp is reversed.
-const NEED_BARS := [
-	{"key": "hunger", "label": "Hunger", "invert": true},
-	{"key": "fatigue", "label": "Fatigue", "invert": true},
-	{"key": "recreation", "label": "Recreation", "invert": true},
-	{"key": "mood", "label": "Mood", "invert": false},
-	{"key": "productivity", "label": "Productivity", "invert": false},
-]
-
 @onready var map: ColonyMap = $Map
 @onready var workspace: WorkspaceDeck = $Workspace
 
@@ -67,7 +64,7 @@ var _intent_request: SpacetimeDBReducerCall
 var _intent_seconds := 0.0
 var _intent_name := ""
 var _recreation_button: Button
-var _feed: RichTextLabel
+var _feed: ActivityFeed
 var _connection_label: Label
 var _connection_message := ""
 var _connection_colour := ThemeTokens.color("ink-muted")
@@ -161,6 +158,26 @@ var _toolbar_metric_font := -1
 var _excavation_signature: Array = []
 var _colonist_cards: Dictionary = {}
 var _colonist_empty: Label
+var _selected_colonist := -1
+var _selected_card: ColonistCard
+var _alert_waiting: Label
+var _identity_label: Label
+var _connection_glyph: TextureRect
+var _authenticated_identity := ""
+var _session_observations := SessionSamples.new()
+var _return_snapshots := ReturnStore.new()
+var _return_key := ""
+var _return_observed := false
+var _return_snapshot: Dictionary = {}
+var _return_digest: Dictionary = {}
+var _digest_overlay: Control
+var _digest: AwayDigest
+var _digest_focus: Control
+var _ack_requests: Dictionary = {}
+var _permission_revision := 0
+var _action_feedback: PanelContainer
+var _action_error: Label
+var _alert_summary_cache: Dictionary = {}
 
 
 func _ready() -> void:
@@ -168,7 +185,10 @@ func _ready() -> void:
 	_profile = ContinuumClientProfile.validated(_cli_option("--profile", ContinuumClientProfile.NORMAL))
 	var settings_path := _cli_option("--settings-file", ClientSettings.path_from_args())
 	_settings_warning = _settings.load_from(settings_path)
-	_metrics = UiMetrics.new(_settings.font_size)
+	get_window().content_scale_size = Vector2i.ZERO
+	_settings.apply_ui_scale(get_window())
+	_metrics = _settings.ui_metrics()
+	_return_snapshots.load_file()
 	_server_history = ConnectionHistoryModel.new()
 	var history_path := ClientSettings.companion_path_from_settings(settings_path, ".history.json", ClientSettings.HISTORY_PATH)
 	var favorites_path := ClientSettings.companion_path_from_settings(settings_path, ".favorites.json", ClientSettings.FAVORITES_PATH)
@@ -213,8 +233,11 @@ func _ready() -> void:
 	_menu.exit_requested.connect(_request_exit)
 	_menu.visibility_changed.connect(_sync_menu_input)
 	_server_management.visibility_changed.connect(_sync_menu_input)
+	_create_away_digest()
 	_sync_menu_input()
-	workspace.workspace_changed.connect(func() -> void: _set_mode(&"select"))
+	workspace.workspace_changed.connect(func() -> void:
+		_set_mode(&"select")
+		_publish_alert_counts(_live_alert_models()))
 	map.input_blocked = workspace.blocks_map_input
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
@@ -241,12 +264,7 @@ func _ready() -> void:
 		_dirty = true)
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
-	_native_controller = NativeServerController.new()
-	_native_controller.state_changed.connect(_on_native_state, CONNECT_DEFERRED)
-	_native_controller.server_ready.connect(_on_native_ready.bind(_native_controller.get_instance_id()), CONNECT_DEFERRED)
-	add_child(_native_controller)
-	_native_controller.autostart_changed.connect(_on_native_autostart_changed)
-	_native_controller.request_autostart_status()
+	_setup_native_controller()
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_bind_client(client)
@@ -255,25 +273,34 @@ func _ready() -> void:
 		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3001"),
 			_cli_option("--stdb-db", "continuum"), _profile, true)
 
+
+func _setup_native_controller() -> void:
+	_native_controller = NativeServerController.new()
+	_native_controller.state_changed.connect(_on_native_state, CONNECT_DEFERRED)
+	_native_controller.server_ready.connect(_on_native_ready.bind(_native_controller.get_instance_id()), CONNECT_DEFERRED)
+	add_child(_native_controller)
+	_native_controller.autostart_changed.connect(_on_native_autostart_changed)
+	_native_controller.request_autostart_status()
+
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
-	var previous := _metrics
 	_settings.font_size = clampi(settings.font_size, ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE)
+	_settings.ui_scale_percent = ClientSettings.normalize_ui_scale(settings.ui_scale_percent)
+	_settings.reduced_motion = settings.reduced_motion
 	_settings.server_host = settings.server_host
 	_settings.database = settings.database
 	_settings.diagnostics_enabled = settings.diagnostics_enabled
 	_settings.diagnostics_graph_enabled = settings.diagnostics_graph_enabled
 	_settings.native_autostart = settings.native_autostart
-	_metrics = UiMetrics.new(_settings.font_size)
-	_apply_control_metrics(self, previous, _metrics)
+	get_window().content_scale_size = Vector2i.ZERO
+	_settings.apply_ui_scale(get_window())
+	_metrics = _settings.ui_metrics()
 	theme = DeckTheme.create(_metrics)
 	map.metrics = _metrics
 	_history_chart.metrics = _metrics
 	workspace.apply_metrics(_metrics)
-	for card: PanelContainer in _colonist_cards.values():
-		var style: StyleBox = card.get_theme_stylebox("panel")
-		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
-			style.set_content_margin(side, _metrics.px(10))
+	if _alert_box is AlertList:
+		_alert_box.set_reduced_motion(_settings.reduced_motion)
 	_sync_map_toolbar()
 	_configure_diagnostics_overlay()
 	if _menu != null:
@@ -328,6 +355,7 @@ func cancel_local_setup() -> void:
 	_server_management.set_status("Startup cancelled. The current atomic preparation step may finish, but it will not join a server.")
 
 func _request_exit() -> void:
+	_end_session_observations()
 	if _exit_requested:
 		return
 	_exit_requested = true
@@ -418,6 +446,7 @@ func attach_diagnostics_transport(send_authenticated_echo: Callable) -> void:
 func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
 		direct_launch := false) -> void:
 	if _closing or _exit_requested: return
+	_end_session_observations()
 	_invalidate_native_join()
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_unbind_client(client)
@@ -542,6 +571,7 @@ func _unbind_client(client: ContinuumModuleClient) -> void:
 
 
 func leave_session() -> void:
+	_end_session_observations()
 	_invalidate_native_join()
 	_session_generation += 1
 	_unbind_client(SpacetimeDB.Continuum)
@@ -589,7 +619,7 @@ func _manual_connection_busy() -> bool:
 	return _session_requested and not _state_ready and not _direct_launch
 
 func _sync_menu_input() -> void:
-	var blocked := _menu.visible or _server_management.visible
+	var blocked := _menu.visible or _server_management.visible or (is_instance_valid(_digest_overlay) and _digest_overlay.visible)
 	if blocked:
 		map.cancel_gestures()
 	map.process_mode = Node.PROCESS_MODE_DISABLED if blocked else Node.PROCESS_MODE_INHERIT
@@ -611,30 +641,8 @@ func _has_cli_connection() -> bool:
 func apply_font_size(value: int, persist := true) -> Error:
 	var settings := _settings.clone()
 	settings.font_size = value
+	settings.ui_scale_percent = ClientSettings.legacy_ui_scale(value)
 	return apply_settings(settings, persist)
-
-func _apply_control_metrics(root: Node, old_metrics: UiMetrics, new_metrics: UiMetrics) -> void:
-	for child: Node in root.get_children():
-		# These views own their complete subtrees, including panel metrics.
-		if child == workspace or child == _server_management:
-			continue
-		if child is Control:
-			var control := child as Control
-			if not control.has_meta("ui_font_reference"):
-				var observed_font := control.get_theme_font_size("font_size")
-				var current_font := observed_font if control.has_theme_font_override("font_size") or observed_font > old_metrics.base_font_size else old_metrics.base_font_size
-				control.set_meta("ui_font_reference", float(current_font) / old_metrics.scale)
-			control.add_theme_font_size_override("font_size", new_metrics.font(float(control.get_meta("ui_font_reference"))))
-			if not control.has_meta("ui_minimum_reference"):
-				control.set_meta("ui_minimum_reference", control.custom_minimum_size / old_metrics.scale)
-			control.custom_minimum_size = control.get_meta("ui_minimum_reference") * new_metrics.scale
-			if control is Container:
-				var container := control as Container
-				if not container.has_meta("ui_separation_reference"):
-					container.set_meta("ui_separation_reference", float(container.get_theme_constant("separation")) / old_metrics.scale)
-				container.add_theme_constant_override("separation", new_metrics.px(float(container.get_meta("ui_separation_reference"))))
-		_apply_control_metrics(child, old_metrics, new_metrics)
-
 
 ## Apply only the authenticated sender-scoped role view. The backend remains
 ## authoritative; this state only controls what the UI exposes.
@@ -652,14 +660,21 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_is_admin = role_is_admin and normalized_role != "unknown"
 	_can_operate = role_can_operate and normalized_role != "unknown"
 	var lost_operator := old_can_operate and not _can_operate
+	if lost_operator:
+		for id: int in _ack_requests:
+			_alert_box.set_acknowledgement_state(id, false)
+		_ack_requests.clear()
 	if lost_operator and map.interaction_mode != &"select":
 		map.set_interaction_mode(&"select")
 		_set_feedback(_intent_feedback, "Build cancelled", "Build cancelled: operator permission was lost.")
-		_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+		_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_refresh_permissions()
 	_refresh_controls()
 	_render_connection_role()
 	if old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name:
+		_permission_revision += 1
+		_alert_summary_cache.clear()
+		_alert_box.model = {}
 		_refresh_alerts()
 		_dirty = true
 
@@ -691,6 +706,7 @@ func _process(delta: float) -> void:
 			_developer_refresh_timer = REFRESH_INTERVAL
 			_refresh_developer_summary()
 	_sample_history()
+	_process_acknowledgements(delta)
 	if _intent_request != null:
 		_intent_seconds -= delta
 		if _intent_seconds <= 0.0:
@@ -702,14 +718,14 @@ func _process(delta: float) -> void:
 		if _haul_request_seconds <= 0.0:
 			_haul_request = null
 			_set_feedback(_haul_feedback, "No response", "No response received. Outcome unknown; check the server mode before retrying.")
-			_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+			_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 			_dirty = true
 	if _meal_request != null:
 		_meal_request_seconds -= delta
 		if _meal_request_seconds <= 0.0:
 			_meal_request = null
 			_set_feedback(_meal_feedback, "No response", "No response received. Outcome unknown; check the server meal policy before retrying.")
-			_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+			_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 			_dirty = true
 	_refresh_timer -= delta
 	if (_dirty or _map_dirty) and _refresh_timer <= 0.0:
@@ -740,6 +756,7 @@ func _notification(what: int) -> void:
 
 
 func _exit_tree() -> void:
+	_save_return_baseline()
 	if _session_ping != null:
 		_session_ping.dispose()
 		_session_ping = null
@@ -752,6 +769,8 @@ func _exit_tree() -> void:
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	if not _session_requested:
 		return
+	_authenticated_identity = identity.hex_encode()
+	_return_key = ReturnStore.context_key(_host, _database, _profile, _authenticated_identity)
 	if _session_ping == null:
 		_session_ping = SessionPingTransport.new(SpacetimeDB.Continuum, _session_diagnostics)
 	_cancel_reconnect()
@@ -799,6 +818,8 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 
 
 func _on_disconnected() -> void:
+	_end_session_observations()
+	_state_ready = false
 	_session_diagnostics.set_connected(false)
 	_reset_diagnostics_samples()
 	_release_main_subscription()
@@ -831,6 +852,7 @@ func _on_connection_error(code: int, reason: String) -> void:
 
 
 func _fail_manual_session(message: String) -> void:
+	_end_session_observations()
 	if not _session_requested or _direct_launch:
 		return
 	_session_requested = false
@@ -875,11 +897,11 @@ func _schedule_reconnect() -> void:
 	if _haul_request != null:
 		_haul_request = null
 		_set_feedback(_haul_feedback, "Connection lost", "Connection lost. Hauling request outcome unknown; waiting for server state.")
-		_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+		_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if _meal_request != null:
 		_meal_request = null
 		_set_feedback(_meal_feedback, "Connection lost", "Connection lost. Meal policy outcome unknown; waiting for server state.")
-		_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+		_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_dirty = true
 	if _closing or _reconnect_timer != null:
 		return
@@ -1147,7 +1169,7 @@ func _change_speed(speed: float) -> void:
 
 func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 	var generation := _session_generation
-	_intent_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
 		_set_feedback(_intent_feedback, "Send failed", "%s could not be sent (%d)." % [description, call.error])
 		_refresh_controls()
@@ -1161,22 +1183,58 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 			return
 		_intent_request = null
 		_dirty = true
-		_intent_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+		_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
 		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 			_set_feedback(_intent_feedback, "Rejected", "%s rejected: %s" % [description, response.reducer_result.get_err()])
 		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
 			_set_feedback(_intent_feedback, "Failed", "%s failed: %s" % [description, response.reducer_result.get_internal_error()])
 		else:
 			_set_feedback(_intent_feedback, "Accepted", "%s accepted. Values follow server state." % description)
-			_intent_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+			_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 	, CONNECT_ONE_SHOT)
 	_refresh_controls()
 
 
-func _acknowledge(alert_id: int) -> void:
-	if not _can_operate:
+func _acknowledge(alert_id: Variant) -> void:
+	if not alert_id is int or not _can_operate or not _state_ready or SpacetimeDB.Continuum.db == null or _ack_requests.has(alert_id):
 		return
-	_report(SpacetimeDB.Continuum.reducers.acknowledge_alert(alert_id), "acknowledge_alert")
+	var alert: ContinuumAlert = SpacetimeDB.Continuum.db.alert.id.find(alert_id)
+	if alert == null or not alert.active or alert.acknowledged:
+		return
+	var call := _dispatch_acknowledgement(alert_id)
+	if call == null or call.error != OK:
+		_alert_box.set_acknowledgement_state(alert_id, false, "Could not send acknowledgement.")
+		return
+	var generation := _session_generation
+	_ack_requests[alert_id] = {"call": call, "remaining": 10.0, "accepted": false}
+	_alert_box.set_acknowledgement_state(alert_id, true)
+	call.response.connect(func(response: ReducerResultMessage) -> void:
+		if not _can_operate or not _session_epoch_current(generation) or not _ack_requests.has(alert_id) or _ack_requests[alert_id].call != call:
+			return
+		var error := ""
+		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+			error = "Acknowledgement rejected: " + str(response.reducer_result.get_err())
+		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+			error = "Acknowledgement failed: " + str(response.reducer_result.get_internal_error())
+		if not error.is_empty():
+			_ack_requests.erase(alert_id)
+			_alert_box.set_acknowledgement_state(alert_id, false, error)
+		else:
+			_ack_requests[alert_id].accepted = true
+			_dirty = true
+	, CONNECT_ONE_SHOT)
+
+
+func _dispatch_acknowledgement(alert_id: int) -> SpacetimeDBReducerCall:
+	return SpacetimeDB.Continuum.reducers.acknowledge_alert(alert_id)
+
+
+func _process_acknowledgements(delta: float) -> void:
+	for id: int in _ack_requests.keys():
+		_ack_requests[id].remaining -= delta
+		if _ack_requests[id].remaining <= 0.0:
+			_ack_requests.erase(id)
+			_alert_box.set_acknowledgement_state(id, false, "No shared acknowledgement observed · outcome unknown; check server state before retrying.")
 
 
 func _toggle_haul_policy() -> void:
@@ -1189,7 +1247,7 @@ func _toggle_haul_policy() -> void:
 	if config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers:
 		policy = ContinuumHaulPolicy.create_self_haul()
 	var call := SpacetimeDB.Continuum.reducers.set_haul_policy(policy)
-	_haul_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
 		_set_feedback(_haul_feedback, "Send failed", "Hauling mode could not be sent (%d)." % call.error)
 		return
@@ -1206,14 +1264,14 @@ func _on_haul_policy_response(response: ReducerResultMessage, request_id: int, g
 		return
 	_haul_request = null
 	_dirty = true
-	_haul_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+	_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 		_set_feedback(_haul_feedback, "Rejected", "Hauling mode rejected: %s" % response.reducer_result.get_err())
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
 		_set_feedback(_haul_feedback, "Failed", "Hauling mode failed: %s" % response.reducer_result.get_internal_error())
 	else:
 		_set_feedback(_haul_feedback, "Accepted", "Request accepted. The mode above follows server state.")
-		_haul_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+		_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 
 
 func _set_meal_policy(policy: int) -> void:
@@ -1226,7 +1284,7 @@ func _set_meal_policy(policy: int) -> void:
 		_refresh_controls()
 		return
 	var call := SpacetimeDB.Continuum.reducers.set_meal_policy(ContinuumMealPolicy.create(policy))
-	_meal_feedback.add_theme_color_override("font_color", Color("ffb74d"))
+	_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
 		_set_feedback(_meal_feedback, "Send failed", "Meal policy could not be sent (%d)." % call.error)
 		_refresh_controls()
@@ -1244,31 +1302,62 @@ func _on_meal_policy_response(response: ReducerResultMessage, request_id: int, g
 		return
 	_meal_request = null
 	_dirty = true
-	_meal_feedback.add_theme_color_override("font_color", Color("ff5c6c"))
+	_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 		_set_feedback(_meal_feedback, "Rejected", "Meal policy rejected: %s" % response.reducer_result.get_err())
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
 		_set_feedback(_meal_feedback, "Failed", "Meal policy failed: %s" % response.reducer_result.get_internal_error())
 	else:
 		_set_feedback(_meal_feedback, "Accepted", "Request accepted. The policy above follows server state.")
-		_meal_feedback.add_theme_color_override("font_color", Color("6fcf7f"))
+		_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 
 
 func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	var generation := _session_generation
+	var permission_revision := _permission_revision
+	if not _state_ready or not _can_operate:
+		return
 	if call.error != OK:
-		_set_connection_text("%s could not be sent (%d)" % [reducer_name, call.error],
-				ThemeTokens.color("critical"))
+		_show_action_error("%s could not be sent (%d)" % [reducer_name, call.error])
 		return
 	var response: ReducerResultMessage = await call.response
-	if not _client_epoch_current(client, generation): return
+	if not _client_epoch_current(client, generation) or not _can_operate or permission_revision != _permission_revision: return
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_set_connection_text("%s was rejected: %s" % [
-			reducer_name, response.reducer_result.get_err()], ThemeTokens.color("critical"))
+		_show_action_error("%s was rejected: %s" % [reducer_name, response.reducer_result.get_err()])
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_set_connection_text("%s failed: %s" % [
-			reducer_name, response.reducer_result.get_internal_error()], ThemeTokens.color("critical"))
+		_show_action_error("%s failed: %s" % [reducer_name, response.reducer_result.get_internal_error()])
+
+func _show_action_error(copy: String) -> void:
+	_action_error.text = "Action failed · " + copy
+	_action_feedback.show()
+
+func _build_action_feedback() -> void:
+	_action_feedback = PanelContainer.new()
+	_action_feedback.name = "ActionFailure"
+	_action_feedback.add_theme_stylebox_override("panel", DeckTheme.box(ThemeTokens.color("critical-soft"), ThemeTokens.color("critical"), int(ThemeTokens.number("space-2"))))
+	var stack := _map_toolbar.get_parent()
+	stack.add_child(_action_feedback)
+	stack.move_child(_action_feedback, _map_toolbar.get_index())
+	var row := HBoxContainer.new()
+	_action_feedback.add_child(row)
+	var glyph := TextureRect.new()
+	glyph.texture = ThemeTokens.glyph("critical")
+	glyph.custom_minimum_size = Vector2(16, 16)
+	glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	row.add_child(glyph)
+	_action_error = Label.new()
+	ThemeTokens.apply_label(_action_error, "body")
+	_action_error.add_theme_color_override("font_color", ThemeTokens.color("ink"))
+	_action_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_action_error.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(_action_error)
+	var dismiss := Button.new()
+	dismiss.text = "Dismiss"
+	dismiss.pressed.connect(func() -> void: _action_feedback.hide())
+	row.add_child(dismiss)
+	_action_feedback.hide()
 
 
 func _build_panels() -> void:
@@ -1276,14 +1365,10 @@ func _build_panels() -> void:
 		_sections[key] = workspace.add_panel(key)
 	_build_telemetry()
 	_build_map_toolbar()
+	_build_action_feedback()
 	var side: VBoxContainer
 	var section: VBoxContainer = _sections["overview"]
 	side = section
-
-	_connection_label = Label.new()
-	_connection_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_connection_label.add_theme_font_size_override("font_size", _metrics.font(11))
-	side.add_child(_connection_label)
 
 	section = _sections["policies"]
 	side = section
@@ -1291,17 +1376,17 @@ func _build_panels() -> void:
 	_haul_button = Button.new()
 	_haul_button.text = "Waiting for hauling policy..."
 	_haul_button.disabled = true
-	_haul_button.add_theme_font_size_override("font_size", _metrics.font(15))
+	_haul_button.add_theme_font_size_override("font_size", ThemeTokens.font_size("body"))
 	_haul_button.tooltip_text = "Toggle hauling assignment. Server state remains authoritative."
 	_haul_button.pressed.connect(_toggle_haul_policy)
 	side.add_child(_haul_button)
 	_haul_description = Label.new()
 	_haul_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_haul_description.add_theme_font_size_override("font_size", _metrics.font(12))
+	ThemeTokens.apply_label(_haul_description, "small")
 	side.add_child(_haul_description)
 	_haul_feedback = Label.new()
 	_haul_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_haul_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
+	ThemeTokens.apply_label(_haul_feedback, "small")
 	side.add_child(_haul_feedback)
 
 	side.add_child(_heading("Global meal policy"))
@@ -1317,11 +1402,11 @@ func _build_panels() -> void:
 	side.add_child(meal_buttons)
 	_meal_description = Label.new()
 	_meal_description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_meal_description.add_theme_font_size_override("font_size", _metrics.font(12))
+	ThemeTokens.apply_label(_meal_description, "small")
 	side.add_child(_meal_description)
 	_meal_feedback = Label.new()
 	_meal_feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_meal_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
+	ThemeTokens.apply_label(_meal_feedback, "small")
 	side.add_child(_meal_feedback)
 
 	section = _sections["overview"]
@@ -1331,16 +1416,24 @@ func _build_panels() -> void:
 	_status_label.bbcode_enabled = true
 	_status_label.fit_content = true
 	_status_label.scroll_active = false
+	_status_label.add_theme_font_override("normal_font", ThemeTokens.font("readout"))
+	_status_label.add_theme_font_size_override("normal_font_size", ThemeTokens.font_size("readout"))
 	side.add_child(_status_label)
+	var rate_note := Label.new()
+	rate_note.text = "Rates since connection · observed stocks per game hour. Estimates are not server alerts."
+	rate_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ThemeTokens.apply_label(rate_note, "small")
+	rate_note.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	side.add_child(rate_note)
 
 	section = _sections["trends"]
 	side = section
 	var history_note := Label.new()
-	history_note.text = "MOOD / PRODUCTIVITY\nSince connection; not saved with the colony."
+	history_note.text = "Smoothed mood / output\nLocally observed since connection; not saved with the colony."
 	history_note.tooltip_text = "This session / since connection. Not saved on the server."
 	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	history_note.add_theme_font_size_override("font_size", _metrics.font(11))
-	history_note.add_theme_color_override("font_color", Color("7f8b9c"))
+	ThemeTokens.apply_label(history_note, "small")
+	history_note.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 	side.add_child(history_note)
 	_history_chart = HistoryChartControl.new()
 	_history_chart.metrics = _metrics
@@ -1393,10 +1486,11 @@ func _build_panels() -> void:
 	_build_help.text = "7 types | 20 wood/cell"
 	_build_help.tooltip_text = "Farm, Forestry, Mine, Storage, Dining, Sleep, Recreation. Forestry creates a Forest work zone; natural forest cover is separate terrain."
 	_build_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_build_help.add_theme_font_size_override("font_size", _metrics.font(11))
+	ThemeTokens.apply_label(_build_help, "small")
 	side.add_child(_build_help)
 	_block_box = VBoxContainer.new()
 	_block_info = Label.new()
+	ThemeTokens.apply_label(_block_info, "readout")
 	_block_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_block_box.add_child(_block_info)
 	var enabled_row := HFlowContainer.new()
@@ -1414,6 +1508,9 @@ func _build_panels() -> void:
 		label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
 		label.custom_minimum_size.x = _metrics.px(110)
 		row.add_child(label)
+		var count_label := Label.new()
+		ThemeTokens.apply_label(count_label, "readout")
+		row.add_child(count_label)
 		var add := Button.new()
 		add.text = "Set"
 		add.tooltip_text = "Normal priority"
@@ -1431,7 +1528,7 @@ func _build_panels() -> void:
 		pause.text = "Pause"
 		pause.pressed.connect(_set_block_work.bind(work, 2, false))
 		row.add_child(pause)
-		_block_controls[work] = {"row": row, "label": label, "set": add, "priority": priority_buttons, "pause": pause}
+		_block_controls[work] = {"row": row, "label": label, "count": count_label, "set": add, "priority": priority_buttons, "pause": pause}
 		_block_box.add_child(row)
 	side.add_child(_block_box)
 
@@ -1440,9 +1537,11 @@ func _build_panels() -> void:
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
 	_tile_info = Label.new()
+	ThemeTokens.apply_label(_tile_info, "readout")
 	_tile_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_tile_action_box.add_child(_tile_info)
 	_order_summary = Label.new()
+	ThemeTokens.apply_label(_order_summary, "readout")
 	_order_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_order_summary)
 	_orders_help = Label.new()
@@ -1453,7 +1552,7 @@ func _build_panels() -> void:
 	_intent_feedback = Label.new()
 	_intent_feedback.custom_minimum_size.x = _metrics.px(160)
 	_intent_feedback.clip_text = true
-	_intent_feedback.add_theme_font_size_override("font_size", _metrics.font(11))
+	ThemeTokens.apply_label(_intent_feedback, "small")
 	workspace.telemetry.add_child(_intent_feedback)
 	_set_mode(&"select")
 
@@ -1470,22 +1569,31 @@ func _build_panels() -> void:
 	_colonist_box = VBoxContainer.new()
 	_colonist_box.add_theme_constant_override("separation", _metrics.px(8))
 	side.add_child(_colonist_box)
+	_selected_card = ColonistControl.new()
+	_selected_card.visible = false
+	_selected_card.goto_requested.connect(_goto_colonist)
+	side.add_child(_selected_card)
 
 	section = _sections["alerts"]
 	side = section
 	side.add_child(_heading("Colony attention"))
-	_alert_box = VBoxContainer.new()
+	_alert_waiting = Label.new()
+	_alert_waiting.text = "Waiting for authoritative alert state."
+	ThemeTokens.apply_label(_alert_waiting, "body")
+	_alert_waiting.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	side.add_child(_alert_waiting)
+	_alert_box = AlertsControl.new()
+	_alert_box.set_reduced_motion(_settings.reduced_motion)
+	_alert_box.acknowledge_requested.connect(_acknowledge)
 	_alert_box.add_theme_constant_override("separation", _metrics.px(4))
 	side.add_child(_alert_box)
 
 	section = _sections["activity"]
 	side = section
 	side.add_child(_heading("Server events / latest 40"))
-	_feed = RichTextLabel.new()
-	_feed.bbcode_enabled = true
+	_feed = ActivityControl.new()
 	_feed.custom_minimum_size = _metrics.min_size(0, 70)
 	_feed.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_feed.scroll_following = true
 	side.add_child(_feed)
 
 	_refresh_permissions()
@@ -1608,28 +1716,43 @@ func _developer_toggle_graph(enabled: bool) -> void:
 
 func _build_telemetry() -> void:
 	_clock = Label.new()
-	_clock.text = "DAY --  --:--"
+	_clock.text = "Day --  --:--"
+	ThemeTokens.apply_label(_clock, "log")
 	_clock.custom_minimum_size.x = _metrics.px(140)
 	workspace.telemetry.add_child(_clock)
-	for kind: int in ColonyMap.RESOURCE_COLORS:
-		var card := PanelContainer.new()
-		card.add_theme_stylebox_override("panel", DeckTheme.box(Color("3b3730"), DeckTheme.LINE, _metrics.px(5)))
+	for kind: int in [ContinuumResourceKind.Options.food, ContinuumResourceKind.Options.wood, ContinuumResourceKind.Options.stone, ContinuumResourceKind.Options.meat]:
+		var card := ResourceControl.new()
 		card.tooltip_text = "Stored %s. Ground stacks and carried cargo are separate." % ContinuumResourceKind.parse_enum_name(kind)
-		var label := Label.new()
-		label.text = "%s  --" % ContinuumResourceKind.parse_enum_name(kind).to_upper()
-		label.custom_minimum_size.x = _metrics.px(100)
-		label.add_theme_color_override("font_color", ColonyMap.RESOURCE_COLORS[kind])
-		card.add_child(label)
+		card.set_model({"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()}, {"single_line": true})
 		workspace.telemetry.add_child(card)
-		_resource_labels[kind] = label
+		_resource_labels[kind] = card
 	_population = Label.new()
-	_population.text = "CREW --"
+	_population.text = "Crew --"
+	ThemeTokens.apply_label(_population, "readout")
 	workspace.telemetry.add_child(_population)
+	var connection_row := HBoxContainer.new()
+	workspace.telemetry.add_child(connection_row)
+	_connection_glyph = TextureRect.new()
+	_connection_glyph.custom_minimum_size = Vector2(16, 16)
+	_connection_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_connection_glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	connection_row.add_child(_connection_glyph)
+	_connection_label = Label.new()
+	ThemeTokens.apply_label(_connection_label, "body")
+	connection_row.add_child(_connection_label)
+	_identity_label = Label.new()
+	ThemeTokens.apply_label(_identity_label, "readout")
+	_identity_label.add_theme_color_override("font_color", ThemeTokens.color("accent"))
+	workspace.telemetry.add_child(_identity_label)
 	var menu_button := Button.new()
 	menu_button.text = "Menu"
 	menu_button.tooltip_text = "Leave this session and return to the launch menu."
 	menu_button.pressed.connect(leave_session)
 	workspace.telemetry.add_child(menu_button)
+	var digest_button := Button.new()
+	digest_button.text = "Since you left"
+	digest_button.pressed.connect(_show_away_digest)
+	workspace.telemetry.add_child(digest_button)
 
 
 func _build_map_toolbar() -> void:
@@ -1642,15 +1765,14 @@ func _build_map_toolbar() -> void:
 	stack.add_child(_map_toolbar)
 	stack.move_child(_map_toolbar, workspace.area.get_index())
 	var flow := HFlowContainer.new()
-	flow.add_theme_constant_override("h_separation", _metrics.px(6))
+	flow.add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
 	_map_toolbar.add_child(flow)
 	var layer_row := HBoxContainer.new()
 	flow.add_child(layer_row)
 	var down := _map_navigation_button(layer_row, "↓", "Layer down by 0.5m (PgDn / [)", func() -> void: map.set_cut(map.terrain_model.cut - 1))
 	_map_layer_label = Label.new()
 	_map_layer_label.tooltip_text = "Inclusive cut layer z; every layer is 0.5 metres. Navigation is available to Viewers too."
-	_map_layer_label.add_theme_font_size_override("font_size", _metrics.font(12))
-	_map_layer_label.set_meta("ui_font_reference", 12.0)
+	ThemeTokens.apply_label(_map_layer_label, "readout")
 	layer_row.add_child(_map_layer_label)
 	var up := _map_navigation_button(layer_row, "↑", "Layer up by 0.5m (PgUp / ])", func() -> void: map.set_cut(map.terrain_model.cut + 1))
 	_map_layer_buttons = {-1: down, 1: up}
@@ -1659,8 +1781,7 @@ func _build_map_toolbar() -> void:
 	_map_navigation_button(zoom_row, "−", "Zoom out; mouse wheel anchors at the cursor", func() -> void: map.zoom_at(1.0 / 1.2, map.size * 0.5))
 	_map_zoom_label = Label.new()
 	_map_zoom_label.tooltip_text = "Zoom relative to native 32px cells. Middle-drag pans the map; Fit recentres it."
-	_map_zoom_label.add_theme_font_size_override("font_size", _metrics.font(12))
-	_map_zoom_label.set_meta("ui_font_reference", 12.0)
+	ThemeTokens.apply_label(_map_zoom_label, "readout")
 	zoom_row.add_child(_map_zoom_label)
 	_map_navigation_button(zoom_row, "+", "Zoom in; middle-drag pans without editing", func() -> void: map.zoom_at(1.2, map.size * 0.5))
 	_map_zoom_buttons["reset"] = _map_navigation_button(zoom_row, "1:1", "Reset to native 100% zoom and centre", map.reset_camera)
@@ -1671,10 +1792,14 @@ func _build_map_toolbar() -> void:
 func _map_navigation_button(parent: Control, caption: String, hint: String, callback: Callable) -> Button:
 	var button := Button.new()
 	button.text = caption
+	var icon_name: String = {"↓": "chevron-down", "↑": "chevron-up", "−": "chevron-left", "+": "plus", "Fit": "camera-fit"}.get(caption, "")
+	if not icon_name.is_empty():
+		button.icon = InterfaceIcons.texture(icon_name)
+		button.text = ""
 	button.tooltip_text = hint
 	button.add_theme_font_size_override("font_size", _metrics.font(12))
 	button.set_meta("ui_font_reference", 12.0)
-	button.custom_minimum_size = _metrics.min_size(24, 20)
+	button.custom_minimum_size = _metrics.min_size(24, 24)
 	button.pressed.connect(callback)
 	parent.add_child(button)
 	_map_navigation_buttons.append(button)
@@ -1686,16 +1811,18 @@ func _sync_map_toolbar() -> void:
 		return
 	if _toolbar_metric_font != _metrics.base_font_size:
 		_toolbar_metric_font = _metrics.base_font_size
-		_map_toolbar.add_theme_stylebox_override("panel", DeckTheme.box(DeckTheme.PANEL_GROUND, DeckTheme.LINE, _metrics.px(2)))
-		_map_toolbar.get_child(0).add_theme_constant_override("h_separation", _metrics.px(6))
-		_map_toolbar.get_child(0).add_theme_constant_override("v_separation", _metrics.px(2))
+		_map_toolbar.add_theme_stylebox_override("panel", DeckTheme.box(DeckTheme.PANEL_GROUND, DeckTheme.LINE, int(ThemeTokens.number("space-1"))))
+		_map_toolbar.get_child(0).add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
+		_map_toolbar.get_child(0).add_theme_constant_override("v_separation", int(ThemeTokens.number("space-1")))
 		for button in _map_navigation_buttons:
 			for state in ["normal", "hover", "pressed", "disabled"]:
 				var style: StyleBox = theme.get_stylebox(state, "Button").duplicate()
-				style.set_content_margin(SIDE_TOP, _metrics.px(2))
-				style.set_content_margin(SIDE_BOTTOM, _metrics.px(2))
+				style.set_content_margin(SIDE_TOP, ThemeTokens.number("space-1"))
+				style.set_content_margin(SIDE_BOTTOM, ThemeTokens.number("space-1"))
+				style.set_content_margin(SIDE_LEFT, ThemeTokens.number("space-1"))
+				style.set_content_margin(SIDE_RIGHT, ThemeTokens.number("space-1"))
 				button.add_theme_stylebox_override(state, style)
-	_map_layer_label.text = "Layer z=%d | %.1fm" % [map.terrain_model.cut, map.terrain_model.cut * LayeredTerrainModel.METRES_PER_LAYER]
+	_map_layer_label.text = "z=%d · %.1fm" % [map.terrain_model.cut, map.terrain_model.cut * LayeredTerrainModel.METRES_PER_LAYER]
 	_map_zoom_label.text = "%d%%" % roundi(map.zoom_percent())
 	for step: int in _map_layer_buttons:
 		_map_layer_buttons[step].disabled = not map.layered or (map.terrain_model.cut <= map.terrain_model.min_z if step < 0 else map.terrain_model.cut >= map.terrain_model.max_z)
@@ -1757,18 +1884,24 @@ func _compact_text(text: String, limit: int) -> String:
 func _render_connection_role() -> void:
 	if _connection_label == null:
 		return
-	_connection_label.text = "%s\nRole: %s%s" % [_compact_text(_connection_message, 48), _role_name,
-		" (admin)" if _is_admin else (" (operator)" if _can_operate else " (view only)")]
+	_connection_label.text = "Live" if _state_ready else _connection_message
 	_connection_label.tooltip_text = "%s\nRole: %s" % [_connection_message, _role_name]
-	_connection_label.add_theme_color_override("font_color", _connection_colour)
+	var token := "ink-muted" if _state_ready else ("critical" if _connection_colour == ThemeTokens.color("critical") else ("warn" if _connection_colour == ThemeTokens.color("warn") else "ink-muted"))
+	_connection_label.add_theme_color_override("font_color", ThemeTokens.color(token))
+	_connection_glyph.texture = ThemeTokens.glyph(token if token in ["warn", "critical"] else "notice")
+	_identity_label.text = "%s · %s%s" % [_authenticated_identity.substr(0, 12) if not _authenticated_identity.is_empty() else "Identity unavailable", _role_name, " · local developer" if _profile == ContinuumClientProfile.DEVELOPER else ""]
+	_identity_label.tooltip_text = "Authenticated identity: %s\nVerified server role: %s\nLocal profile: %s" % [_authenticated_identity, _role_name, _profile]
 
 
 func _refresh() -> void:
 	if SpacetimeDB.Continuum.db == null:
 		map.bind_world_source(null)
+		_session_observations.reset()
 		_state_ready = false
+		_refresh_alerts()
 		_full_ui_refresh = true
 		return
+	_observe_session_state()
 	_refresh_status()
 	if _full_ui_refresh or _ui_tables_changed.has("colonist"):
 		_refresh_colonists()
@@ -1785,37 +1918,28 @@ func _refresh_status() -> void:
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	if config == null or colony == null:
-		_status_label.text = "[color=#7f8b9c]waiting for colony state...[/color]"
+		_status_label.text = "Waiting for authoritative colony state…"
 		return
 
 	var day: int = int(config.game_seconds / 86400.0) + 1
 	var second_of_day: float = fmod(config.game_seconds, 86400.0)
 	var hour: int = int(second_of_day / 3600.0)
 	var minute: int = int(fmod(second_of_day, 3600.0) / 60.0)
-	_clock.text = "DAY %02d  %02d:%02d%s" % [day, hour, minute, " | stale" if not _state_ready else ""]
+	_clock.text = "Day %02d  %02d:%02d%s" % [day, hour, minute, " · stale" if not _state_ready else ""]
 	for kind: int in _resource_labels:
 		var resource := ContinuumResourceKind.parse_enum_name(kind)
-		_resource_labels[kind].text = "%s  %.0f" % [resource.to_upper(), colony.get(resource)]
-	_population.text = "CREW %02d" % colony.population
-
-	_status_label.text = "\n".join([
-		"[b]Day %d[/b]  %02d:%02d   [color=#7f8b9c](%.0fx speed)[/color]"
-				% [day, hour, minute, config.time_scale / BASE_TIME_SCALE],
-		"[b]Resources[/b]  [color=#7f8b9c]unlimited storage[/color]",
-		_resource_text(ContinuumResourceKind.Options.food, colony.food) + "    "
-				+ _resource_text(ContinuumResourceKind.Options.wood, colony.wood),
-		_resource_text(ContinuumResourceKind.Options.stone, colony.stone) + "    "
-				+ _resource_text(ContinuumResourceKind.Options.meat, colony.meat),
-		"[color=#7f8b9c]Ground / cargo tracked separately[/color]",
-		"Average mood: %s  [color=#7f8b9c](trend %.0f)[/color]" % [
-			_coloured("%.0f%%" % colony.avg_mood, colony.avg_mood), colony.smoothed_mood,
-		],
-		"Average productivity: %s  [color=#7f8b9c](trend %.0f)[/color]" % [
-			_coloured("%.0f%%" % colony.avg_productivity, colony.avg_productivity),
-			colony.smoothed_productivity,
-		],
-		"Population: %d" % colony.population,
-	])
+		var observed := _session_observations.resource(resource) if config.time_scale > 0.0 else {"rate_available": false}
+		var data := {"name": resource.capitalize(), "value": float(colony.get(resource)), "availability": "warming" if _state_ready and config.time_scale > 0.0 else "unavailable"}
+		if observed.rate_available and _state_ready and config.time_scale > 0.0:
+			data.rate_per_game_hour = observed.rate
+			if observed.rate < 0.0:
+				data.eta_game_hours = maxf(0.0, float(colony.get(resource))) / -float(observed.rate)
+		_resource_labels[kind].set_model(data, {"single_line": true})
+		_resource_labels[kind].tooltip_text = "Stored %s · rate since connection, measured per game hour. Ground stacks and carried cargo are separate." % resource
+	_population.text = "Crew %02d" % colony.population
+	workspace.set_panel_live_count("people", colony.population)
+	_status_label.text = "Average mood %.0f%%\nAverage output %.0f%%\nGround stocks and cargo tracked separately." % [clampf(colony.avg_mood, 0, 100), clampf(colony.avg_productivity, 0, 100)]
+	_render_connection_role()
 
 
 func _sample_history() -> void:
@@ -1842,9 +1966,11 @@ func _build_vertical_controls(side: Control) -> void:
 		row.add_child(button)
 	side.add_child(row)
 	_layer_label = Label.new()
+	ThemeTokens.apply_label(_layer_label, "readout")
 	_layer_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_layer_label)
 	_cell_label = Label.new()
+	ThemeTokens.apply_label(_cell_label, "readout")
 	_cell_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_cell_label.text = "Select a visible surface"
 	side.add_child(_cell_label)
@@ -1981,22 +2107,6 @@ func _map_cover_name(density: float) -> String:
 	return "grassland"
 
 
-func _resource_text(kind: int, amount: float) -> String:
-	return "[color=#%s]%s: %.1f[/color]" % [
-		ColonyMap.RESOURCE_COLORS[kind].to_html(false),
-		ContinuumResourceKind.parse_enum_name(kind).capitalize(), amount,
-	]
-
-
-func _coloured(text: String, value_0_100: float) -> String:
-	var colour := "#6fcf7f"
-	if value_0_100 < 30.0:
-		colour = "#ff5c6c"
-	elif value_0_100 < 60.0:
-		colour = "#ffb74d"
-	return "[color=%s]%s[/color]" % [colour, text]
-
-
 func _refresh_colonists() -> void:
 	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
 	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
@@ -2008,6 +2118,8 @@ func _refresh_colonists() -> void:
 			removed.queue_free()
 			_colonist_cards.erase(id)
 	if colonists.is_empty():
+		_selected_colonist = -1
+		_selected_card.visible = false
 		if not is_instance_valid(_colonist_empty):
 			_colonist_empty = _heading("Waiting for colonist data")
 			_colonist_box.add_child(_colonist_empty)
@@ -2017,110 +2129,49 @@ func _refresh_colonists() -> void:
 		_colonist_empty.queue_free()
 		_colonist_empty = null
 
+	if _selected_colonist >= 0 and SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist) == null:
+		_selected_colonist = -1
 	var index := 0
 	for colonist: ContinuumColonist in colonists:
 		if not _colonist_cards.has(colonist.id):
-			_colonist_cards[colonist.id] = _new_colonist_card()
-		var card: PanelContainer = _colonist_cards[colonist.id]
+			var row := RosterControl.new()
+			row.selection_requested.connect(_select_colonist)
+			_colonist_box.add_child(row)
+			_colonist_cards[colonist.id] = row
+		var card: RosterRow = _colonist_cards[colonist.id]
 		_colonist_box.move_child(card, index)
 		index += 1
-		var controls: Dictionary = card.get_meta("colonist_controls")
-		var suffix := ""
-		if colonist.activity.value == ContinuumActivity.Options.travelling:
-			suffix = " -> %s" % ContinuumGoal.parse_enum_name(colonist.goal.value).capitalize()
-		controls.header.text = "%s - %s%s" % [
-			colonist.name, ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize(), suffix,
-		]
-		var role := "Produce + haul" if colonist.haul_role.value == ContinuumHaulRole.Options.both \
-				else ContinuumHaulRole.parse_enum_name(colonist.haul_role.value).capitalize()
-		controls.job.text = "%s / %s" % [
-			ContinuumWorkType.parse_enum_name(colonist.work.value).capitalize(), role,
-		]
-		controls.cargo.text = "Cargo: empty hands"
-		controls.cargo.add_theme_color_override("font_color", Color("e8e1d5"))
-		if colonist.carried_amount > 0.0:
-			controls.cargo.text = "Cargo: %.1f %s" % [colonist.carried_amount,
-				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
-			controls.cargo.add_theme_color_override("font_color",
-					ColonyMap.RESOURCE_COLORS[colonist.carried_kind.value])
-		for bar: Dictionary in NEED_BARS:
-			_update_stat_row(controls.bars[bar.key], float(colonist.get(bar.key)), bar.invert)
+		var data := UiData.colonist(colonist, _session_observations, colonist.id == _selected_colonist)
+		if card.get_meta("live_input", {}) != data:
+			card.set_meta("live_input", data.duplicate(true))
+			card.set_model(data)
+	_selected_card.visible = _selected_colonist >= 0
+	if _selected_card.visible:
+		var data := UiData.colonist(SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist), _session_observations, true)
+		if _selected_card.get_meta("live_input", {}) != data:
+			_selected_card.set_meta("live_input", data.duplicate(true))
+			_selected_card.set_model(data)
+	workspace.set_panel_live_count("people", colonists.size())
 
 
-func _new_colonist_card() -> PanelContainer:
-	var card := PanelContainer.new()
-	card.add_theme_stylebox_override("panel", DeckTheme.box(Color("403a32"), DeckTheme.LINE, _metrics.px(10)))
-	var panel := VBoxContainer.new()
-	panel.add_theme_constant_override("separation", _metrics.px(4))
-	card.add_child(panel)
-	var controls := {"bars": {}}
-	for key in ["header", "job", "cargo"]:
-		var label := Label.new()
-		label.add_theme_font_size_override("font_size", _metrics.font(13 if key == "header" else 12))
-		label.set_meta("ui_font_reference", 13.0 if key == "header" else 12.0)
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		panel.add_child(label)
-		controls[key] = label
-	controls.job.add_theme_color_override("font_color", DeckTheme.MUTED)
-	for bar: Dictionary in NEED_BARS:
-		var row := _stat_row(bar.label, 0.0, bar.invert)
-		panel.add_child(row)
-		controls.bars[bar.key] = row
-	card.set_meta("colonist_controls", controls)
-	_colonist_box.add_child(card)
-	return card
+func _select_colonist(id: Variant) -> void:
+	if not id is int or SpacetimeDB.Continuum.db == null or not _state_ready or SpacetimeDB.Continuum.db.colonist.id.find(id) == null:
+		return
+	_selected_colonist = id
+	_refresh_colonists()
+	map.set_selected_colonist(id)
 
 
-func _update_stat_row(row: HBoxContainer, value: float, invert: bool) -> void:
-	var bar: ProgressBar = row.get_child(1)
-	bar.value = value
-	var goodness := 100.0 - value if invert else value
-	var style: StyleBoxFlat = bar.get_theme_stylebox("fill")
-	style.bg_color = Color("ff5c6c") if goodness < 30 else (Color("ffb74d") if goodness < 60 else Color("6fcf7f"))
-	var value_label: Label = row.get_child(2)
-	value_label.text = "%3.0f" % value
-
-
-## One labelled 0-100 bar. `invert` means "high is bad" (a need), so the colour
-## ramp is reversed relative to mood/productivity.
-func _stat_row(label_text: String, value: float, invert: bool) -> HBoxContainer:
-	var row := HBoxContainer.new()
-
-	var label := Label.new()
-	label.text = label_text
-	label.custom_minimum_size = _metrics.min_size(84, 0)
-	label.add_theme_font_size_override("font_size", _metrics.font(11))
-	label.set_meta("ui_font_reference", 11.0)
-	row.add_child(label)
-
-	var bar := ProgressBar.new()
-	bar.min_value = 0.0
-	bar.max_value = 100.0
-	bar.value = value
-	bar.show_percentage = false
-	bar.custom_minimum_size = _metrics.min_size(0, 12)
-	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-
-	var goodness := 100.0 - value if invert else value
-	var fill := Color("6fcf7f")
-	if goodness < 30.0:
-		fill = Color("ff5c6c")
-	elif goodness < 60.0:
-		fill = Color("ffb74d")
-	var style := StyleBoxFlat.new()
-	style.bg_color = fill
-	bar.add_theme_stylebox_override("fill", style)
-	row.add_child(bar)
-
-	var value_label := Label.new()
-	value_label.text = "%3.0f" % value
-	value_label.custom_minimum_size = _metrics.min_size(28, 0)
-	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	value_label.add_theme_font_size_override("font_size", _metrics.font(11))
-	value_label.set_meta("ui_font_reference", 11.0)
-	row.add_child(value_label)
-
-	return row
+func _goto_colonist(id: Variant) -> void:
+	if not id is int or SpacetimeDB.Continuum.db == null or not _state_ready:
+		return
+	var row: ContinuumColonist = SpacetimeDB.Continuum.db.colonist.id.find(id)
+	if row == null:
+		return
+	_select_colonist(id)
+	if map.layered:
+		map.set_cut(row.z)
+	map.pan_by(map.size * 0.5 - map.world_to_screen(Vector2(row.x, row.y) + Vector2(0.5, 0.5)))
 
 
 func _refresh_controls() -> void:
@@ -2199,7 +2250,8 @@ func _refresh_controls() -> void:
 			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
 		var controls: Dictionary = _block_controls[work]
 		var count: int = compatible_counts.get(work, 0)
-		controls.label.text = "%s (%d)" % [ContinuumWorkType.parse_enum_name(work).capitalize(), count]
+		controls.label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
+		controls.count.text = "(%d)" % count
 		controls.set.disabled = block_busy or count == 0
 		controls.pause.disabled = block_busy or count == 0
 		for priority_button: Button in controls.priority:
@@ -2309,52 +2361,22 @@ func _refresh_controls() -> void:
 
 
 func _refresh_alerts() -> void:
-	for child in _alert_box.get_children():
-		_alert_box.remove_child(child)
-		child.queue_free()
-	if SpacetimeDB.Continuum.db == null:
-		return
-
-	var active: Array[ContinuumAlert] = []
-	for alert: ContinuumAlert in SpacetimeDB.Continuum.db.alert.iter():
-		if alert.active:
-			active.append(alert)
-	active.sort_custom(func(a: ContinuumAlert, b: ContinuumAlert) -> bool: return a.id < b.id)
-
-	if active.is_empty():
-		var none := Label.new()
-		none.text = "No active alerts."
-		none.add_theme_font_size_override("font_size", _metrics.font(11))
-		none.add_theme_color_override("font_color", Color("6fcf7f"))
-		_alert_box.add_child(none)
-		return
-
-	for alert: ContinuumAlert in active:
-		var row := HBoxContainer.new()
-
-		var label := Label.new()
-		label.text = alert.message + ("  [ack]" if alert.acknowledged else "")
-		label.tooltip_text = alert.message + (" (acknowledged)" if alert.acknowledged else "")
-		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		label.add_theme_font_size_override("font_size", _metrics.font(11))
-		label.add_theme_color_override("font_color", _severity_colour(alert.severity))
-		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(label)
-
-		if not alert.acknowledged:
-			var ack := Button.new()
-			ack.text = "Ack"
-			ack.tooltip_text = "Acknowledge this alert (operator)"
-			ack.visible = _can_operate
-			ack.add_theme_font_size_override("font_size", _metrics.font(10))
-			ack.pressed.connect(_acknowledge.bind(alert.id))
-			row.add_child(ack)
-
-		_alert_box.add_child(row)
-
-
-func _severity_colour(severity: ContinuumSeverity) -> Color:
-	return SEVERITY_COLORS[clampi(severity.value, 0, SEVERITY_COLORS.size() - 1)]
+	var available := _state_ready and SpacetimeDB.Continuum.db != null
+	_alert_waiting.visible = not available
+	_alert_box.visible = available
+	var rows := _live_alert_models() if available else []
+	map.set_alert_pins([])
+	if available:
+		_alert_box.set_reduced_motion(_settings.reduced_motion)
+		_alert_box.set_model(rows)
+		for row: Dictionary in rows:
+			if row.acknowledged:
+				_ack_requests.erase(row.id)
+	workspace.set_panel_live_count("alerts", rows.size() if available else -1)
+	if not available:
+		_alert_box.set_model(null, {"status": "unavailable"})
+	_publish_alert_counts(rows)
+	_sync_open_digest()
 
 
 func _refresh_feed() -> void:
@@ -2364,15 +2386,198 @@ func _refresh_feed() -> void:
 	if events.size() > MAX_FEED_LINES:
 		events = events.slice(events.size() - MAX_FEED_LINES)
 
-	var lines := PackedStringArray()
-	var details := PackedStringArray()
+	var rows: Array = []
 	for event: ContinuumEventLog in events:
-		details.append("d%d %02d:%02d %s" % [event.day, event.hour, event.minute, event.message])
-		lines.append("[color=#5c6675]d%d %02d:%02d[/color] [color=%s]%s[/color]" % [
-			event.day, event.hour, event.minute,
-			_severity_colour(event.severity).to_html(false), event.message.replace("[", "[lb]"),
-		])
-	var text := "\n\n".join(lines) if not lines.is_empty() else "Waiting for server events."
-	if _feed.text != text:
-		_feed.text = text
-	_feed.tooltip_text = "\n".join(details)
+		rows.append(UiData.event(event))
+	_feed.set_model(rows)
+	workspace.set_panel_live_count("activity", rows.size())
+
+
+func _authoritative_snapshot() -> Dictionary:
+	if not _state_ready or SpacetimeDB.Continuum.db == null:
+		return {}
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+	if config == null or colony == null:
+		return {}
+	var resources := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
+	var watermark := 0
+	for event: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
+		watermark = maxi(watermark, event.id)
+	return {"resources": resources, "generation": config.generation, "game_seconds": config.game_seconds, "event_watermark": watermark}
+
+
+func _observe_session_state() -> void:
+	var snapshot := _authoritative_snapshot()
+	if snapshot.is_empty():
+		return
+	var needs := {}
+	for row: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
+		var raw := {}
+		for field: String in SessionObservations.NEED_FIELDS.values():
+			raw[field] = row.get(field)
+		needs[row.id] = SessionObservations.satisfaction(raw)
+	if _session_observations.observe(snapshot.game_seconds, snapshot.generation, snapshot.resources, needs):
+		_ui_tables_changed["colonist"] = true
+	if not _return_observed:
+		var events: Array = []
+		for row: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
+			events.append(UiData.event(row))
+		_return_digest = _return_snapshots.digest(_return_key, snapshot, _live_alert_models(), events)
+		_return_digest["current_resources"] = snapshot.resources.duplicate()
+		_return_digest["captured_game_seconds"] = snapshot.game_seconds
+		_return_observed = true
+		_return_snapshot = snapshot
+		_save_return_baseline()
+		if _return_digest.baseline_available:
+			_show_away_digest()
+	else:
+		if not _return_snapshot.is_empty() and (snapshot.generation != _return_snapshot.generation or snapshot.game_seconds < _return_snapshot.game_seconds or snapshot.event_watermark < _return_snapshot.event_watermark):
+			_return_digest = {"baseline_available": false, "state": "reset", "message": "Colony reset or clock moved backward · previous local baseline discarded.", "coverage_note": "Earlier events may be missing · up to 200 retained events"}
+			_return_snapshots.forget(_return_key)
+		_return_snapshot = snapshot
+	_sync_open_digest()
+
+
+func _save_return_baseline() -> void:
+	if _return_observed and not _return_key.is_empty() and not _return_snapshot.is_empty():
+		if _return_snapshots.remember(_return_key, _return_snapshot):
+			var error := _return_snapshots.save_file()
+			if error != OK:
+				_return_digest["persistence_note"] = "Local baseline could not be saved; cross-session changes may be unavailable."
+
+
+func _end_session_observations() -> void:
+	if is_instance_valid(_action_feedback):
+		_action_feedback.hide()
+	var latest := _authoritative_snapshot()
+	if not latest.is_empty() and _return_observed:
+		_return_snapshot = latest
+	_save_return_baseline()
+	_session_observations.reset()
+	_return_key = ""
+	_return_observed = false
+	_return_snapshot.clear()
+	_return_digest.clear()
+	_authenticated_identity = ""
+	_selected_colonist = -1
+	map.set_selected_colonist(-1)
+	for id: int in _ack_requests:
+		_alert_box.set_acknowledgement_state(id, false)
+	_ack_requests.clear()
+	if is_instance_valid(_digest_overlay):
+		_hide_away_digest()
+
+
+func _live_alert_models() -> Array:
+	var rows: Array = []
+	if not _state_ready or SpacetimeDB.Continuum.db == null:
+		return rows
+	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
+	for alert: ContinuumAlert in SpacetimeDB.Continuum.db.alert.iter():
+		if alert.active:
+			rows.append(UiData.alert(alert, config.game_seconds if config != null else null, _can_operate))
+	return rows
+
+
+func _publish_alert_counts(rows: Array) -> void:
+	for id: String in workspace.model.workspaces:
+		var count := 0
+		var level := "notice"
+		var panels: Dictionary = workspace.model.workspaces[id].panels
+		for alert: Dictionary in rows:
+			if alert.level not in ["warn", "critical"]:
+				continue
+			var owner: String = ALERT_PANEL_OWNERS.get(alert.code, "alerts")
+			if workspace.authorized.get(owner, false) and panels.get(owner, {}).get("open", false):
+				count += 1
+				if alert.level == "critical" or level == "notice":
+					level = alert.level
+		var summary := {"level": level, "count": count}
+		if _alert_summary_cache.get(id) != summary:
+			_alert_summary_cache[id] = summary
+			workspace.set_workspace_alert_summary(id, level, count)
+
+
+func _create_away_digest() -> void:
+	_digest_overlay = Control.new()
+	_digest_overlay.name = "AwayDigestModal"
+	_digest_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_digest_overlay.focus_mode = Control.FOCUS_ALL
+	_digest_overlay.visible = false
+	add_child(_digest_overlay)
+	_digest_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var center := CenterContainer.new()
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_digest_overlay.add_child(center)
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var scroll := ScrollContainer.new()
+	scroll.name = "DigestScroll"
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
+	center.add_child(scroll)
+	_digest = DigestControl.new()
+	_digest.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_digest)
+	_digest.dismiss_requested.connect(_hide_away_digest)
+	_digest.review_requested.connect(func(_ids: Array) -> void:
+		_hide_away_digest()
+		if not workspace.state("alerts").open:
+			workspace.toggle_panel("alerts")
+		workspace.focus_panel("alerts"))
+	_digest_overlay.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+			_hide_away_digest()
+			_digest_overlay.accept_event())
+	_digest_overlay.resized.connect(_layout_away_digest)
+
+
+func _layout_away_digest() -> void:
+	var scroll: ScrollContainer = _digest.get_parent()
+	scroll.custom_minimum_size = Vector2(minf(500, maxf(280, size.x - 32)), maxf(0, size.y - 64))
+	_digest.custom_minimum_size.x = scroll.custom_minimum_size.x
+
+
+func _show_away_digest() -> void:
+	if not is_instance_valid(_digest_overlay):
+		return
+	_digest.set_model(_away_digest_data())
+	_layout_away_digest()
+	_digest_focus = get_viewport().gui_get_focus_owner()
+	_digest_overlay.show()
+	_digest_overlay.grab_focus()
+	_sync_menu_input()
+
+func _sync_open_digest() -> void:
+	if is_instance_valid(_digest_overlay) and _digest_overlay.visible:
+		_digest.set_model(_away_digest_data())
+
+func _away_digest_data() -> Dictionary:
+	var data := {"span": "Waiting for authoritative colony state.", "coverage": "Locally observed last-session baseline. Earlier events may be missing · up to 200 retained events."}
+	if _return_observed:
+		if _state_ready and SpacetimeDB.Continuum.db != null:
+			data.needs_you = _live_alert_models()
+			for alert: Dictionary in data.needs_you:
+				alert.erase("time")
+				alert.erase("time_label")
+		else:
+			data.group_coverage = {"needs_you": {"status": "unavailable"}}
+		data.span = UiData.duration(_return_digest.away_game_seconds) + " since your local last session" if _return_digest.get("baseline_available", false) else _return_digest.get("message", "No local last-session baseline.")
+		data.coverage = "Locally observed last-session baseline. " + _return_digest.get("coverage_note", "Earlier events may be missing · up to 200 retained events") + "\nPlayer attribution and handled summaries are unavailable. Same-generation database replacements cannot always be detected."
+		if _return_digest.has("persistence_note"):
+			data.coverage += "\n" + _return_digest.persistence_note
+		if _return_digest.get("baseline_available", false):
+			data.span += " · captured at game time " + UiData.duration(_return_digest.captured_game_seconds) + " on reconnect (frozen comparison)" if _return_digest.has("captured_game_seconds") else " · captured on reconnect (game time unavailable; frozen comparison)"
+			data.deltas = []
+			for resource: String in _return_digest.resource_deltas:
+				var current: float = _return_digest.current_resources[resource]
+				data.deltas.append({"name": resource.capitalize(), "current": current, "baseline": current - float(_return_digest.resource_deltas[resource]), "level": "notice"})
+	return data
+
+
+func _hide_away_digest() -> void:
+	_digest_overlay.hide()
+	_sync_menu_input()
+	if is_instance_valid(_digest_focus) and _digest_focus.is_visible_in_tree():
+		_digest_focus.grab_focus()
+	_digest_focus = null

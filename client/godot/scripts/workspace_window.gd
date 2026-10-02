@@ -10,10 +10,7 @@ signal close_requested
 signal pin_requested
 signal dock_requested
 
-const PIN_ICON := preload("res://assets/ui/panel-pin.svg")
-const PINNED_ICON := preload("res://assets/ui/panel-pinned.svg")
-const MINIMIZE_ICON := preload("res://assets/ui/panel-minimize.svg")
-const CLOSE_ICON := preload("res://assets/ui/panel-close.svg")
+const Icons = preload("res://ui/theme/icons.gd")
 const RESIZE_DIRECTIONS := {
 	"left": Vector2i(-1, 0), "right": Vector2i(1, 0),
 	"top": Vector2i(0, -1), "bottom": Vector2i(0, 1),
@@ -76,10 +73,10 @@ func setup(title: String) -> void:
 	dock_button.text = "Float"
 	dock_button.pressed.connect(func() -> void: dock_requested.emit())
 	titlebar.add_child(dock_button)
-	pin_button = _action(PIN_ICON, "Pin position and size", func() -> void: pin_requested.emit())
+	pin_button = _action("pin", "Pin position and size", func() -> void: pin_requested.emit())
 	pin_button.toggle_mode = true
-	_action(MINIMIZE_ICON, "Collapse to header / restore", func() -> void: minimize_requested.emit())
-	_action(CLOSE_ICON, "Remove panel from workspace (reopen with Panels)", func() -> void: close_requested.emit())
+	_action("minimize", "Collapse to header / restore", func() -> void: minimize_requested.emit())
+	_action("close", "Remove panel from workspace (reopen with Panels)", func() -> void: close_requested.emit())
 	divider = ColorRect.new()
 	divider.color = DeckTheme.LINE
 	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -114,9 +111,14 @@ func setup(title: String) -> void:
 	set_process_input(false)
 
 
-func _action(icon: Texture2D, hint: String, callback: Callable) -> Button:
+func _action(icon: String, hint: String, callback: Callable) -> Button:
 	var button := Button.new()
-	button.icon = icon
+	button.icon = Icons.texture(icon)
+	for state: String in ["normal", "hover", "pressed", "focus", "disabled"]:
+		button.add_theme_color_override("icon_" + state + "_color", Color.WHITE)
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	button.mouse_entered.connect(func() -> void: button.icon = Icons.texture("pin-off" if icon == "pin" and pinned else icon, "ink"))
+	button.mouse_exited.connect(func() -> void: button.icon = Icons.texture("pin-off" if icon == "pin" and pinned else icon))
 	button.theme_type_variation = "ButtonIcon"
 	button.expand_icon = true
 	button.tooltip_text = hint
@@ -126,8 +128,11 @@ func _action(icon: Texture2D, hint: String, callback: Callable) -> Button:
 
 
 func set_focused(value: bool) -> void:
-	var surface := get_theme_stylebox("panel").duplicate() as StyleBoxFlat
-	surface.border_color = DeckTheme.ACCENT if value else DeckTheme.LINE
+	var surface: StyleBox = get_theme_stylebox("panel").duplicate(true)
+	if surface is StyleBoxFlat:
+		surface.border_color = DeckTheme.ACCENT if value else DeckTheme.LINE
+	else:
+		surface.body.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("line-200")
 	add_theme_stylebox_override("panel", surface)
 
 ## Integration supplies a real count; chrome never guesses backend ownership.
@@ -137,6 +142,12 @@ func set_live_count(count: int = -1) -> void:
 
 func set_docked(value: bool, is_collapsed: bool) -> void:
 	docked = value
+	if docked:
+		var surface := DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 0)
+		surface.set_corner_radius_all(0)
+		add_theme_stylebox_override("panel", surface)
+	else:
+		add_theme_stylebox_override("panel", DeckTheme.create().get_stylebox("panel", "PanelFloating"))
 	collapsed = is_collapsed
 	dock_button.text = "Float" if docked else "Dock"
 	dock_button.tooltip_text = "Float over the map" if docked else "Reserve a dock beside the map"
@@ -188,9 +199,7 @@ func apply_state(is_pinned: bool, is_compact: bool) -> void:
 	pinned = is_pinned
 	compact = is_compact
 	pin_button.set_pressed_no_signal(pinned)
-	pin_button.icon = PINNED_ICON if pinned else PIN_ICON
-	pin_button.add_theme_color_override("icon_normal_color", ThemeTokens.color("accent" if pinned else "ink-muted"))
-	pin_button.add_theme_color_override("icon_pressed_color", ThemeTokens.color("accent" if pinned else "ink-muted"))
+	pin_button.icon = Icons.texture("pin-off" if pinned else "pin")
 	pin_button.tooltip_text = "Unpin position and size" if pinned else "Pin position and size"
 	pin_button.visible = not compact
 	for handle: Control in resize_handles.values():

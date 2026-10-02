@@ -408,7 +408,7 @@ func _test_resize_edges(deck: WorkspaceDeck) -> void:
 	deck._apply_layout()
 	for handle: Control in window.resize_handles.values():
 		_assert(not handle.visible, "pinning disables every edge and corner")
-	_assert(window.pin_button.icon == WorkspaceWindow.PINNED_ICON, "pinned panels use the active pin icon")
+	_assert(window.pin_button.icon == UiIcons.texture("pin-off"), "pinned panels use the token-colored active pin icon")
 	press = _mouse_button(MOUSE_BUTTON_LEFT, true, window.scroll.get_global_rect().get_center())
 	press.alt_pressed = true
 	viewport.push_input(press)

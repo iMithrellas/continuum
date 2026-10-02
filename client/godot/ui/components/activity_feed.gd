@@ -11,6 +11,8 @@ var model: Dictionary = {}
 
 ## Ordered event dictionaries. day is an explicit in-game day, not wall-clock.
 func set_model(rows: Array) -> void:
+	if rows == _rows and not model.is_empty():
+		return
 	_rows = rows.duplicate(true)
 	_render()
 

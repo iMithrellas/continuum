@@ -1,6 +1,14 @@
 set shell := ["bash", "-cu"]
 set positional-arguments
 
+# Isolated backend-free UI contracts, typed composition and exported-pack widgets.
+test-ui:
+    GODOT={{ quote(godot) }} python3 client/godot/tools/ui_check.py
+
+# Requires private Xvfb on PATH; captures actual main at 48 scale/state combinations.
+test-ui-render:
+    GODOT={{ quote(godot) }} python3 client/godot/tools/ui_render_matrix.py --live
+
 module_manifest := "backend/spacetimedb/Cargo.toml"
 godot := env_var_or_default("GODOT", "godot")
 

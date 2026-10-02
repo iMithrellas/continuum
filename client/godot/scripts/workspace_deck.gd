@@ -56,6 +56,9 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_telemetry_header.add_theme_constant_override("separation", 0)
 	rows.add_child(_telemetry_header)
 	telemetry = _scroll_row(_telemetry_header, ThemeTokens.number("topbar"))
+	# Reserve the horizontal scroll track consistently: toggling inline
+	# diagnostics must not move the map when the telemetry crosses overflow.
+	telemetry.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 	diagnostics_host = Control.new()
 	diagnostics_host.name = "DiagnosticsHost"
 	diagnostics_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -339,12 +342,15 @@ func toggle_panel(key: String) -> void:
 
 ## Both dock and body scrolls follow keyboard focus. F-key restoration also
 ## reveals the requested panel without persisting a scroll offset as geometry.
-func _reveal_panel(key: String, focus_control: Control = null) -> void:
+func _reveal_panel(key: String, focus_control: Control = null, settling_frames := 2) -> void:
 	# Nested body scrolling must settle first: otherwise the outer dock follows
 	# the action's old, off-body position and clips it again after the inner move.
-	await get_tree().process_frame
-	await get_tree().process_frame
-	if focus_control != null and get_viewport().gui_get_focus_owner() != focus_control:
+	if settling_frames > 0:
+		# A node-bound signal disconnects on destruction, unlike an outstanding
+		# coroutine which would resume after its owning workspace was freed.
+		get_tree().create_timer(0.0).timeout.connect(_reveal_panel.bind(key, focus_control, settling_frames - 1), CONNECT_ONE_SHOT)
+		return
+	if focus_control != null and (not is_instance_valid(focus_control) or get_viewport().gui_get_focus_owner() != focus_control):
 		return
 	if not authorized.get(key, false) or not windows.has(key) or not windows[key].is_visible_in_tree():
 		return

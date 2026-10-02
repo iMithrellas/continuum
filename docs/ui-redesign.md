@@ -1,6 +1,6 @@
 # UI redesign
 
-**Status:** implementation handoff plan  
+**Status:** integrated candidate; combined independent review required before main fast-forward
 **Design source:** supplied UI design package; `tokens.json` is authoritative over prose and HTML previews.
 **Implementation base:** `a39e9bcd72d953c178e6c4c9dce0bb2ac67359e3`  
 **Theme:** `res://ui/theme` — colors, fonts, spacing, glyphs and icon styling
@@ -105,11 +105,61 @@ Independent review reports checklist results, regression findings and confidence
 
 ## Known gaps / follow-up decisions
 
+### Implemented integration and offline verification
+
+The production main scene now uses resource readouts, compact roster rows and a
+selected expanded card, needs, shared-boolean alerts, literal activity entries,
+and a modal local-return digest. Roster selection reaches map selection and Go to
+uses the current replicated coordinates. Current alerts have no positions, so
+alert pins remain empty. Existing hauling/meal/recreation policies remain actual
+controls; no fictional automation or rest reducer is exposed.
+
+Scale is owned only by `Window.content_scale_factor`; the legacy fixed viewport
+stretch has been removed. Old font preferences migrate to 100/125/150%, while
+logical type stays at least 11px. Floating frames use the foundation's two-layer
+shadow; docks are square and shadowless. Licensed Lucide geometry is embedded in
+`UiIcons`, including runtime token-colored frame/toolbar icons.
+
+Observed rates use a constant-size connection origin and minute-throttled,
+bounded game-clock samples. They warm up for a usable game hour; need trends use
+an actual last-hour anchor. Paused clocks display rate unavailable. ETA copy is
+rounded for display only; thresholds use the original measurements.
+
+Return snapshots are local last-session observations keyed by endpoint,
+database, profile and authenticated identity. Only minimal resources, generation,
+game clock and event watermark persist, never credentials, roles or tokens.
+Generation/backward-clock/watermark changes invalidate baselines. Same-generation
+database replacement cannot always be detected. The digest explicitly caveats
+the 200-event cap and unavailable player attribution/handled summaries; it is not
+permanent history.
+
+```sh
+just test-ui
+# Private Xvfb + DummyAudio Godot wrapper, not the human desktop:
+GODOT=/path/to/godot-private PATH=/path/to/private-xvfb/bin:$PATH \
+  just test-ui-render
+```
+
+`UI_CHECK_OUTPUT` and `UI_RENDER_OUTPUT` select evidence directories under
+`/tmp/opencode`. The first recipe isolates HOME/XDG/runtime state, runs merged
+backend-free contracts and typed production-main composition, then exports a real
+PCK and runs its widgets from an empty directory. The render recipe captures 48
+actual-main scale/state/focus/reduced-motion cases plus four floating-frame and
+two return-modal cases (54 total), and checks roster GUI input,
+280px panel floors, selected critical contrast, real map reservation, modal
+blocking, changing-value control-focus retention and focus restoration. The
+telemetry body stays at the logical topbar height; its horizontal scroll track
+is always reserved so inline diagnostics cannot cause map geometry to jump.
+These are not the earlier chrome-only fixture.
+Fixtures never connect to a server or dispatch a live reducer. Combined review
+must still inspect the candidate and actual PNGs; successful fixture tests are
+not independent approval.
+
 1. Alert acknowledgement actor/time needs a server contract, permissions and world scope before attribution can be displayed.
 2. Durable away-digest history and structured event source/actor/verb/subject/count need a separately scoped migration/API decision; current freeform 200-row feed is not a reliable event schema.
 3. Automation UI remains empty/absent until actual automation data exists; no sample rule should imply support.
 4. Resource storage is unlimited in current behavior; no capacity or overflow alert is implied by the design mock.
-5. Resource observed-rate sampling interval, stale/warming cutoffs and estimate confidence need UI-level choices; keep labels honest and do not represent them as server truth.
+5. Minute-throttled observed-rate history is bounded to 122 samples; a usable game-hour anchor is required. Rates are connection means, not server production accounting. Confidence intervals and durable telemetry remain future work.
 6. Existing spec leaves details such as trend bucket boundaries and alert consequence tie-breaking unspecified. Use deterministic presentation-only behavior only where input exists and record the choice; no backend rules.
 
 ## Commit and handoff
