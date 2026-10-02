@@ -290,8 +290,8 @@ impl World {
     }
 
     pub(super) fn step_live_travel(&mut self, index: usize, tuning: &Tuning, dt_hours: f32) {
-        let mut steps =
-            self.colonists[index].movement.progress + tuning.move_tiles_per_hour * dt_hours;
+        let mut metres = tuning.move_tiles_per_hour * super::geometry::CELL_EDGE_METERS * dt_hours;
+        let mut fraction = self.colonists[index].movement.progress;
         let actor = &self.colonists[index];
         let id = actor.id;
         let target = Cell(
@@ -318,13 +318,19 @@ impl World {
             let next = path.get(1).copied().unwrap_or(start);
             self.colonists[index].spatial.next = next;
             if start == target {
-                steps = 0.0;
+                fraction = 0.0;
                 break;
             }
-            if steps < 1.0 {
+            let length = super::movement::hop_length_meters(start, next);
+            // Progress is a fraction of this validated hop, never metres. Once
+            // completed, carry the remaining metric budget into the next hop.
+            metres += fraction * length;
+            if metres < length {
+                fraction = metres / length;
                 break;
             }
-            steps -= 1.0;
+            metres -= length;
+            fraction = 0.0;
             let actor = &mut self.colonists[index];
             actor.position.x = next.0;
             actor.position.y = next.1;
@@ -333,7 +339,7 @@ impl World {
             consumed += 1;
         }
         self.navigation.borrow_mut().consume_route(id, consumed);
-        self.colonists[index].movement.progress = steps;
+        self.colonists[index].movement.progress = fraction;
     }
 
     pub(super) fn step_mining(&mut self, index: usize, tuning: &Tuning, dt_hours: f32) {

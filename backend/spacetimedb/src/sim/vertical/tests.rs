@@ -396,7 +396,8 @@ fn live_movement_publishes_actual_bfs_next_hop_and_stays_supported() {
     for z in 0..4 {
         w.geometry.as_mut().unwrap().set(Cell(2, 1, z), STONE);
     }
-    w.step_live_travel(0, &Tuning::default(), 0.001);
+    // Probe before completing even one hop at the default metric walking rate.
+    w.step_live_travel(0, &Tuning::default(), 0.1 / 3600.0);
     assert_ne!(w.colonists[0].spatial.next, Cell(2, 1, 0));
     assert_ne!(w.colonists[0].spatial.next, w.actor_cell(0));
     w.step_live_travel(0, &fast(), 0.1);
