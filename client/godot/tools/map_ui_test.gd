@@ -121,7 +121,7 @@ func _test_flat_map_input() -> void:
 func _test_controller_surface() -> void:
 	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
-	await get_tree().process_frame
+	await main.ready
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
 	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and main.get_window().content_scale_factor == 1.0 and
@@ -285,6 +285,11 @@ func _refresh_real_tiles(main: Control) -> void:
 
 
 func _set_role(main: Control, role: String, can_operate: bool, is_admin: bool) -> void:
+	# The controller surface is exercised before a connection is requested.
+	# Install the explicit fixture access provider, never depend on SDK timing.
+	if main.fixture_access == null:
+		main._create_access(SpacetimeDB.Continuum)
+		main.fixture_access.changed.connect(main._set_permissions)
 	main.fixture_access.set_role(role, can_operate, is_admin)
 
 

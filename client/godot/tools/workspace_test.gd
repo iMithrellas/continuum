@@ -32,7 +32,7 @@ func _ready() -> void:
 			restored.workspaces[id].panels.people.minimized and restored.workspaces[id].panels.people.pinned and
 			restored.workspaces[id].panels.people.z == 17, "saved custom geometry and flags round-trip")
 	_assert(not restored.show_panel_headers, "header visibility persists independently of panel geometry")
-	_assert(restored.workspaces[id].panels.people.dock == "left", "dock state round-trips separately from floating geometry")
+	_assert(not restored.workspaces[id].panels.people.has("dock"), "v3 persists no docking state")
 	# New panel keys are optional in version-one layouts, including custom layouts.
 	var legacy_data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
 	legacy_data.version = 1
@@ -48,11 +48,21 @@ func _ready() -> void:
 	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.size() == 10,
 		"version-one layouts migrate optional admin and developer panel keys")
 	var migrated_people: Dictionary = migrated.workspaces[id].panels.people.duplicate(true)
-	migrated_people.dock = restored.workspaces[id].panels.people.dock
 	_assert(migrated_people == restored.workspaces[id].panels.people and
 		not migrated.show_panel_headers and migrated.active == id,
 		"migration preserves old geometry, open/minimized/pinned/layer, headers and workspace")
-	_assert(migrated.workspaces[id].panels.people.dock == "floating", "v1 overlays remain floating instead of silently moving personal geometry")
+	_assert(not migrated.workspaces[id].panels.people.has("dock"), "v1 overlays retain their remembered geometry without docking state")
+	legacy_data.version = 2
+	for entry: Dictionary in legacy_data.workspaces.values():
+		for saved: Dictionary in entry.panels.values():
+			saved.dock = "left" if saved.rect[0] < 0.5 else "right"
+	legacy_file = FileAccess.open(path, FileAccess.WRITE)
+	legacy_file.store_string(JSON.stringify(legacy_data))
+	legacy_file.close()
+	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.people == restored.workspaces[id].panels.people,
+		"v2 dock keys migrate to remembered floating rectangles without changing any panel intent")
+	_assert(migrated.save_to(path) == OK and JSON.parse_string(FileAccess.get_file_as_string(path)).version == 3 and
+		not FileAccess.get_file_as_string(path).contains('"dock"'), "migration saves v3 without obsolete dock keys")
 	_assert(migrated.workspaces[id].panels.admin.open and migrated.workspaces[id].panels.developer.open,
 		"new panels default open without changing old panel preferences")
 	var other_id := restored.create_workspace("Other", ["overview"], false)
@@ -187,12 +197,8 @@ func _test_manager() -> void:
 	deck.windows.developer = developer_window
 	deck.model.workspaces.daily = WorkspaceLayout.defaults().daily
 	deck._apply_layout()
-	_assert(not deck.compact and not map.get_global_rect().intersects(deck.windows.people.get_global_rect()), "docked panels reserve actual map Control space")
-	_assert(deck.windows.people.get_theme_stylebox("panel").shadow_size == 0, "docked chrome has no shadow")
-	var floating_geometry: Array = deck.state("people").rect.duplicate()
-	deck.set_panel_dock("people", "floating")
-	_assert(deck.state("people").rect == floating_geometry and not deck.windows.people.docked, "floating preserves remembered geometry independently from dock")
-	deck.set_panel_dock("people", "left")
+	_assert(not deck.compact and map.get_global_rect() == deck.area.get_global_rect(), "panels overlay the full map with no reserved space")
+	_assert(not deck.has_method("set_panel_dock") and not deck.windows.people.has_signal("dock_requested"), "docking APIs and controls are removed entirely")
 	deck.windows.people.set_live_count(8)
 	_assert(deck.windows.people.live_count.text == "8", "integration can set a live mono panel-header count")
 	deck.set_workspace_alert_summary("daily", "warn", 2)
@@ -202,17 +208,17 @@ func _test_manager() -> void:
 	deck.set_panel_authorized("admin", true)
 	var framed: WorkspaceWindow = deck.windows.people
 	for child: Node in framed.titlebar.get_children():
-		if child is Button and child != framed.dock_button:
+		if child is Button:
 			_assert(child.text.is_empty() and child.icon != null and not child.tooltip_text.is_empty(),
 				"window actions use actual icons with descriptive tooltips")
 	_assert(framed.resize_handles.size() == 8, "every edge and corner has a resize hit area")
 	await _test_headers(deck, manager_path)
 	var active := deck.model.active
 	deck.toggle_panel("people")
-	_assert(deck.state("people").minimized, "panel minimizes to the dock")
+	_assert(deck.state("people").minimized, "panel minimizes to its header")
 	_assert(deck.windows.people.visible and deck.windows.people.size.y == 32 and not deck.windows.people.scroll.visible, "collapse retains a real 32px header")
 	deck.toggle_panel("people")
-	_assert(not deck.state("people").minimized and deck.windows["people"].visible, "panel restores from the dock")
+	_assert(not deck.state("people").minimized and deck.windows["people"].visible, "panel restores from navigation")
 	deck.state("people").pinned = true
 	deck._apply_layout()
 	_assert(deck.windows["people"].pinned and not deck.windows["people"].grip.visible, "pin state disables geometry grip")
@@ -220,7 +226,7 @@ func _test_manager() -> void:
 	deck._apply_layout()
 	_assert(not deck.windows["alerts"].visible, "closed panel is removed from the workspace")
 	deck.toggle_panel("alerts")
-	_assert(deck.state("alerts").open and deck.windows["alerts"].visible, "closed panel reopens from the dock")
+	_assert(deck.state("alerts").open and deck.windows["alerts"].visible, "closed panel reopens from navigation")
 	deck.switch_workspace("build")
 	_assert(deck.model.active == "build", "workspace switching is public")
 	deck.state("operations").open = true
@@ -246,13 +252,15 @@ func _test_manager() -> void:
 		deck.size = Vector2(1440, 900) / (float(scale_percent) / 100.0)
 		await get_tree().process_frame
 		await get_tree().process_frame
-		_assert(deck.compact == (scale_percent == 150), "1440px breakpoint policy at %d percent" % scale_percent)
+		_assert(not deck.compact and map.get_global_rect() == deck.area.get_global_rect(), "1440px full-map overlay policy at %d percent" % scale_percent)
 	deck.size = Vector2(1200, 800)
 	await get_tree().process_frame
 	await get_tree().process_frame
 	await _test_viewport_input(deck, map)
 	await _test_resize_edges(deck)
-	await _test_dock_overflow(deck)
+	await _test_direct_panel_interactions(deck)
+	await _test_floating_overlap(deck)
+	await _test_retained_body_focus_resize(deck)
 	await _test_navigation_focus(deck)
 	deck.toggle_map_only()
 	var map_point := deck.area.get_global_rect().position + Vector2(500, 300)
@@ -288,17 +296,17 @@ func _test_headers(deck: WorkspaceDeck, manager_path: String) -> void:
 	var window: WorkspaceWindow = deck.windows.people
 	var original := Rect2(window.position, window.size)
 	deck._layout_action(2)
-	_assert(not deck.model.show_panel_headers and not window.titlebar.visible and not window.divider.visible,
-		"Layout's header option hides bars and dividers")
-	_assert(is_equal_approx(window.scroll.offset_top, deck.metrics.px(12)) and Rect2(window.position, window.size) == original,
-		"hidden headers give space back to content without changing window geometry")
+	_assert(not deck.model.show_panel_headers and not window.titlebar.visible and window.drag_strip.visible and window.divider.visible,
+		"hidden headers preserve visible drag and restore affordances")
+	_assert(is_equal_approx(window.scroll.offset_top, deck.metrics.px(36)) and Rect2(window.position, window.size) == original,
+		"hidden headers retain a 24px drag strip without changing window geometry")
 	var reloaded := WorkspaceLayout.new()
 	_assert(reloaded.load_from(manager_path) and not reloaded.show_panel_headers,
 		"UI header toggle auto-saves the preference")
 	deck.switch_workspace("build")
 	_assert(not deck.windows.operations.titlebar.visible, "header preference also applies after switching workspaces")
 	deck.apply_metrics(UiMetrics.new(24))
-	_assert(not deck.windows.operations.titlebar.visible and is_equal_approx(deck.windows.operations.scroll.offset_top, deck.metrics.px(12)),
+	_assert(not deck.windows.operations.titlebar.visible and is_equal_approx(deck.windows.operations.scroll.offset_top, deck.metrics.px(36)),
 		"font scaling preserves hidden headers and their compact inset")
 	deck.apply_metrics(UiMetrics.new(13))
 	var shortcut := InputEventKey.new()
@@ -315,7 +323,6 @@ func _test_headers(deck: WorkspaceDeck, manager_path: String) -> void:
 	await get_tree().process_frame
 
 func _test_resize_edges(deck: WorkspaceDeck) -> void:
-	deck.set_panel_dock("people", "floating")
 	deck.state("people").pinned = false
 	deck.state("people").rect = [0.35, 0.3, 0.3, 0.45]
 	deck._apply_layout()
@@ -420,7 +427,6 @@ func _test_resize_edges(deck: WorkspaceDeck) -> void:
 	deck.toggle_panel_headers()
 
 func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
-	deck.set_panel_dock("people", "floating")
 	for key: String in deck.windows:
 		deck.state(key).open = key == "people"
 	deck.state("people").pinned = false
@@ -477,9 +483,161 @@ func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
 	_assert(window._gesture.is_empty(), "pinned headers cannot arm a drag")
 	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, title))
 
-## Real Window scaling plus nested clipping checks: assigned panel heights alone
-## cannot prove that an overflowed body's final action is reachable.
-func _test_dock_overflow(deck: WorkspaceDeck) -> void:
+## Goes through the actual Input singleton, native Window scale and GUI dispatch,
+## rather than invoking a title callback or assigning a gesture directly.
+func _test_direct_panel_interactions(deck: WorkspaceDeck) -> void:
+	var host := get_tree().root
+	var old_size := host.size
+	var old_scale := host.content_scale_factor
+	var old_deck_size := deck.size
+	var old_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
+	var builds := viewport_builds
+	var selections := viewport_selections
+	var window: WorkspaceWindow = deck.windows.people
+	for scale: float in [1.0, 1.25, 1.5]:
+		host.size = Vector2i(1920, 1080)
+		host.content_scale_factor = scale
+		await _settle_layout()
+		deck.size = host.get_visible_rect().size
+		for key: String in deck.windows:
+			deck.state(key).open = key == "people"
+		deck.state("people").pinned = false
+		deck.state("people").minimized = false
+		deck.state("people").rect = [0.2, 0.2, 0.3, 0.45]
+		deck._apply_layout()
+		await _settle_layout()
+		_assert(not deck.compact, "native Window interaction budget remains desktop at %s" % scale)
+		var saved := deck.state("people").duplicate(true)
+		var start := Rect2(window.global_position - deck.area.global_position, window.size)
+		var pointer := window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(3, 2)))
+		_assert(window.position.distance_to(start.position + Vector2(3, 2)) <= 16, "title press/jitter moves only this floating panel at %s" % scale)
+		var motion := _mouse_motion(pointer + Vector2(60, 0))
+		motion.alt_pressed = true
+		await _parse(motion)
+		_assert(window.get_parent() == deck.area and window._gesture == "move", "title drag moves a floating panel at %s" % scale)
+		_assert(window.position.distance_to(start.position + Vector2(60, 0)) < 1 and window.size.distance_to(start.size) < 1,
+			"movement preserves actual footprint and pointer offset at %s: %s -> %s" % [scale, start, Rect2(window.position, window.size)])
+		var escape := InputEventKey.new()
+		escape.keycode = KEY_ESCAPE
+		escape.pressed = true
+		await _parse(escape)
+		_assert(deck.state("people").rect == saved.rect and window._gesture.is_empty(), "Escape restores remembered floating geometry at %s" % scale)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+		# A clearly visible corner resizes, and mouse release persists it.
+		pointer = window.grip.get_global_rect().get_center()
+		start = Rect2(window.global_position - deck.area.global_position, window.size)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		motion = _mouse_motion(pointer + Vector2(40, -30))
+		motion.alt_pressed = true
+		await _parse(motion)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+		_assert(window.size.distance_to(start.size + Vector2(40, -30)) < 1 and window.position.distance_to(start.position) < 1,
+			"visible corner resizes stationary opposite edges at %s" % scale)
+		_assert(window._gesture.is_empty() and deck._drag_origins.is_empty(), "release completes exactly one gesture at %s" % scale)
+		var restored := WorkspaceLayout.new()
+		_assert(restored.load_from(deck._save_path) and
+			WorkspaceLayout.to_pixels(restored.workspaces[restored.active].panels.people.rect, deck.area.size).size.distance_to(window.size) < 0.01,
+			"float resize persists at %s" % scale)
+		# Hidden headers do not force a secret modifier to move a panel.
+		deck.toggle_panel_headers()
+		await _settle_layout()
+		pointer = window.drag_strip.global_position + Vector2(40, 12)
+		var before := window.position
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		motion = _mouse_motion(pointer + Vector2(40, 20))
+		motion.alt_pressed = true
+		await _parse(motion)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+		_assert(window.position.distance_to(before + Vector2(40, 20)) < 1 and not deck.model.show_panel_headers, "visible hidden-header strip moves without changing header intent at %s" % scale)
+		var restore_button: Button = window.drag_strip.get_child(1)
+		pointer = restore_button.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer))
+		_assert(deck.model.show_panel_headers and window.titlebar.visible, "visible Headers button restores controls at %s" % scale)
+		# Geometry locks are independent of access, and revocation cancels.
+		deck.state("people").pinned = true
+		deck._apply_layout()
+		await _settle_layout()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		before = window.position
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(40, 20)))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(40, 20)))
+		_assert(window.position == before and window._gesture.is_empty() and "geometry only" in window.pin_button.tooltip_text, "pin locks geometry with explicit tooltip at %s" % scale)
+		deck.state("people").pinned = false
+		deck._apply_layout()
+		await _settle_layout()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		saved = deck.state("people").duplicate(true)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(40, 20)))
+		deck.set_panel_authorized("people", false)
+		_assert(not window.visible and window._gesture.is_empty() and deck.state("people").rect == saved.rect, "permission loss rolls back movement without changing intent at %s" % scale)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(40, 20)))
+		deck.set_panel_authorized("people", true)
+		# Map-only and compact transitions must not leave a captured pointer or
+		# silently overwrite remembered floating layout preferences.
+		await _settle_layout()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(40, 0)))
+		deck.toggle_map_only()
+		_assert(window._gesture.is_empty() and not window.visible and deck.state("people").rect == saved.rect and deck._map.get_global_rect() == deck.area.get_global_rect(), "Map mode cancels movement and restores saved intent at %s" % scale)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(40, 0)))
+		deck.toggle_map_only()
+		deck.size = Vector2(600, 600)
+		deck._apply_layout()
+		await _settle_layout()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(40, 20)))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(40, 20)))
+		_assert(deck.compact and window._gesture.is_empty() and deck.state("people").rect == saved.rect and deck._map.get_global_rect() == deck.area.get_global_rect(), "compact panels keep desktop geometry and never shrink the map at %s" % scale)
+		deck.size = host.get_visible_rect().size
+		deck._apply_layout()
+		await _settle_layout()
+		_assert(viewport_builds == builds and viewport_selections == selections, "Input.parse_input_event title/strip/corner gestures never dispatch map actions at %s" % scale)
+		var map := deck._map as ColonyMap
+		var map_point := Vector2.ZERO
+		var found := false
+		for y in map._grid.y:
+			for x in map._grid.x:
+				var candidate := map.global_position + map._origin() + (Vector2(x, y) + Vector2.ONE * 0.5) * map._cell_size()
+				if not deck.blocks_map_input(candidate):
+					map_point = candidate
+					found = true
+					break
+			if found:
+				break
+		_assert(found, "full map retains uncovered pickable cells at %s" % scale)
+		map.set_interaction_mode(&"build")
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, map_point))
+		_assert(map._dragging, "native scaled pointer maps correctly into an uncovered build cell at %s" % scale)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, map_point))
+		_assert(viewport_builds == builds + 1 and not map._dragging, "uncovered map emits exactly one build intent at %s" % scale)
+		builds = viewport_builds
+	deck.model.workspaces[deck.model.active].panels = old_panels
+	host.content_scale_factor = old_scale
+	host.size = old_size
+	deck.size = old_deck_size
+	deck._apply_layout()
+	await _settle_layout()
+	print("WORKSPACE_DIRECT_INTERACTION_PASS Input.parse_input_event native-window-100-125-150 footprint offset corner-resize hidden-strip restore pin escape permission compact full-map map-exclusion")
+
+func _parse(event: InputEvent) -> void:
+	event = event.duplicate()
+	# Input singleton accepts native-window pixels, unlike Viewport.push_input.
+	if event is InputEventMouse:
+		event.position = get_viewport().get_final_transform() * event.position
+		event.global_position = event.position
+	Input.parse_input_event(event)
+	await get_tree().process_frame
+	await get_tree().process_frame
+
+## Many overlapping floating frames retain z-order and usable scroll bodies.
+func _test_floating_overlap(deck: WorkspaceDeck) -> void:
 	var original_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
 	var original_authorized := deck.authorized.duplicate()
 	var original_size := deck.size
@@ -487,12 +645,13 @@ func _test_dock_overflow(deck: WorkspaceDeck) -> void:
 	var host := get_tree().root
 	var original_host_size := host.size
 	var original_scale := host.content_scale_factor
-	var original_scale_mode := host.content_scale_mode
-	var original_scale_size := host.content_scale_size
 	var probes := {}
 	var activated := [0]
 	for key: String in deck.windows:
 		deck.authorized[key] = true
+		deck.state(key).open = true
+		deck.state(key).minimized = false
+		deck.state(key).rect = [0.2, 0.2, 0.3, 0.45]
 		var fixture := VBoxContainer.new()
 		var spacer := Control.new()
 		spacer.custom_minimum_size.y = WorkspaceLayout.MIN_SIZE.y * 2
@@ -504,77 +663,29 @@ func _test_dock_overflow(deck: WorkspaceDeck) -> void:
 		fixture.add_child(action)
 		deck.windows[key].content.add_child(fixture)
 		probes[key] = {"fixture": fixture, "action": action}
-	for side: String in ["left", "right"]:
-		for disproportionate: bool in [false, true]:
-			for key: String in deck.windows:
-				deck.state(key).open = true
-				deck.state(key).minimized = false
-				deck.state(key).dock = side
-				deck.state(key).rect[3] = 1.0 if not disproportionate or key == "people" else 0.05
-			var remembered := {}
-			for key: String in deck.windows:
-				remembered[key] = deck.state(key).rect.duplicate()
-			for budget: Dictionary in [
-				{"physical": Vector2i(1440, 900), "scale": 100, "compact": false},
-				{"physical": Vector2i(1440, 900), "scale": 125, "compact": false},
-				{"physical": Vector2i(1440, 600), "scale": 100, "compact": false},
-				{"physical": Vector2i(1440, 900), "scale": 150, "compact": true},
-				{"physical": Vector2i(360, 480), "scale": 150, "compact": true},
-			]:
-				host.content_scale_size = Vector2i.ZERO
-				host.size = budget.physical
-				host.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
-				host.content_scale_factor = float(budget.scale) / 100.0
-				await _settle_layout()
-				deck.size = host.get_visible_rect().size
-				deck._apply_layout()
-				await _settle_layout()
-				_assert(deck.compact == budget.compact, "actual Window dock/compact policy at %s / %s%%" % [budget.physical, budget.scale])
-				if not deck.compact:
-					var dock_scroll: ScrollContainer = deck._dock_scrolls[side]
-					_assert(dock_scroll.get_v_scroll_bar().visible and dock_scroll.follow_focus,
-						"dense %s dock exposes keyboard-following overflow" % side)
-					_assert(dock_scroll.get_global_rect().size.y > 0, "dock viewport remains usable on height rescale")
-				for key: String in deck.windows:
-					var window: WorkspaceWindow = deck.windows[key]
-					if deck.compact:
-						if deck._compact_panel != key:
-							deck.toggle_panel(key)
-							await _settle_layout()
-					_assert(window.is_visible_in_tree() and window.scroll.size.y > 0 and window.scroll.size.x > 0,
-						"%s has a positive real body viewport at %s%%" % [key, budget.scale])
-					if not deck.compact:
-						_assert(window.size.y >= WorkspaceLayout.MIN_SIZE.y and window.size.x >= WorkspaceLayout.MIN_SIZE.x,
-							"dense/disproportionate dock cannot starve %s below its usable minimum" % key)
-					var action: Button = probes[key].action
-					action.grab_focus()
-					await _settle_layout()
-					_assert(_unclipped_control_rect(action).encloses(action.get_global_rect()),
-						"keyboard focus reveals %s final action through every clipping ancestor at %s%%: action %s visible %s inner %s/%s outer %s/%s" % [key, budget.scale, action.get_global_rect(), _unclipped_control_rect(action), window.scroll.get_global_rect(), window.scroll.scroll_vertical, deck._dock_scrolls[side].get_global_rect(), deck._dock_scrolls[side].scroll_vertical])
-					_assert(_unclipped_control_rect(window.scroll).has_area(), "overflow reveals a nonzero body viewport for %s" % key)
-					var before: int = activated[0]
-					var enter := InputEventKey.new()
-					enter.keycode = KEY_SPACE
-					enter.pressed = true
-					get_viewport().push_input(enter)
-					enter = InputEventKey.new()
-					enter.keycode = KEY_SPACE
-					get_viewport().push_input(enter)
-					_assert(activated[0] == before + 1, "actual viewport keyboard input activates revealed %s action" % key)
-					_assert(deck.state(key).open and not deck.state(key).minimized and deck.state(key).rect == remembered[key],
-						"overflow/scale changes never close panels or rewrite personal geometry")
-				# Collapse/restore preserves explicit intent at every budget.
-				var collapse_key := InputEventKey.new()
-				collapse_key.keycode = KEY_F10
-				collapse_key.pressed = true
-				get_viewport().push_input(collapse_key)
-				await _settle_layout()
-				_assert(deck.state("developer").minimized and deck.windows.developer.visible and deck.windows.developer.size.y == 32,
-					"dense/compact minimize retains the requested 32px header")
-				get_viewport().push_input(collapse_key)
-				await _settle_layout()
-				_assert(not deck.state("developer").minimized and _unclipped_control_rect(deck.windows.developer.titlebar).has_area(),
-					"F-key-equivalent restore reveals the last overflowed panel")
+	for scale: float in [1.0, 1.25, 1.5]:
+		host.size = Vector2i(1440, 900)
+		host.content_scale_factor = scale
+		await _settle_layout()
+		deck.size = host.get_visible_rect().size
+		deck._apply_layout()
+		await _settle_layout()
+		_assert(not deck.compact and deck._map.get_global_rect() == deck.area.get_global_rect(), "ten overlapping panels never shrink map at %s" % scale)
+		for key: String in deck.windows:
+			deck.focus_panel(key)
+			var window: WorkspaceWindow = deck.windows[key]
+			_assert(deck.area.get_child(-1) == window and window.size.x >= 280 and window.size.y >= 180, "focused %s is raised with usable minimum geometry" % key)
+			_assert(deck.blocks_map_input(window.get_global_rect().get_center()), "floating %s excludes map input" % key)
+			var action: Button = probes[key].action
+			action.grab_focus()
+			await _settle_layout()
+			_assert(_unclipped_control_rect(action).encloses(action.get_global_rect()), "keyboard follow-focus reveals %s final body action at %s: action %s visible %s scroll %s offset %s" % [key, scale, action.get_global_rect(), _unclipped_control_rect(action), window.scroll.get_global_rect(), window.scroll.scroll_vertical])
+			var before: int = activated[0]
+			var pointer := action.get_global_rect().get_center()
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer))
+			_assert(activated[0] == before + 1, "real pointer activates topmost %s body exactly once" % key)
+			_assert(deck.state(key).rect == [0.2, 0.2, 0.3, 0.45], "overlap and focus do not rewrite %s geometry" % key)
 	for key: String in probes:
 		deck.windows[key].content.remove_child(probes[key].fixture)
 		probes[key].fixture.queue_free()
@@ -582,13 +693,76 @@ func _test_dock_overflow(deck: WorkspaceDeck) -> void:
 	deck.authorized = original_authorized
 	deck._compact_panel = original_compact_panel
 	host.content_scale_factor = original_scale
-	host.content_scale_mode = original_scale_mode
-	host.content_scale_size = original_scale_size
 	host.size = original_host_size
 	deck.size = original_size
 	deck._apply_layout()
 	await _settle_layout()
-	print("WORKSPACE_DOCK_OVERFLOW_PASS ten-left ten-right disproportionate actual-window-scale nested-clipping keyboard-actions")
+	print("WORKSPACE_FLOATING_OVERLAP_PASS ten-panels z-order full-map native-window-100-125-150 scroll-body pointer-actions")
+
+func _test_retained_body_focus_resize(deck: WorkspaceDeck) -> void:
+	var host := get_tree().root
+	var old_host_size := host.size
+	var old_scale := host.content_scale_factor
+	var old_size := deck.size
+	var old_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
+	var window: WorkspaceWindow = deck.windows.people
+	for key: String in deck.windows:
+		deck.state(key).open = key == "people"
+	deck.state("people").minimized = false
+	deck.state("people").pinned = true # Pin never blocks body access/reveal.
+	deck.state("people").rect = [0.1, 0.1, 0.32, 0.6]
+	var fixture := VBoxContainer.new()
+	var spacer := Control.new()
+	spacer.custom_minimum_size.y = 900
+	fixture.add_child(spacer)
+	var action := Button.new()
+	action.text = "Final body action"
+	fixture.add_child(action)
+	window.content.add_child(fixture)
+	var activated := [0]
+	action.pressed.connect(func() -> void: activated[0] += 1)
+	for budget: Dictionary in [
+		{"size": Vector2i(1440, 900), "scale": 1.0},
+		{"size": Vector2i(1440, 900), "scale": 1.25},
+		{"size": Vector2i(1440, 900), "scale": 1.5},
+		{"size": Vector2i(1280, 840), "scale": 1.5},
+	]:
+		host.size = budget.size
+		host.content_scale_factor = budget.scale
+		await _settle_layout()
+		deck.size = host.get_visible_rect().size
+		deck._apply_layout()
+		await _settle_layout()
+		if budget.scale == 1.0:
+			action.grab_focus() # Exactly once: retain this same node thereafter.
+			await _settle_layout()
+		_assert(get_viewport().gui_get_focus_owner() == action, "body resize retains the exact focused node at %s/%s" % [budget.size, budget.scale])
+		_assert(_unclipped_control_rect(action).encloses(action.get_global_rect()), "retained final body action is fully revealed after %s/%s" % [budget.size, budget.scale])
+		var before: int = activated[0]
+		var key := InputEventKey.new()
+		key.keycode = KEY_SPACE
+		key.pressed = true
+		await _parse(key)
+		key.pressed = false
+		await _parse(key)
+		_assert(activated[0] == before + 1, "retained body action remains keyboard reachable after resize")
+		var point := action.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, point))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, point))
+		_assert(activated[0] == before + 2 and get_viewport().gui_get_focus_owner() == action, "revealed body action remains pointer reachable without focus replacement")
+		var scroll_before := window.scroll.scroll_vertical
+		deck._apply_layout()
+		await _settle_layout()
+		_assert(window.scroll.scroll_vertical == scroll_before, "already visible retained focus does not reset scroll on repeated layout")
+	window.content.remove_child(fixture)
+	fixture.queue_free()
+	deck.model.workspaces[deck.model.active].panels = old_panels
+	host.size = old_host_size
+	host.content_scale_factor = old_scale
+	deck.size = old_size
+	deck._apply_layout()
+	await _settle_layout()
+	print("WORKSPACE_RETAINED_BODY_FOCUS_PASS same-node scale-100-125-150 viewport-resize clipping keyboard pointer pinned no-scroll-reset")
 
 func _test_navigation_focus(deck: WorkspaceDeck) -> void:
 	var viewport := get_viewport()
