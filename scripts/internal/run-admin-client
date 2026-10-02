@@ -3,11 +3,11 @@
 # The grant is never automatic: pass --grant and confirm with --yes.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-HOST="${CONTINUUM_HOST:-http://127.0.0.1:3000}"
+HOST="${CONTINUUM_HOST:-http://127.0.0.1:3001}"
 DB="${CONTINUUM_DB:-continuum}"
 GODOT="${GODOT:-godot}"
 STDB="${CONTINUUM_STDB:-}"
-PUBLISHER_HOST="${CONTINUUM_PUBLISHER_HOST:-http://127.0.0.1:3000}"
+PUBLISHER_HOST="${CONTINUUM_PUBLISHER_HOST:-}"
 GRANT=0
 YES=0
 for argument in "$@"; do
@@ -20,33 +20,76 @@ for argument in "$@"; do
     esac
 done
 
-if [[ "$GRANT" == 1 && "$HOST" != "$PUBLISHER_HOST" ]]; then
-    printf 'refusing publisher grant: publisher targets %s, got %s\n' "$PUBLISHER_HOST" "$HOST" >&2
-    exit 2
+# Reject malformed targets before a bootstrap can write an admin token. The
+# helper also applies the same endpoint validator as the in-game Servers UI.
+[[ "$HOST" =~ ^https?://[^[:space:]/\?#@]+$ && "$DB" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ && ${#DB} -le 128 ]] || {
+    printf 'admin launcher: invalid host or database\n' >&2; exit 2;
+}
+NATIVE=0
+[[ "$HOST" != http://127.0.0.1:3001 ]] || NATIVE=1
+if [[ "$NATIVE" == 1 ]]; then
+    # Godot 4.7's OS.execute on Linux marshals arguments through a shell.
+    # Validate the effective root (including HOME/XDG defaults) before Godot
+    # can pass any derived path to stat. Never sanitize into another identity.
+    native_root="${CONTINUUM_NATIVE_ROOT:-${XDG_DATA_HOME:-${HOME}/.local/share}/Continuum/native}"
+    if [[ ! "$native_root" =~ ^/[A-Za-z0-9_./\ -]*$ || "$native_root" =~ (^|/)\.{1,2}(/|$) ]]; then
+        printf 'admin launcher: Native root must be an absolute path using only letters, digits, spaces, dots, underscores, dashes and slashes, without dot traversal.\n' >&2
+        exit 2
+    fi
+fi
+if [[ "$GRANT" == 1 && "$NATIVE" == 0 ]]; then
+    # Only the explicit Docker-development endpoint has a default publisher.
+    if [[ -z "$PUBLISHER_HOST" && ( "$HOST" == http://127.0.0.1:3000 || "$HOST" == http://localhost:3000 ) ]]; then
+        PUBLISHER_HOST="$HOST"
+    fi
+    [[ "$PUBLISHER_HOST" == "$HOST" ]] || {
+        printf 'refusing publisher grant: set CONTINUUM_PUBLISHER_HOST to the exact target and CONTINUUM_STDB to its existing publisher CLI\n' >&2; exit 2;
+    }
+    if [[ -z "$STDB" && "$HOST" != http://127.0.0.1:3000 && "$HOST" != http://localhost:3000 ]]; then
+        printf 'refusing remote grant: CONTINUUM_STDB must select an existing publisher CLI\n' >&2; exit 2
+    fi
+elif [[ "$GRANT" == 1 && -n "$PUBLISHER_HOST" && "$PUBLISHER_HOST" != "$HOST" ]]; then
+    printf 'refusing publisher grant: publisher target does not match host\n' >&2; exit 2
 fi
 
-output="$($GODOT --headless --path "$ROOT/client/godot" --scene res://scenes/admin_bootstrap.tscn -- \
+selection="$("$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/native_publisher_probe.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB")" || exit 1
+NATIVE_CLI="$(printf '%s\n' "$selection" | sed -n 's/^NATIVE_CLI=//p')"
+NATIVE_CONFIG="$(printf '%s\n' "$selection" | sed -n 's/^NATIVE_CONFIG=//p')"
+if [[ "$NATIVE" == 1 && ( -z "$NATIVE_CLI" || -z "$NATIVE_CONFIG" ) ]]; then
+    printf 'admin launcher: Start local server in Servers first (owned native publisher unavailable).\n' >&2; exit 1
+fi
+
+output="$("$GODOT" --headless --path "$ROOT/client/godot" --scene res://scenes/admin_bootstrap.tscn -- \
     --stdb-host="$HOST" --stdb-db="$DB" --profile=admin)"
 identity="$(printf '%s\n' "$output" | awk -F= '$1 == "CLIENT_IDENTITY" { print $2; exit }')"
-[[ -n "$identity" ]] || { printf 'admin launcher: bootstrap did not return an identity\n' >&2; exit 1; }
+[[ "$identity" =~ ^[0-9a-fA-F]{64}$ ]] || { printf 'admin launcher: bootstrap did not return a valid identity\n' >&2; exit 1; }
 printf 'admin client identity: %s\n' "$identity"
 printf 'admin profile: %s\n' "$DB"
 
 if [[ "$GRANT" == 1 ]]; then
     if [[ "$YES" != 1 ]]; then
-        read -r -p "Grant admin to this distinct identity on '$DB'? [y/N] " answer
+        read -r -p "Grant admin to this distinct identity on '$HOST/$DB'? [y/N] " answer || answer=""
         [[ "$answer" == "y" || "$answer" == "Y" ]] || { printf 'grant cancelled\n'; exit 0; }
     fi
     printf 'granting admin through the existing publisher CLI...\n'
-    if [[ -n "$STDB" ]]; then
-        "$STDB" call "$DB" grant_admin "\"$identity\"" >/dev/null
+    if [[ "$NATIVE" == 1 ]]; then
+        # Never use --root-dir: the supervisor's publisher lives in this XDG
+        # config, not in a fresh CLI identity. Overrides use that same config.
+        XDG_CONFIG_HOME="$NATIVE_CONFIG" "${STDB:-$NATIVE_CLI}" call --server "$HOST" "$DB" grant_admin "\"$identity\"" </dev/null >/dev/null
+    elif [[ -n "$STDB" ]]; then
+        "$STDB" call --server "$HOST" "$DB" grant_admin "\"$identity\"" </dev/null >/dev/null
     else
-        docker compose exec -T spacetimedb spacetime call "$DB" grant_admin "\"$identity\"" </dev/null >/dev/null
+        # Use the already-running Compose service and its existing publisher.
+        docker compose --project-directory "$ROOT" exec -T spacetimedb spacetime call --server "$HOST" "$DB" grant_admin "\"$identity\"" </dev/null >/dev/null
     fi
 fi
 
-"$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
-    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Admin >/dev/null
+if ! "$GODOT" --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- \
+    --stdb-host="$HOST" --stdb-db="$DB" --profile=admin --expected=Admin >/dev/null; then
+    printf 'Admin access not verified. Run just admin-grant --stdb-host=%s --stdb-db=%s and confirm the grant first.\n' "$HOST" "$DB" >&2
+    exit 1
+fi
 printf 'admin profile verified through the sender-scoped role view\n'
 exec "$GODOT" --path "$ROOT/client/godot" -- \
     --stdb-host="$HOST" --stdb-db="$DB" --profile=admin

@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""Fake-only launcher checks; never contact an actual server or use credentials."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+STATE = Path('/tmp/opencode/continuum-admin-launch-state')
+STATE.mkdir(mode=0o700, parents=True, exist_ok=True)
+GODOT = shutil.which('godot')
+
+
+def executable(path, contents):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(contents)
+    path.chmod(0o700)
+
+
+def digest(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def start_token(pid):
+    return Path(f'/proc/{pid}/stat').read_text().rsplit(') ', 1)[1].split()[19]
+
+
+class LauncherTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        # A fresh worktree needs Godot's class index. Keep editor state/logs
+        # isolated too, so the suite is independently runnable after checkout.
+        cls.import_temp = tempfile.TemporaryDirectory(prefix='import-', dir=STATE)
+        cls.addClassCleanup(cls.import_temp.cleanup)
+        env = dict(os.environ, CONTINUUM_NATIVE_ROOT=cls.import_temp.name,
+                   HOME=cls.import_temp.name, GODOT_SILENCE_ROOT_WARNING='1')
+        for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'):
+            path = Path(cls.import_temp.name) / key.lower()
+            path.mkdir(mode=0o700)
+            env[key] = str(path)
+        result = subprocess.run([GODOT, '--headless', '--editor', '--import', '--path', str(ROOT / 'client/godot')],
+                                env=env, capture_output=True, text=True, timeout=120)
+        if result.returncode:
+            raise RuntimeError(result.stderr)
+
+    def setUp(self):
+        # All positive fixtures intentionally exercise supported spaces.
+        self.temp = tempfile.TemporaryDirectory(prefix='fixture with spaces-', dir=STATE)
+        self.base = Path(self.temp.name)
+        self.native = self.base / 'native'
+        self.bin = self.base / 'bin'
+        self.trace = self.base / 'trace.jsonl'
+        self.env = dict(os.environ)
+        for key in ('CONTINUUM_HOST', 'CONTINUUM_DB', 'CONTINUUM_STDB', 'CONTINUUM_PUBLISHER_HOST'):
+            self.env.pop(key, None)
+        self.env.update(CONTINUUM_NATIVE_ROOT=str(self.native), TRACE=str(self.trace),
+                        REAL_GODOT=GODOT, GODOT=str(self.bin / 'godot'),
+                        PATH=str(self.bin) + ':' + self.env['PATH'],
+                        HOME=str(self.base / 'home'), GODOT_SILENCE_ROOT_WARNING='1')
+        for key in ('XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'XDG_RUNTIME_DIR'):
+            path = self.base / key.lower()
+            path.mkdir(mode=0o700)
+            self.env[key] = str(path)
+        executable(self.bin / 'godot', '''#!/usr/bin/env python3
+import json, os, subprocess, sys
+args = sys.argv[1:]
+with open(os.environ['TRACE'], 'a') as f: f.write(json.dumps(['godot', args]) + '\\n')
+if 'res://tools/native_publisher_probe.gd' in args:
+    sys.exit(subprocess.call([os.environ['REAL_GODOT']] + args))
+if 'res://scenes/admin_bootstrap.tscn' in args:
+    print('CLIENT_IDENTITY=' + 'a' * 64)
+elif 'res://tools/access_probe.gd' in args:
+    sys.exit(int(os.environ.get('PROBE_FAIL', '0')))
+''')
+        cli = '''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ['TRACE'], 'a') as f:
+    f.write(json.dumps(['publisher', sys.argv[1:], os.environ.get('XDG_CONFIG_HOME')]) + '\\n')
+'''
+        executable(self.bin / 'override', cli)
+        executable(self.bin / 'docker', cli.replace("'publisher'", "'docker'"))
+        executable(self.bin / 'curl', '#!/bin/sh\nexit "${HEALTH_FAIL:-0}"\n')
+        self.version = self.native / 'spacetimedb/2.10.0'
+        self.runtime = self.version / 'spacetimedb-standalone'
+        self.supervisor = self.version / 'native-server-supervisor.sh'
+        self.cli = self.version / 'spacetimedb-cli'
+        executable(self.cli, cli)
+        self.runtime.write_bytes(Path('/bin/sleep').read_bytes())
+        self.runtime.chmod(0o700)
+        executable(self.supervisor, '#!/bin/sh\n"$1" 60 &\necho $! > "$2"\nwait\n')
+        self.config = self.native / '2.10.0/config'
+        self.data = self.native / '2.10.0/data'
+        self.config.mkdir(parents=True)
+        self.data.mkdir()
+        self.module = self.native / 'modules/2.10.0/continuum_module.wasm'
+        self.module.parent.mkdir(parents=True)
+        self.module.write_bytes(b'fake-module')
+        self.child_file = self.base / 'child'
+        self.process = subprocess.Popen([str(self.supervisor), str(self.runtime), str(self.child_file)])
+        # Wait on a concrete fixture event, not a live server.
+        import time
+        deadline = time.monotonic() + 3
+        while not self.child_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.child = int(self.child_file.read_text())
+        self.manifest = self.native / '2.10.0/server.json'
+        self.metadata = dict(runtime='2.10.0', runtime_sha256=digest(self.runtime),
+                             cli_sha256=digest(self.cli), supervisor_sha256=digest(self.supervisor),
+                             module_sha256=digest(self.module), database='continuum',
+                             pid=self.process.pid, runtime_pid=self.child,
+                             started_at=start_token(self.process.pid), runtime_started_at=start_token(self.child),
+                             runtime_parent_pid=self.process.pid, runtime_binary=str(self.runtime),
+                             startup_nonce='fixture', data_dir=str(self.data),
+                             host='http://127.0.0.1:3001', phase='running')
+        self.manifest.write_text(json.dumps(self.metadata))
+
+    def tearDown(self):
+        try:
+            os.kill(self.child, 15)
+        except ProcessLookupError:
+            pass
+        self.process.wait(timeout=3)
+        self.temp.cleanup()
+
+    def run_launcher(self, *args, answer='', **env):
+        return subprocess.run([str(ROOT / 'scripts/internal/run-admin-client'), *args],
+                              input=answer, text=True, capture_output=True,
+                              env=dict(self.env, **env), timeout=30)
+
+    def events(self):
+        return [json.loads(line) for line in self.trace.read_text().splitlines()] if self.trace.exists() else []
+
+    def assert_no_bootstrap(self):
+        self.assertFalse(any('res://scenes/admin_bootstrap.tscn' in event[1] for event in self.events()))
+        self.assertFalse(any(event[0] in ('publisher', 'docker') for event in self.events()))
+
+    def test_native_launch_never_grants_even_with_yes(self):
+        before = self.manifest.read_bytes()
+        result = self.run_launcher('--yes')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(event[0] in ('publisher', 'docker') for event in self.events()))
+        probe = next(event for event in self.events() if 'res://tools/access_probe.gd' in event[1])
+        self.assertIn('--expected=Admin', probe[1])
+        self.assertIn('--profile=admin', probe[1])
+        self.assertIn('--stdb-host=http://127.0.0.1:3001', self.events()[-1][1])
+        self.assertEqual(before, self.manifest.read_bytes())
+
+    def test_confirmed_native_grant_uses_persistent_config(self):
+        result = self.run_launcher('--grant', answer='y\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        publisher = next(event for event in self.events() if event[0] == 'publisher')
+        self.assertEqual(publisher[1][:4], ['call', '--server', 'http://127.0.0.1:3001', 'continuum'])
+        self.assertEqual(publisher[2], str(self.config))
+
+    def test_cancel_never_grants_or_launches(self):
+        result = self.run_launcher('--grant', answer='n\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any(event[0] in ('publisher', 'docker') for event in self.events()))
+        self.assertFalse(any('res://tools/access_probe.gd' in event[1] for event in self.events()))
+
+    def test_manifest_mismatch_fails_before_bootstrap(self):
+        self.metadata['database'] = 'other'
+        self.manifest.write_text(json.dumps(self.metadata))
+        result = self.run_launcher('--grant', '--yes')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_bootstrap()
+
+    def test_unowned_process_and_hash_fail_before_bootstrap(self):
+        self.metadata['runtime_started_at'] = 'wrong'
+        self.manifest.write_text(json.dumps(self.metadata))
+        self.assertNotEqual(self.run_launcher('--grant', '--yes').returncode, 0)
+        self.assert_no_bootstrap()
+        self.metadata['runtime_started_at'] = start_token(self.child)
+        self.metadata['cli_sha256'] = 'wrong'
+        self.manifest.write_text(json.dumps(self.metadata))
+        self.assertNotEqual(self.run_launcher('--grant', '--yes').returncode, 0)
+        self.assert_no_bootstrap()
+
+    def test_offline_and_writable_manifest_fail_before_bootstrap(self):
+        self.manifest.chmod(0o666)
+        self.assertNotEqual(self.run_launcher().returncode, 0)
+        self.assert_no_bootstrap()
+        self.manifest.unlink()
+        result = self.run_launcher()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('Start local server in Servers first', result.stderr)
+        self.assert_no_bootstrap()
+
+    def test_invalid_targets_fail_before_bootstrap(self):
+        for argument in ('--stdb-host=http://foo:99999', '--stdb-host=http://foo@bar',
+                         '--stdb-host=http://foo\nbar', '--stdb-host=http://foo..bar',
+                         '--stdb-db=Bad', '--stdb-db=-bad'):
+            with self.subTest(argument=argument):
+                self.assertNotEqual(self.run_launcher(argument).returncode, 0)
+                self.assert_no_bootstrap()
+
+    def test_health_and_publisher_mismatch_fail_before_bootstrap(self):
+        result = self.run_launcher('--grant', '--yes', HEALTH_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_bootstrap()
+        result = self.run_launcher('--grant', '--yes', CONTINUUM_PUBLISHER_HOST='http://127.0.0.1:3000')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_bootstrap()
+        result = self.run_launcher('--grant', '--yes', '--stdb-host=https://example.com',
+                                   CONTINUUM_STDB=str(self.bin / 'override'),
+                                   CONTINUUM_PUBLISHER_HOST='https://elsewhere.com')
+        self.assertNotEqual(result.returncode, 0)
+        self.assert_no_bootstrap()
+
+    def test_shell_substitution_roots_fail_in_real_godot_and_launcher(self):
+        marker = STATE / ('substitution-marker-' + hashlib.sha256(str(self.base).encode()).hexdigest()[:12])
+        self.addCleanup(lambda: marker.unlink(missing_ok=True))
+        for substitution in (f'$(touch {marker})', f'`touch {marker}`'):
+            for source in ('CONTINUUM_NATIVE_ROOT', 'HOME', 'XDG_DATA_HOME'):
+                with self.subTest(substitution=substitution, source=source):
+                    env = dict(self.env)
+                    env.pop('CONTINUUM_NATIVE_ROOT', None)
+                    if source == 'HOME':
+                        env.pop('XDG_DATA_HOME', None)
+                    env[source] = str(STATE / substitution)
+                    # Bypass the Bash defense to prove the actual installed
+                    # Godot probe also refuses before executing a path helper.
+                    direct = subprocess.run([GODOT, '--headless', '--path', str(ROOT / 'client/godot'),
+                                             '--script', 'res://tools/native_publisher_probe.gd'],
+                                            env=env, text=True, capture_output=True, timeout=30)
+                    self.assertNotEqual(direct.returncode, 0, direct.stdout)
+                    self.assertIn('Native root must be an absolute path', direct.stderr)
+                    self.assertFalse(marker.exists(), 'real Godot executed path substitution')
+                    result = subprocess.run([str(ROOT / 'scripts/internal/run-admin-client'), '--grant', '--yes'],
+                                            env=env, text=True, capture_output=True, timeout=30)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertFalse(marker.exists(), 'launcher executed path substitution')
+                    self.assert_no_bootstrap()
+
+    def test_shell_active_paths_and_traversal_fail_in_real_godot(self):
+        for suffix in ('$name', '`name`', "'name", '"name', '\\name', ';name', '&name', '|name',
+                       '<name', '>name', '*name', '?name', '[name]', '{name}', '(name)', '~name',
+                       'name\n', 'name\r', 'name\t', '../native', './native'):
+            with self.subTest(suffix=suffix):
+                env = dict(self.env, CONTINUUM_NATIVE_ROOT=str(self.base) + '/' + suffix)
+                result = subprocess.run([GODOT, '--headless', '--path', str(ROOT / 'client/godot'),
+                                         '--script', 'res://tools/native_publisher_probe.gd'],
+                                        env=env, text=True, capture_output=True, timeout=30)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('Native root must be an absolute path', result.stderr)
+    def test_docker_explicit_target_and_override_retarget(self):
+        result = self.run_launcher('--grant', '--yes', '--stdb-host=http://127.0.0.1:3000')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        docker = next(event for event in self.events() if event[0] == 'docker')
+        self.assertIn('--server', docker[1])
+        self.assertIn('http://127.0.0.1:3000', docker[1])
+        self.trace.unlink()
+        result = self.run_launcher('--grant', '--yes', CONTINUUM_STDB=str(self.bin / 'override'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        publisher = next(event for event in self.events() if event[0] == 'publisher')
+        self.assertEqual(publisher[1][1:3], ['--server', 'http://127.0.0.1:3001'])
+        self.assertEqual(publisher[2], str(self.config))
+
+    def test_remote_requires_explicit_publisher_only_for_grant(self):
+        host = '--stdb-host=https://example.com:443'
+        self.assertNotEqual(self.run_launcher('--grant', '--yes', host).returncode, 0)
+        self.assert_no_bootstrap()
+        result = self.run_launcher(host)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.trace.unlink()
+        result = self.run_launcher('--grant', '--yes', host, CONTINUUM_PUBLISHER_HOST='https://example.com:443',
+                                   CONTINUUM_STDB=str(self.bin / 'override'))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        publisher = next(event for event in self.events() if event[0] == 'publisher')
+        self.assertEqual(publisher[1][1:3], ['--server', 'https://example.com:443'])
+
+    def test_probe_failure_is_actionable_and_does_not_grant(self):
+        result = self.run_launcher(PROBE_FAIL='1')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('just admin-grant', result.stderr)
+        self.assertFalse(any(event[0] in ('publisher', 'docker') for event in self.events()))
+
+
+if __name__ == '__main__':
+    if not GODOT:
+        raise SystemExit('Godot is required for the read-only helper integration tests')
+    unittest.main()
