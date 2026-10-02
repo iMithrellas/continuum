@@ -178,7 +178,7 @@ func test_hud(local: LocalDatabase) -> void:
 	main.map.refresh()
 	main._set_permissions("viewer", false, false)
 	check(not main.workspace.authorized.operations and main._map_toolbar.is_visible_in_tree(), "Viewer has an always-visible map toolbar outside unauthorized Operations")
-	check(main._map_toolbar.get_parent() == main.workspace.area.get_parent() and main._map_toolbar.get_index() < main.workspace.area.get_index(), "toolbar is above floating panels rather than underneath them")
+	check(main._map_toolbar.get_parent() == main.workspace.area and main._map_toolbar.get_index() < main.workspace.windows.people.get_index(), "toolbar overlays the full map below floating panels")
 	check(not main._map_layer_buttons[1].disabled, "Viewer can navigate layers")
 	main._map_layer_buttons[1].pressed.emit()
 	check(main.map.terrain_model.cut == 1 and main._map_layer_label.text.contains("z=1") and main._map_layer_label.text.contains("0.5m"), "layer HUD immediately synchronizes z and half-metre elevation")

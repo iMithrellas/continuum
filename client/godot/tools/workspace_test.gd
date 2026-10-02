@@ -779,15 +779,12 @@ func _test_navigation_focus(deck: WorkspaceDeck) -> void:
 	await _settle_layout()
 	_assert(viewport.gui_get_focus_owner() == deck._tab_buttons.daily and deck.model.active == "build",
 		"workspace selection preserves valid navigation identity across structural rebuild")
-	var new_button: Button
-	for button: Button in deck.find_children("*", "Button", true, false):
-		if button.text == "+ New":
-			new_button = button
+	var new_button: Button = deck._menu
 	new_button.grab_focus()
 	deck.set_workspace_alert_summary("build", "warn", 2)
 	deck.set_panel_authorized("admin", false)
 	await _settle_layout()
-	_assert(viewport.gui_get_focus_owner() == new_button, "alert updates and revocation never steal New-button focus")
+	_assert(viewport.gui_get_focus_owner() == new_button, "alert updates and revocation never steal management-menu focus")
 	deck.edit_workspace(false)
 	await _settle_layout()
 	deck._name_input.grab_focus()
@@ -803,11 +800,11 @@ func _test_navigation_focus(deck: WorkspaceDeck) -> void:
 	deck.state("admin").open = true
 	deck._changed()
 	await _settle_layout()
-	deck._panel_buttons.admin.grab_focus()
+	deck._menu.grab_focus()
 	deck.set_panel_authorized("admin", false)
 	await _settle_layout()
-	_assert(viewport.gui_get_focus_owner() == null and not deck._panel_buttons.has("admin"),
-		"revoked panel-navigation identity is cleared rather than restored")
+	_assert(viewport.gui_get_focus_owner() == deck._menu and deck._menu.get_popup().get_item_index(108) == -1,
+		"revoked admin entry disappears without losing management-menu focus")
 	deck.set_panel_authorized("admin", true)
 	deck.windows.admin.pin_button.grab_focus()
 	deck.set_panel_authorized("admin", false)

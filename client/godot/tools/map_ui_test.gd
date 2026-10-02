@@ -125,7 +125,7 @@ func _test_controller_surface() -> void:
 		"legacy lower font bound migrates to 100% without shrinking canonical typography")
 	main.apply_font_size(24, false)
 	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 150 and main.get_window().content_scale_factor == 1.5 and
-			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock.custom_minimum_size.x == 140 and
+			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock.custom_minimum_size.x == 100 and
 			main.workspace.telemetry.get_parent().custom_minimum_size.y == 40 and main._haul_button.get_theme_font_size("font_size") == 13 and main._connection_label.get_theme_font_size("font_size") == 13,
 		"legacy maximum font bound scales the entire viewport once while logical metrics remain fixed")
 	main.apply_font_size(13, false)

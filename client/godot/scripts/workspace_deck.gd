@@ -8,6 +8,7 @@ var model := WorkspaceLayout.new()
 var windows: Dictionary = {}
 var authorized: Dictionary = {}
 var telemetry: HBoxContainer
+var status_content: VBoxContainer
 var area: Control
 var compact := false
 var map_only := false
@@ -51,14 +52,24 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	header.add_theme_stylebox_override("panel", DeckTheme.box(ThemeTokens.color("bg-000"), ThemeTokens.color("line-100"), 0))
 	stack.add_child(header)
 	var rows := VBoxContainer.new()
+	rows.add_theme_constant_override("separation", 0)
 	header.add_child(rows)
 	_telemetry_header = HBoxContainer.new()
 	_telemetry_header.add_theme_constant_override("separation", 0)
 	rows.add_child(_telemetry_header)
 	telemetry = _scroll_row(_telemetry_header, ThemeTokens.number("topbar"))
+	status_content = VBoxContainer.new()
+	status_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	status_content.add_theme_constant_override("separation", 0)
+	status_content.custom_minimum_size.y = ThemeTokens.number("topbar")
+	var status_viewport := telemetry.get_parent()
+	status_viewport.remove_child(telemetry)
+	status_viewport.add_child(status_content)
+	status_content.add_child(telemetry)
+	telemetry.custom_minimum_size.y = ThemeTokens.number("topbar")
 	# Reserve the horizontal scroll track consistently: toggling inline
 	# diagnostics must not move the map when the telemetry crosses overflow.
-	telemetry.get_parent().horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
+	status_viewport.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	diagnostics_host = Control.new()
 	diagnostics_host.name = "DiagnosticsHost"
 	diagnostics_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -67,26 +78,19 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_telemetry_header.add_child(diagnostics_host)
 	_telemetry_header.resized.connect(_resize_diagnostics_host)
 	var workspace_row := _scroll_row(rows, ThemeTokens.number("panel-header"))
-	var label := Label.new()
-	label.text = "WORKSPACE"
-	ThemeTokens.apply_label(label, "section")
-	workspace_row.add_child(label)
 	_tabs = HBoxContainer.new()
 	workspace_row.add_child(_tabs)
-	_button(workspace_row, "+ New", "Create a personal workspace", func() -> void: edit_workspace(true))
-	_button(workspace_row, "Panels", "Choose panels / rename workspace (Ctrl+F)", func() -> void: edit_workspace(false))
-	_button(workspace_row, "Save", "Save this device's layouts", save_layout)
 	_status = Label.new()
-	_status.add_theme_color_override("font_color", DeckTheme.MUTED)
-	workspace_row.add_child(_status)
+	add_child(_status)
+	_status.hide()
 	_menu = MenuButton.new()
-	_menu.text = "Layout"
+	_menu.focus_mode = Control.FOCUS_ALL
+	_menu.text = "Panels"
+	_menu.theme_type_variation = "ButtonQuiet"
 	workspace_row.add_child(_menu)
-	_menu.get_popup().add_item("Reset current layout", 0)
-	_menu.get_popup().add_item("Delete custom workspace", 1)
-	_menu.get_popup().add_separator()
-	_menu.get_popup().add_check_item("Show panel headers (Ctrl+Shift+H)", 2)
 	_menu.get_popup().id_pressed.connect(_layout_action)
+	_menu.about_to_popup.connect(_build_management_menu)
+	workspace_row.resized.connect(_fit_navigation)
 	area = Control.new()
 	area.name = "WindowArea"
 	area.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -96,9 +100,10 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	map_control.reparent(area)
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	area.resized.connect(_apply_layout)
-	_button(workspace_row, "Map", "Show or hide panels (Ctrl+\\)", toggle_map_only)
+	area.resized.connect(_fit_navigation)
 	_panel_nav = HBoxContainer.new()
-	workspace_row.add_child(_panel_nav)
+	add_child(_panel_nav)
+	_panel_nav.hide()
 	_build_dialog()
 
 func apply_metrics(ui_metrics: UiMetrics) -> void:
@@ -123,19 +128,20 @@ func _resize_diagnostics_host() -> void:
 	# The scroll viewport keeps its original row height, but never dictates the
 	# window width. Diagnostics reserve at most 40% of the actual header width.
 	diagnostics_host.custom_minimum_size = Vector2(
-		minf(metrics.px(360), maxf(0, _telemetry_header.size.x * 0.4)) if diagnostics_host.visible else 0,
+		minf(0 if size.x < 550 else (120 if size.x < 800 else metrics.px(360)), maxf(0, _telemetry_header.size.x * 0.4)) if diagnostics_host.visible else 0,
 		0)
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = height
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
 	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	parent.add_child(scroll)
 	_rows.append(scroll)
 	var row := HBoxContainer.new()
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(row)
 	return row
@@ -243,7 +249,7 @@ func state(key: String) -> Dictionary:
 
 
 func blocks_map_input(point: Vector2) -> bool:
-	if _dialog.visible or (is_instance_valid(_confirmation) and _confirmation.visible) or not _map.get_global_rect().has_point(point):
+	if _dialog.visible or _menu.get_popup().visible or (is_instance_valid(_confirmation) and _confirmation.visible) or not _map.get_global_rect().has_point(point):
 		return true
 	for window: WorkspaceWindow in windows.values():
 		if window.visible and (not window._gesture.is_empty() or window.get_global_rect().has_point(point)):
@@ -475,7 +481,8 @@ func _rebuild_navigation() -> void:
 		_tabs.add_child(tab)
 		var row := HBoxContainer.new()
 		tab.add_child(row)
-		var button := _button(row, model.workspaces[id].name, "Switch workspace", switch_workspace.bind(id))
+		var name: String = model.workspaces[id].name
+		var button := _button(row, name if name.length() <= 28 else name.left(27) + "…", name + " · switch workspace", switch_workspace.bind(id))
 		button.set_meta("workspace_id", id)
 		_tab_buttons[id] = button
 		button.add_theme_color_override("font_color", ThemeTokens.color("ink" if model.active == id else "ink-muted"))
@@ -493,23 +500,52 @@ func _rebuild_navigation() -> void:
 		underline.custom_minimum_size.y = 2
 		underline.color = ThemeTokens.color("accent") if model.active == id else Color.TRANSPARENT
 		tab.add_child(underline)
-	var index := 0
-	for key: String in windows:
-		index += 1
-		if not authorized[key] or not state(key).open:
-			continue
-		var button := _button(_panel_nav, "%s %s" % ["+" if state(key).minimized or map_only else "-", WorkspaceLayout.PANEL_NAMES[key]],
-			"Show/minimize panel (F%d)" % index, toggle_panel.bind(key))
-		button.toggle_mode = true
-		button.set_meta("panel_id", key)
-		_panel_buttons[key] = button
-		button.set_pressed_no_signal(not state(key).minimized and not map_only)
-	_menu.get_popup().set_item_disabled(1, WorkspaceLayout.defaults().has(model.active))
-	_menu.get_popup().set_item_checked(_menu.get_popup().get_item_index(2), model.show_panel_headers)
+	_build_management_menu()
+	_fit_navigation.call_deferred()
 	if _tab_buttons.has(workspace_focus):
 		_tab_buttons[workspace_focus].grab_focus()
 	elif _panel_buttons.has(panel_focus):
 		_panel_buttons[panel_focus].grab_focus()
+
+func _build_management_menu() -> void:
+	var popup := _menu.get_popup()
+	popup.clear()
+	for key: String in windows:
+		if not authorized.get(key, false): continue
+		var index := windows.keys().find(key)
+		popup.add_check_item("%s%s (F%d)" % [WorkspaceLayout.PANEL_NAMES[key], " · pinned" if state(key).pinned else "", index + 1], 100 + index)
+		popup.set_item_checked(popup.item_count - 1, state(key).open and not state(key).minimized and not map_only)
+	popup.add_separator()
+	popup.add_item("New workspace…", 3)
+	popup.add_item("Choose panels / rename…", 4)
+	popup.add_item("Save layout", 5)
+	popup.set_item_tooltip(popup.item_count - 1, _status.text)
+	popup.add_item("Reset current layout…", 0)
+	popup.add_item("Delete custom workspace…", 1)
+	popup.set_item_disabled(popup.item_count - 1, WorkspaceLayout.defaults().has(model.active))
+	popup.add_check_item("Show panel headers (Ctrl+Shift+H)", 2)
+	popup.set_item_checked(popup.item_count - 1, model.show_panel_headers)
+	popup.add_check_item("Map view · hide panels (Ctrl+\\)", 6)
+	popup.set_item_checked(popup.item_count - 1, map_only)
+	popup.add_separator("Workspaces")
+	for id: String in model.workspaces:
+		popup.add_radio_check_item(model.workspaces[id].name, 200 + model.workspaces.keys().find(id))
+		popup.set_item_checked(popup.item_count - 1, model.active == id)
+	_menu.tooltip_text = "Manage permitted panels and workspaces. " + _status.text
+
+func _fit_navigation() -> void:
+	if not is_instance_valid(_tabs) or not is_instance_valid(_menu): return
+	for tab in _tabs.get_children(): tab.show()
+	var available := size.x - _menu.get_combined_minimum_size().x - 24
+	var needed := _tabs.get_combined_minimum_size().x
+	if size.x < 1000 or needed > available:
+		for id: String in _tab_buttons:
+			_tab_buttons[id].get_parent().get_parent().visible = id == model.active
+		var active_button: Button = _tab_buttons.get(model.active)
+		if active_button != null:
+			active_button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+			active_button.custom_minimum_size.x = minf(200, maxf(80, available - 48))
+			active_button.tooltip_text = model.workspaces[model.active].name + " · choose workspace in Panels"
 
 func _update_tab_alert(id: String) -> void:
 	if not _tab_alert_nodes.has(id):
@@ -606,6 +642,19 @@ func _confirm_workspace() -> void:
 
 
 func _layout_action(id: int) -> void:
+	if id >= 200:
+		var index := id - 200
+		if index < model.workspaces.size(): switch_workspace(model.workspaces.keys()[index])
+		return
+	if id >= 100:
+		var index := id - 100
+		if index < windows.size() and authorized.get(windows.keys()[index], false): toggle_panel(windows.keys()[index])
+		return
+	match id:
+		3: edit_workspace(true); return
+		4: edit_workspace(false); return
+		5: save_layout(); _build_management_menu(); return
+		6: toggle_map_only(); return
 	if id == 2:
 		toggle_panel_headers()
 		return

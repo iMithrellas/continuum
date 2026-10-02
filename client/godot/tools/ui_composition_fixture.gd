@@ -15,6 +15,7 @@ var _screen := Vector2i(1440, 900)
 var _scale := 100
 var _layout_qa := false
 var _floating := false
+var _map_view_capture := false
 var _digest_capture := false
 
 
@@ -35,6 +36,8 @@ func _ready() -> void:
 			_layout_qa = true
 		elif argument == "--floating":
 			_floating = true
+		elif argument == "--map-view":
+			_map_view_capture = true
 		elif argument == "--digest":
 			_digest_capture = true
 		elif argument.begins_with("--capture="):
@@ -55,6 +58,10 @@ func _ready() -> void:
 	main._menu.hide()
 	main._server_management.hide()
 	main._set_permissions("operator", true, false)
+	if main.workspace.compact:
+		main.workspace._compact_panel = "people"
+		main.workspace._apply_layout()
+	main._refresh_status()
 	var settings: ClientSettings = main._settings.clone()
 	settings.ui_scale_percent = _scale
 	settings.reduced_motion = _reduced
@@ -84,6 +91,7 @@ func _ready() -> void:
 	await _check_functional_contracts()
 	_check_typography(main)
 	if _layout_qa:
+		await _check_header_contracts()
 		await _check_floating_input()
 		await _check_roster_layout_and_input()
 		await _check_tick_focus()
@@ -93,6 +101,10 @@ func _ready() -> void:
 		main._show_away_digest()
 		for frame in 3:
 			await get_tree().process_frame
+	if _map_view_capture:
+		if not main.workspace.map_only: main.workspace.toggle_map_only()
+		for frame in 4: await get_tree().process_frame
+		check(main.workspace.area.get_global_rect().encloses(main._map_toolbar.get_global_rect()), "map-view toolbar stays wholly within the full map at actual scale")
 	if not _capture.is_empty() and DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
 		var image := get_viewport().get_texture().get_image()
@@ -189,7 +201,7 @@ func _check_functional_contracts() -> void:
 	check(main._alert_box is AlertList and main._feed is ActivityFeed, "actual main uses alert and activity components")
 	check(main._return_digest.baseline_available == false, "first visit invents no return baseline")
 	check(main._connection_label.text == "Live" and main._connection_label.get_theme_color("font_color") == ThemeTokens.color("ink-muted"), "healthy connection is neutral")
-	check(main._identity_label.get_theme_color("font_color") == ThemeTokens.color("accent"), "actual authenticated identity and verified role use accent")
+	check(main._identity_label.text == "Operator" and main._authenticated_identity in main._session_menu.tooltip_text, "compact verified role retains actual identity in the account menu tooltip")
 	if _problem:
 		var critical: AlertRow = main._alert_box.get_child(0)
 		check(critical.model.level == "critical" and critical.is_processing() == (not _reduced), "critical pulse obeys reduced motion (preference=%s row=%s processing=%s)" % [_reduced, critical.reduced_motion, critical.is_processing()])
@@ -256,7 +268,7 @@ func _check_functional_contracts() -> void:
 	for window: WorkspaceWindow in main.workspace.windows.values():
 		check(window.get_parent() == main.workspace.area and not window.has_signal("dock_requested"), "every panel is a direct overlay with no docking controls")
 		if window.visible:
-			check(window.size.x >= 280, "visible panels retain 280 logical pixel minimum")
+			check(window.size.x >= minf(280, main.workspace.area.size.x), "visible panels retain logical minimum or the actual compact viewport width")
 			if not main.workspace.compact:
 				var surface: StyleBox = window.get_theme_stylebox("panel")
 				check(not surface is StyleBoxFlat and surface.shadows.size() == 2, "actual floating frame uses the foundation two-layer shadow")
@@ -277,6 +289,76 @@ func _pointer_button(pressed: bool, point: Vector2) -> InputEventMouseButton:
 	event.position = point
 	event.global_position = point
 	return event
+
+func _check_header_contracts() -> void:
+	for frame in 4: await get_tree().process_frame
+	check(main.workspace._rows.size() == 2 and (main.workspace.area.position.y <= 74 or main._resource_group.get_parent() == main.workspace.status_content), "only status and workspace groups reserve global space; tight stock budgets reflow internally (actual %.1f)" % main.workspace.area.position.y)
+	for row: ScrollContainer in main.workspace._rows:
+		check(row.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER, "global chrome has no scrollbar stripes")
+	check(main.workspace._menu.text == "Panels" and not main.workspace._panel_nav.visible, "one Panels management menu replaces repeated navigation chips")
+	check(main._map_toolbar.get_parent() == main.workspace.area and main._map_toolbar.size.x < main.workspace.area.size.x, "map toolbar is a content-width overlay, not a third global bar")
+	check(not main._intent_feedback.visible or main._intent_feedback.text != "Select: drag rectangle", "default selection instructions are not persistent chrome")
+	check(_find_button(main, "Since you left") == null and main._session_menu.get_popup().get_item_text(0) == "Since you left", "digest is reachable through Menu, not a permanent top-level button")
+	var menu_rect: Rect2 = main._session_menu.get_global_rect()
+	check(main.workspace.telemetry.get_parent().get_global_rect().encloses(menu_rect), "account menu remains fully reachable without horizontal scrolling")
+	var old_name: String = main.workspace.model.workspaces[main.workspace.model.active].name
+	main.workspace.model.workspaces[main.workspace.model.active].name = "A very long personal workspace name with details"
+	main.workspace._rebuild_navigation()
+	for frame in 4: await get_tree().process_frame
+	check(main.workspace._menu.is_visible_in_tree(), "long workspace names retain management access")
+	main.workspace.model.workspaces[main.workspace.model.active].name = old_name
+	main.workspace._rebuild_navigation()
+	main._session_menu.get_popup().id_pressed.emit(0)
+	check(main._digest_overlay.visible, "moved digest action opens the actual live/frozen return modal")
+	main._hide_away_digest()
+	main._session_menu.grab_focus()
+	main._refresh_status()
+	var food: ResourceReadout = main._resource_labels[ContinuumResourceKind.Options.food]
+	var retained_stock := food.get_child(0)
+	main._refresh_status()
+	check(get_viewport().gui_get_focus_owner() == main._session_menu, "numeric status ticks preserve account-menu keyboard focus")
+	check(food.get_child(0) == retained_stock, "unchanged resource ticks retain actual display controls rather than creating blank rendering frames")
+	food.set_model({"name": "Food", "availability": "unavailable"}, {"compact": true})
+	check(food.model.value == null and food.model.rate_copy == "Rate unavailable" and food.model.level == "nominal", "compact failed resource availability does not fabricate a zero, rate or forecast")
+	food.set_model({"name": "Food", "value": 40, "availability": "warming"}, {"compact": true})
+	check(food.model.rate_copy == "Rate warming up" and food.model.level == "nominal", "compact warmup remains explicit without repeated permanent filler")
+	main._refresh_status()
+	main._session_menu.get_popup().popup()
+	check(main._map_input_blocked(main.map.get_global_rect().get_center()), "account popup cannot punch input through to map cells")
+	main._session_menu.get_popup().hide()
+	main.workspace._menu.get_popup().popup()
+	check(main._map_input_blocked(main.map.get_global_rect().get_center()), "Panels popup cannot punch input through to map cells")
+	main.workspace._menu.get_popup().hide()
+	main._set_mode(&"excavate")
+	check(main._intent_feedback.is_visible_in_tree() and "Excavate" in main._intent_feedback.text and _find_button(main._intent_feedback.get_parent(), "Cancel · Esc") != null, "active editing intent stays visible with explicit cancel access")
+	main._set_mode(&"select")
+	check(not main._intent_feedback.get_parent().visible, "standard selection mode has no persistent help row")
+	var selections := [0]
+	var capture_selection := func(_rect: Rect2i) -> void: selections[0] += 1
+	main.map.rectangle_selected.connect(capture_selection)
+	main.workspace.toggle_map_only()
+	for frame in 4: await get_tree().process_frame
+	var button: Button = main._map_zoom_buttons.reset
+	var pointer := button.get_global_rect().get_center()
+	check(main._map_input_blocked(pointer), "floating toolbar hit area explicitly excludes map input")
+	await _native_pointer(_pointer_button(true, pointer))
+	await _native_pointer(_pointer_button(false, pointer))
+	check(selections[0] == 0 and not main.map._dragging, "native toolbar click cannot select cells beneath the overlay")
+	main.map.rectangle_selected.disconnect(capture_selection)
+	main.workspace.toggle_map_only()
+	main._goto_colonist(0)
+	main._set_permissions("viewer", false, false)
+	main.workspace._build_management_menu()
+	check(main.workspace._menu.get_popup().get_item_index(108) < 0 and main.workspace._menu.get_popup().get_item_index(109) < 0, "Panels menu never exposes unauthorized Admin/Developer entries")
+	main._set_permissions("operator", true, false)
+	for frame in 4: await get_tree().process_frame
+	main._refresh_status()
+	if main.workspace.area.size.x >= 640 and not main.workspace.diagnostics_host.visible:
+		for card: ResourceReadout in main._resource_labels.values():
+			check(card.visible, "all four resource pairs remain visible at supported viewport widths (budget %.1f)" % (main.workspace.area.size.x - main.workspace.diagnostics_host.custom_minimum_size.x))
+	if main.workspace.compact:
+		main.workspace._compact_panel = "people"
+		main.workspace._apply_layout()
 
 func _pointer_drag(start: Vector2, delta: Vector2) -> void:
 	await _native_pointer(_pointer_button(true, start))
