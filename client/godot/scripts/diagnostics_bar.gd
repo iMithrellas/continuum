@@ -41,31 +41,34 @@ func graph_lane_rects() -> Array[Rect2]:
 func _draw() -> void:
 	if not show_diagnostics or size.x <= 0 or size.y <= 0:
 		return
-	var font := ThemeDB.fallback_font
-	var font_size := metrics.font(10)
+	var font := ThemeTokens.font("readout")
+	var font_size := ThemeTokens.font_size("readout")
 	var lanes := graph_lane_rects()
 	var padding := metrics.px(3)
 	var available := maxf(0, size.x - padding * 2 - (metrics.px(77) if not lanes.is_empty() else 0))
 	var full_frame := frame_text()
 	var compact_text := font.get_string_size(full_frame, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available
-	if compact_text:
-		font_size = metrics.font(9)
 	var baseline := (size.y / 2 - font.get_height(font_size)) / 2 + font.get_ascent(font_size)
-	_draw_line(font, Vector2(padding, baseline), frame_text(compact_text), font_size, available)
-	_draw_line(font, Vector2(padding, size.y / 2 + baseline), session_rtt_text(), font_size, available)
+	var frame := frame_text(compact_text)
+	if font.get_string_size(frame, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available:
+		frame = "FPS %.0f" % float(frame_snapshot.get("mean_fps", 0)) if frame_snapshot.get("ready", false) else "FPS --"
+	_draw_line(font, Vector2(padding, baseline), frame, font_size, available)
+	var rtt := session_rtt_text()
+	if font.get_string_size(rtt, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available:
+		rtt = "TCP N/A" if rtt == "TCP RTT N/A" else "TCP %.1f ms" % float(rtt_snapshot.rtt_ms)
+	_draw_line(font, Vector2(padding, size.y / 2 + baseline), rtt, font_size, available)
 	if not lanes.is_empty():
-		_draw_sparkline(lanes[0], frame_snapshot.get("frame_graph", []), DeckTheme.ACCENT)
+		_draw_sparkline(lanes[0], frame_snapshot.get("frame_graph", []), ThemeTokens.color("ink-muted"))
 		if rtt_snapshot.get("source", "") == "tcp_info" and not rtt_snapshot.get("rtt_stale", false):
-			_draw_sparkline(lanes[1], rtt_snapshot.get("rtt_graph", []), Color("7fa6b8"))
+			_draw_sparkline(lanes[1], rtt_snapshot.get("rtt_graph", []), ThemeTokens.color("meter-fill"))
 
 
 func _draw_line(font: Font, point: Vector2, text: String, font_size: int, width: float) -> void:
 	# draw_string's width does not truncate unwrapped text. Clip at the host and
 	# explicitly fit the text; no tooltip promises on this input-transparent UI.
-	var fitted := text
-	while not fitted.is_empty() and font.get_string_size(fitted, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > width:
-		fitted = fitted.left(fitted.length() - 1)
-	draw_string(font, point, fitted, HORIZONTAL_ALIGNMENT_RIGHT, width, font_size, Color("e8e1d5"))
+	# Never clip a numeric unit or TCP qualifier into an ambiguous readout.
+	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width:
+		draw_string(font, point, text, HORIZONTAL_ALIGNMENT_RIGHT, width, font_size, ThemeTokens.color("ink"))
 
 
 func _draw_sparkline(rect: Rect2, values: Array, color: Color) -> void:

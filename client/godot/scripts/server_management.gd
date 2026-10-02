@@ -42,6 +42,9 @@ var _local_force: Button
 var _native_autostart: CheckButton
 var _native_note: Label
 var _status: Label
+var _status_glyph: TextureRect
+var _status_row: HBoxContainer
+var _status_tag: Label
 var _status_message := ""
 var _status_warning := false
 var _busy := false
@@ -58,7 +61,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	var background := ColorRect.new()
 	background.name = "ServerBackground"
-	background.color = Color("17191b")
+	background.color = ThemeTokens.color("bg-000")
 	background.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(background)
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -107,7 +110,11 @@ func set_status(message: String, warning := false) -> void:
 	if is_instance_valid(_status):
 		_status.text = message
 		_status.visible = not message.is_empty()
-		_status.add_theme_color_override("font_color", Color("ffb74d") if warning else DeckTheme.MUTED)
+		_status_row.visible = _status.visible
+		_status_glyph.visible = warning
+		_status_tag.visible = warning
+		_status_glyph.texture = ThemeTokens.glyph("warn") if warning else null
+		_status.add_theme_color_override("font_color", ThemeTokens.color("warn" if warning else "ink-muted"))
 		if _status.visible:
 			_reveal_status.call_deferred()
 
@@ -238,8 +245,7 @@ func _build_ui() -> void:
 	column.add_child(header)
 	var heading := _label("Servers")
 	heading.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	heading.add_theme_font_size_override("font_size", _metrics.font(20))
-	heading.add_theme_color_override("font_color", DeckTheme.ACCENT)
+	ThemeTokens.apply_label(heading, "title")
 	header.add_child(heading)
 	_back_button = _button("Return", func() -> void: back_requested.emit())
 	header.add_child(_back_button)
@@ -254,8 +260,20 @@ func _build_ui() -> void:
 	var body := VBoxContainer.new()
 	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(body)
+	_status_row = HBoxContainer.new()
+	body.add_child(_status_row)
+	_status_glyph = TextureRect.new()
+	_status_glyph.custom_minimum_size = Vector2(16, 16)
+	_status_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_status_glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_status_glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_status_row.add_child(_status_glyph)
+	_status_tag = _label("Warning ·")
+	_status_tag.add_theme_color_override("font_color", ThemeTokens.color("warn"))
+	_status_row.add_child(_status_tag)
 	_status = _label("")
-	body.add_child(_status)
+	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_status_row.add_child(_status)
 	set_status(_status_message, _status_warning)
 	_sections = BoxContainer.new()
 	_sections.add_theme_constant_override("separation", _metrics.px(16))
@@ -331,13 +349,14 @@ func _section(parent: Node, title: String) -> VBoxContainer:
 	var column := VBoxContainer.new()
 	panel.add_child(column)
 	var heading := _label(title)
-	heading.add_theme_color_override("font_color", DeckTheme.ACCENT)
+	ThemeTokens.apply_label(heading, "body-strong")
 	column.add_child(heading)
 	return column
 
 func _label(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
+	ThemeTokens.apply_label(label, "body")
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	label.custom_minimum_size = Vector2(1, _metrics.px(20))
 	return label
@@ -366,9 +385,11 @@ func _refresh_history_list() -> void:
 		row.add_child(_label("%s / %s" % [entry.endpoint, entry.database]))
 		var details := _label("World: %s | Last joined: %s" % [entry.world,
 			Time.get_datetime_string_from_unix_time(int(entry.last_seen), true)])
+		ThemeTokens.apply_label(details, "log")
 		details.add_theme_color_override("font_color", DeckTheme.MUTED)
 		row.add_child(details)
 		var sample := _label("")
+		ThemeTokens.apply_label(sample, "readout")
 		sample.add_theme_color_override("font_color", DeckTheme.MUTED)
 		row.add_child(sample)
 		_probe_labels[entry.key] = sample
