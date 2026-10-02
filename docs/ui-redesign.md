@@ -37,6 +37,39 @@ under the active panel and explicit Map access. It does not impose a fixed
 100%/125% two-dock or 150% compact policy. v1/v2 preferences migrate to v3 while
 retaining remembered geometry and preferences; docking keys are removed.
 
+### User override: two quiet global strips
+
+The global chrome is a nominal 40-logical-pixel status strip and a 32-logical-pixel
+workspace strip, without horizontal scrollbar stripes. Status shows time, plain
+resource name/value pairs, observed rates when space permits, compact connection
+health and Menu. Real resource warnings retain glyph, severity word and estimated
+game-hour horizon. Missing/warming rates stay honest in each resource tooltip and
+a shared status when space permits; no unavailable measurement becomes zero.
+Crew/role and secondary rates collapse into tooltips at narrow widths; Menu keeps
+the actual full authenticated identity available and offers copying it.
+
+The workspace strip contains tabs (active workspace at constrained widths) and
+one Panels menu. That menu exposes only permitted panels, their shown/pinned
+state, workspace selection, new/rename, save/reset/delete, header visibility and
+Map view. “Since you left” moves into Menu; the existing launch-menu route still
+provides settings, servers, disconnect and exit. Default selection instructions
+move off the global chrome; editing intent retains visible map-local copy and
+Cancel access. Zoom/layer navigation is a content-width top-left map overlay
+below floating panels, with explicit map-input exclusion. Action failures are
+visible floating critical feedback, not a permanent third strip.
+
+Status layout measures the combined live resource/control minima and reserves
+Menu plus neutral connection health first. Secondary rates, crew and role yield
+before warnings. When the remaining width cannot fit every stock/forecast, an
+internal resource grid reflows below the metadata row **inside the same status
+group**; all four glyph/word/estimated game-hour forecasts stay visible, even at
+240 logical pixels. The workspace strip stays below that group; the map fills
+the remaining workspace area. Calm data restores the nominal height without
+resizing the window. Large quantities may use a `~` approximation with the full
+stored value in the tooltip; positive ETA below 0.1 game hour reads `<0.1 game h`,
+not an apparent zero. These are presentation changes, not estimator/threshold
+changes. Unchanged resource inputs retain their controls and Menu focus.
+
 ## Ownership, phases and dependencies
 
 | Phase / owner | Scope | Depends on / handoff |
@@ -171,8 +204,8 @@ actual-main scale/state/focus/reduced-motion cases plus four floating-frame and
 two return-modal cases (54 total), and checks roster GUI input,
 280px panel floors, selected critical contrast, modal
 blocking, changing-value control-focus retention and focus restoration. The
-telemetry body stays at the logical topbar height; its horizontal scroll track
-is always reserved so inline diagnostics cannot cause map geometry to jump.
+telemetry body stays at the logical topbar height; inline diagnostics remain in
+the status strip and do not create another global row or scrollbar stripe.
 These are not the earlier chrome-only fixture.
 The production-main fixture replaces the earlier dock-reservation checks with
 full-workspace map geometry, direct overlay ownership and absence of Dock/Float
@@ -194,6 +227,12 @@ GODOT=/path/to/godot-private PATH=/path/to/private-xvfb/bin:$PATH \
   python3 client/godot/tools/ui_render_matrix.py --live --floating-only
 # Target the two combined-review fatal regressions, including an actual PCK:
 python3 client/godot/tools/ui_check.py --review-only
+# Two-strip header, scaled native input and menu reachability; includes 4K:
+GODOT=/path/to/godot-private PATH=/path/to/private-xvfb/bin:$PATH \
+  python3 client/godot/tools/ui_render_matrix.py --live --header-only
+# Aggregate multi-warning budgets, including 240 logical pixels:
+GODOT=/path/to/godot-private PATH=/path/to/private-xvfb/bin:$PATH \
+  python3 client/godot/tools/ui_render_matrix.py --live --budget-only
 ```
 Fixtures never connect to a server or dispatch a live reducer. Combined review
 must still inspect the candidate and actual PNGs; successful fixture tests are

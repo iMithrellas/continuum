@@ -112,10 +112,11 @@ func _run() -> void:
 				_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "narrow header collapses sparklines")
 			var area_before: Rect2 = main.workspace.area.get_global_rect()
 			var left_before: float = telemetry_view.size.x
+			var diagnostics_width_before: float = host.size.x
 			main.configure_diagnostics(false, true, false)
 			for _frame in 8: await get_tree().process_frame
 			_assert(not host.visible and host.custom_minimum_size.x == 0, "disabled diagnostics release all reserved space")
-			_assert(telemetry_view.size.x > left_before, "disabled diagnostics return width to telemetry")
+			_assert(telemetry_view.size.x >= left_before and (diagnostics_width_before == 0 or telemetry_view.size.x > left_before), "disabled diagnostics release any reserved width; an ultra-narrow collapsed host reserves none")
 			_assert(main.workspace.area.get_global_rect() == area_before, "diagnostics toggles do not change the map area")
 			main.configure_diagnostics(true, true, false)
 			_assert(host.visible and main._diagnostics_overlay.frame_snapshot.is_empty(), "reenable shows the bar with cleared samples")

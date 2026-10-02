@@ -49,7 +49,7 @@ def main():
     if not run("import", PROJECT, "--editor", "--import"):
         (state / "summary.log").write_text("FAIL import\n")
         return True
-    for name in (["map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test"]):
+    for name in (["workspace_test", "map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test"]):
         run(name, PROJECT, "--scene", f"res://tools/{name}.tscn")
     run("role_panels_test", PROJECT, "--scene", "res://tools/role_panels_test.tscn", "--", "--profile=developer")
     for name in ([] if review_only else ["server_browser_test", "diagnostics_test", "diagnostics_bar_test", "history_test", "session_observations_test", "ui_data_test", "ui_theme_test", "map_regions_test", "ui_scale_test"]):
@@ -58,6 +58,7 @@ def main():
         run("map-client-cpu-profile", PROJECT, "--scene", "res://tools/map_client_profile.tscn", "--", "--edge=24")
     if review_only:
         run("review-regressions", PROJECT, "--scene", "res://tools/ui_review_regression.tscn", "--", "--status=problem", "--focus", "--reduced-motion")
+        run("status-budget", PROJECT, "--scene", "res://tools/ui_status_budget_test.tscn", "--", "--screen=960x640", "--scale=150", "--status=problem", "--focus", "--reduced-motion")
     for status in ([] if review_only else ["nominal", "problem"]):
         run("composition-" + status, PROJECT, "--scene", "res://tools/ui_composition_fixture.tscn", "--", "--screen=1440x900", "--scale=100", "--status=" + status, "--focus", "--reduced-motion", "--layout-qa")
 
@@ -82,8 +83,8 @@ def main():
         # geometry from the exported pack in an otherwise empty directory.
         empty = state / "pack-runtime"
         empty.mkdir(exist_ok=True)
-        fixture = "ui_review_regression" if review_only else "ui_composition_fixture"
-        run("packed-widgets", empty, "--main-pack", str(pack), "--scene", f"res://tools/{fixture}.tscn", "--", "--screen=1440x900", "--scale=100", "--status=problem", "--reduced-motion", "--focus", "--layout-qa")
+        fixture = "ui_status_budget_test" if review_only else "ui_composition_fixture"
+        run("packed-widgets", empty, "--main-pack", str(pack), "--scene", f"res://tools/{fixture}.tscn", "--", "--screen=960x640" if review_only else "--screen=1440x900", "--scale=150" if review_only else "--scale=100", "--status=problem", "--reduced-motion", "--focus", "--layout-qa")
     (state / "summary.log").write_text("FAIL " + ", ".join(failures) if failures else "ALL_BACKEND_FREE_GATES_PASS\n")
     print("Evidence:", state)
     return bool(failures)

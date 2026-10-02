@@ -15,11 +15,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--live", action="store_true", help="render actual typed-fixture production main, not phase 2 chrome")
 parser.add_argument("--review-only", action="store_true", help="three focused review-fix GPU cases, not the unchanged full matrix")
 parser.add_argument("--floating-only", action="store_true", help="eight actual-main viewport/scale/status cases for floating integration")
+parser.add_argument("--header-only", action="store_true", help="focused two-strip header matrix plus a 4K window")
+parser.add_argument("--budget-only", action="store_true", help="five multi-warning status budgets, including 240 logical px")
 options = parser.parse_args()
-scene = "ui_composition_fixture" if options.live or options.floating_only else "ui_chrome_fixture"
+scene = "ui_composition_fixture" if options.live or options.floating_only or options.header_only else "ui_chrome_fixture"
 if options.review_only:
     scene = "ui_review_regression"
-marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only or options.floating_only else "UI_INTEGRATION_FIXTURE_PASS"
+if options.budget_only:
+    scene = "ui_status_budget_test"
+marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only or options.floating_only or options.header_only or options.budget_only else "UI_INTEGRATION_FIXTURE_PASS"
 project = Path(__file__).resolve().parents[1]
 base = Path(os.environ.get("UI_RENDER_OUTPUT", "/tmp/opencode/continuum-ui-integration-state/matrix"))
 base.mkdir(parents=True, exist_ok=True)
@@ -41,7 +45,7 @@ if imported.returncode or "SCRIPT ERROR:" in imported.stdout + imported.stderr:
     raise SystemExit("Import failed; see import.log")
 read_fd, write_fd = os.pipe()
 with (base / "xvfb.log").open("w") as log:
-    server = subprocess.Popen([xvfb, "-displayfd", str(write_fd), "-screen", "0", "1440x900x24", "-nolisten", "tcp", "-ac"], env=env, pass_fds=(write_fd,), stdout=log, stderr=log)
+    server = subprocess.Popen([xvfb, "-displayfd", str(write_fd), "-screen", "0", "3840x2160x24" if options.header_only else "1440x900x24", "-nolisten", "tcp", "-ac"], env=env, pass_fds=(write_fd,), stdout=log, stderr=log)
     os.close(write_fd)
     try:
         number = os.read(read_fd, 64).decode().strip()
@@ -57,13 +61,20 @@ with (base / "xvfb.log").open("w") as log:
             cases = [("1440x900", 100, "problem", False, True, ""), ("960x640", 125, "problem", False, True, ""), ("960x640", 150, "problem", True, True, "digest")]
         if options.floating_only:
             cases = [(screen, scale, status, True, True, "") for screen, scale, status in itertools.product(["1440x900", "960x640"], [100, 150], ["nominal", "problem"])]
+        if options.header_only:
+            cases = [(screen, scale, status, True, True, "") for screen, scale, status in itertools.product(["1440x900", "960x640"], [100, 125, 150], ["nominal", "problem"])]
+            cases += [("3840x2160", 150, status, True, True, "") for status in ["nominal", "problem"]]
+            cases += [("1440x900", 100, "nominal", True, True, "map-view"), ("960x640", 150, "problem", True, True, "map-view")]
+        if options.budget_only:
+            cases = [("960x640", scale, "problem", True, True, "") for scale in [100, 125, 150]]
+            cases += [(screen, 150, "problem", True, True, "") for screen in ["600x640", "360x640"]]
         for screen, scale, status, reduced, focus, extra in cases:
             name = f"{screen}-{scale}-{status}-motion{'reduced' if reduced else 'normal'}-focus{int(focus)}"
             if extra:
                 name += "-" + extra
             command = [godot, "--disable-vsync", "--path", str(project), "--display-driver", "x11", "--rendering-method", "gl_compatibility", "--scene", f"res://tools/{scene}.tscn", "--", f"--screen={screen}", f"--scale={scale}", f"--status={status}", f"--capture={base / (name + '.png')}"]
             command += (["--reduced-motion"] if reduced else []) + (["--focus"] if focus else [])
-            if options.live or options.floating_only:
+            if (options.live or options.floating_only or options.header_only) and not options.budget_only:
                 command.append("--layout-qa")
             if extra:
                 command.append("--" + extra)
