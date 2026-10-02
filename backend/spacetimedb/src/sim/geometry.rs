@@ -2,6 +2,7 @@
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const EDGE: i32 = 16;
+pub const CELL_EDGE_METERS: f32 = 0.5;
 pub const CELL_VOLUME_M3: f32 = 0.125;
 pub const DEFAULT_EXCAVATION_HEIGHT: u16 = 6;
 pub const AIR: u16 = 0;

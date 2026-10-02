@@ -99,8 +99,13 @@ mod legacy_wire {
     }
 }
 
+/// Uses the captured 40-cell/hour input; production defaults do not change this oracle.
 #[test]
 fn simulation_matches_pre_composition_trace() {
+    let tuning = Tuning {
+        move_tiles_per_hour: 40.0,
+        ..Tuning::default()
+    };
     let mut traces = Vec::new();
     for hauling in [HaulPolicy::SelfHaul, HaulPolicy::DedicatedHaulers] {
         for meals in [MealPolicy::Normal, MealPolicy::Rationed] {
@@ -120,7 +125,7 @@ fn simulation_matches_pre_composition_trace() {
                 }
                 for _ in 0..48 {
                     for dt in [6.0, 60.0, 3600.0] {
-                        trace.record(step(&mut world, &Tuning::default(), dt));
+                        trace.record(step(&mut world, &tuning, dt));
                         trace.world(&world);
                     }
                 }

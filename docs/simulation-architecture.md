@@ -60,6 +60,27 @@ they must not rewrite authoritative material geometry. See
 Operational kinds remain a prototype limitation, not a taxonomy of materials
 or a substitute for geometry suitability queries.
 
+## Walking units
+
+Cells have a `CELL_EDGE_METERS` edge of 0.5 metres. The default is ordinary
+walking at 1.4 metres per **in-game second**, or 2.8 flat cells/second
+(10,080 cells/in-game hour). `Tuning::move_tiles_per_hour` remains available
+for existing overrides; it denotes the equivalent flat-cell rate, not a
+fixed cost for slopes. Live navigation still chooses the same supported BFS
+route, but travel charges each validated hop's Euclidean 3D length: a
+0.5-metre horizontal hop with a 0.5-metre rise costs about 0.707 metres.
+Persisted movement progress remains the fraction of the current validated
+next hop in `[0, 1)`; unspent distance carries between differently sized hops
+and is discarded on arrival or a blocked route.
+
+The authoritative simulation duration controls all travel. At the current
+baseline time scale of six in-game seconds per real second, one real second
+of uninterrupted walking covers 8.4 metres; a 6x multiplier covers 50.4
+metres. Pausing supplies no elapsed simulation time and causes no travel.
+This higher default is an intentional gameplay correction, not a schema,
+navigation, physics, or scheduling change. The historical golden trace pins
+its original 40-cell/hour input without changing any fingerprint.
+
 ## Verification
 
 Run `just test`, `just fmt-check`, and `just wasm` for simulation changes.

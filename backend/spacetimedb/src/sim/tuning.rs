@@ -1,4 +1,8 @@
+use super::geometry::CELL_EDGE_METERS;
 use super::{ResourceKind, SECONDS_PER_DAY};
+
+/// Ordinary walking speed, measured against the authoritative in-game clock.
+pub const WALKING_METERS_PER_GAME_SECOND: f32 = 1.4;
 
 /// All simulation constants in one place. Rates are expressed per **in-game hour**.
 #[derive(Clone, Copy, Debug)]
@@ -61,6 +65,8 @@ pub struct Tuning {
     pub prod_w_fatigue: f32,
     pub prod_w_mood_deficit: f32,
 
+    /// Flat half-metre cells per in-game hour. Geometry travel converts this
+    /// rate to metres and charges each validated hop's actual 3D length.
     pub move_tiles_per_hour: f32,
 
     /// Time constant, in in-game seconds, for the smoothed colony-level mood and
@@ -115,7 +121,7 @@ impl Default for Tuning {
             prod_w_fatigue: 0.35,
             prod_w_mood_deficit: 0.45,
 
-            move_tiles_per_hour: 40.0,
+            move_tiles_per_hour: WALKING_METERS_PER_GAME_SECOND * 3600.0 / CELL_EDGE_METERS,
 
             stat_ema_tau_seconds: SECONDS_PER_DAY as f32,
         }

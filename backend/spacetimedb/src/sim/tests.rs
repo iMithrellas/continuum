@@ -1508,7 +1508,10 @@ fn alert_thresholds_separate_a_healthy_colony_from_a_broken_one() {
 #[test]
 fn chain_8_broken_colony_runs_out_of_food_and_a_healthy_one_does_not() {
     fn food_after(recreation: bool, days: f64) -> (f32, f32) {
-        let t = Tuning::default();
+        let t = Tuning {
+            output_food_per_hour: 10.0,
+            ..Tuning::default()
+        };
         let mut w = new_world();
         if !recreation {
             for tile in w.tiles.iter_mut() {
