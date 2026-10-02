@@ -1,6 +1,6 @@
 # Glyphs
 
-Status glyphs for the UI theme.
+Status glyphs for the UI theme; see [the UI redesign](../../../../../docs/ui-redesign.md).
 
 Status glyphs on a 16px grid, with their colours baked in (an `<img>` cannot inherit colour). The shapes carry the meaning; colour only reinforces it.
 

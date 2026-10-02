@@ -68,5 +68,6 @@ then export with Godot using the Linux or Windows preset in
 
 See [docs/simulation-architecture.md](docs/simulation-architecture.md) for the
 simulation overview, [docs/API.md](docs/API.md) for reducers and authorization,
-and [docs/native-hosting-contract.md](docs/native-hosting-contract.md) for local
-server details.
+[docs/native-hosting-contract.md](docs/native-hosting-contract.md) for local
+server details, and [UI redesign](docs/ui-redesign.md) for `ui/theme`,
+`ui/components`, and UI verification commands.
