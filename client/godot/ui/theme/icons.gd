@@ -24,6 +24,11 @@ const GEOMETRY := {
 }
 static var _cache: Dictionary = {}
 
+static func svg_source(name: String, token := "ink-muted") -> String:
+	if name not in NAMES or token not in TOKENS:
+		return ""
+	var source := '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="square" stroke-linejoin="round">' + str(GEOMETRY[name]) + '</svg>'
+	return source.replace("currentColor", "#" + ThemeTokens.color(token).to_html(false))
 
 static func texture(name: String, token := "ink-muted") -> Texture2D:
 	if name not in NAMES or token not in TOKENS:
@@ -32,8 +37,7 @@ static func texture(name: String, token := "ink-muted") -> Texture2D:
 	var key := name + ":" + token
 	if _cache.has(key):
 		return _cache[key]
-	var source := '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="butt" stroke-linejoin="round">' + str(GEOMETRY[name]) + '</svg>'
-	var svg := source.replace("currentColor", "#" + ThemeTokens.color(token).to_html(false))
+	var svg := svg_source(name, token)
 	var image := Image.new()
 	if image.load_svg_from_string(svg, 2.0 / 3.0) != OK:
 		push_error("Cannot rasterize UI interface icon " + name)

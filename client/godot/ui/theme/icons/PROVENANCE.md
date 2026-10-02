@@ -6,7 +6,7 @@ icon assets. Keep the included ISC and Feather MIT
 license notices with vendored copies.
 
 The 24-unit viewBox and geometry are retained. Adaptations: stroke width 2.25
-(1.5px at 16 logical pixels), butt caps, compact XML whitespace. `close` is
+(1.5px at 16 logical pixels), literal square caps, compact XML whitespace. `close` is
 upstream `x`; `camera-fit` is upstream `scan`. Other names match upstream.
 `currentColor` is replaced with a published chrome token by
 `UiIcons.texture()` before rasterization, never rendered with
