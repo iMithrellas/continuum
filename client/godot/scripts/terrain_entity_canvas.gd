@@ -11,23 +11,22 @@ func _draw() -> void:
 	for entity: Dictionary in entities:
 		var rect: Rect2 = entity.rect
 		rect = Rect2((rect.position - origin) * pixels, rect.size * pixels)
-		var colour: Color = entity.colour
 		match entity.type:
 			"facility":
-				draw_rect(rect.grow(-unit), colour)
-				draw_rect(rect.grow(-3 * unit), colour.lightened(0.3), false, unit)
+				MapPaint.zone(self, rect, entity.kind, origin, pixels)
 				if not entity.enabled:
-					draw_line(rect.position + Vector2.ONE * 4 * unit, rect.end - Vector2.ONE * 4 * unit, Color("ff5c6c"), 2 * unit)
+					draw_line(rect.position + Vector2.ONE * 4 * unit, rect.end - Vector2.ONE * 4 * unit, ThemeTokens.color("map-paper"), 4 * unit)
+					draw_line(rect.position + Vector2.ONE * 4 * unit, rect.end - Vector2.ONE * 4 * unit, ThemeTokens.color("map-ink"), 2 * unit)
 					var other := rect.position + Vector2(rect.size.x - 4 * unit, 4 * unit)
-					draw_line(other, rect.position + Vector2(4 * unit, rect.size.y - 4 * unit), Color("ff5c6c"), 2 * unit)
-				if entity.has("label"):
-					draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, 13) * unit, entity.label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - 6 * unit, maxi(1, roundi(11 * unit)), Color.WHITE)
+					draw_line(other, rect.position + Vector2(4 * unit, rect.size.y - 4 * unit), ThemeTokens.color("map-paper"), 4 * unit)
+					draw_line(other, rect.position + Vector2(4 * unit, rect.size.y - 4 * unit), ThemeTokens.color("map-ink"), 2 * unit)
 			"stack":
-				draw_rect(rect, Color("151920"))
-				draw_rect(rect, colour, false, 2 * unit)
-				draw_line(rect.position, rect.end, colour, unit)
+				draw_rect(rect, ThemeTokens.color("map-paper"))
+				draw_rect(rect, ThemeTokens.color("map-ink"), false, 2 * unit)
+				draw_line(rect.position, rect.end, ThemeTokens.color("map-ink"), unit)
 			"colonist":
-				draw_circle(rect.get_center(), rect.size.x * 0.36, colour)
-				draw_texture_rect_region(entity.texture, rect, entity.source)
+				MapPaint.sprite(self, entity.texture, rect, entity.source, float(entity.get("outline", 1.0 / 16.0)) * pixels)
 				if entity.get("cargo", false):
-					draw_rect(Rect2(rect.end - Vector2(8, 8) * unit, Vector2(8, 8) * unit), entity.cargo_colour)
+					var cargo := Rect2(rect.end - Vector2(8, 8) * unit, Vector2(8, 8) * unit)
+					draw_rect(cargo, ThemeTokens.color("map-paper"))
+					draw_rect(cargo, ThemeTokens.color("map-ink"), false, unit)

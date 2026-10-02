@@ -41,42 +41,22 @@ var _camera_static_entities: Array = []
 var _static_camera_region := Rect2i()
 var _static_camera_dirty := true
 var _static_entity_serial := 0
-var _zoom := 1.0 # relative to fit; readout uses native 32px cells
+var _zoom := 1.0
 var _pan := Vector2.ZERO
 var _panning := false
 var _pan_pointer := Vector2.ZERO
 
-const TILE_COLORS: Dictionary[int, Color] = {
-	ContinuumTileKind.Options.empty: Color("2a2e37"),
-	ContinuumTileKind.Options.dining: Color("3f9b52"),
-	ContinuumTileKind.Options.sleep: Color("4a5bb5"),
-	ContinuumTileKind.Options.farm: Color("b1802c"),
-	ContinuumTileKind.Options.recreation: Color("9350b8"),
-	ContinuumTileKind.Options.forest: Color("275b48"),
-	ContinuumTileKind.Options.mine: Color("555c72"),
-	ContinuumTileKind.Options.storage: Color("66543c"),
+static var RESOURCE_COLORS: Dictionary[int, Color] = {
+	ContinuumResourceKind.Options.food: ThemeTokens.color("ink"),
+	ContinuumResourceKind.Options.wood: ThemeTokens.color("ink"),
+	ContinuumResourceKind.Options.stone: ThemeTokens.color("ink"),
+	ContinuumResourceKind.Options.meat: ThemeTokens.color("ink"),
 }
-
-const RESOURCE_COLORS: Dictionary[int, Color] = {
-	ContinuumResourceKind.Options.food: Color("f5d76e"),
-	ContinuumResourceKind.Options.wood: Color("dda575"),
-	ContinuumResourceKind.Options.stone: Color("a9c6e8"),
-	ContinuumResourceKind.Options.meat: Color("f38b9c"),
-}
-
-const COLONIST_COLORS: Array[Color] = [
-	Color("ff7043"), Color("26c6da"), Color("ffee58"),
-	Color("ec407a"), Color("8bc34a"), Color("b39ddb"),
-	Color("80cbc4"), Color("ffcc80"),
-]
 const COLONIST_WALK_TEXTURE: Texture2D = preload("res://assets/colonist_worker_test_walk.png")
 const COLONIST_WALK_FRAME_COUNT := 4
 const COLONIST_WALK_FRAME_MS := 140
 const COLONIST_WALK_FRAME_SIZE := 32.0
 
-const DISABLED_COLOR := Color("50202a")
-const GRID_LINE_COLOR := Color(1, 1, 1, 0.06)
-const SELECTION_COLOR := Color("e6b887")
 const PRIORITY_NAMES := {1: "High", 2: "Normal", 3: "Low"}
 
 var selected_tile_id: int = -1
@@ -94,8 +74,19 @@ var _font: Font = null
 var _grid := Vector2i(24, 24)
 var _has_state: bool = false
 var _generation := -1
-var _stored_amounts: Dictionary[int, float] = {}
-var _stock_pulses: Dictionary[int, float] = {}
+var _regions: Array[Dictionary] = []
+var _region_revision := -1
+var _region_visibility_revision := -1
+var _region_layered := false
+var _visible_regions: Array[Dictionary] = []
+var _region_buckets: Dictionary = {}
+var _camera_regions: Array[Dictionary] = []
+var _region_camera_rect := Rect2i()
+var _region_camera_dirty := true
+var selected_colonist_id := -1
+var _alert_pins: Array[Dictionary] = []
+var _excavation_regions: Array[Dictionary] = []
+var _excavation_revision := -1
 var _walk_frame := 0
 ## Global drag tracking must never treat floating windows as map cells.
 var input_blocked: Callable
@@ -104,7 +95,7 @@ var metrics := UiMetrics.new()
 
 func _ready() -> void:
 	metrics = UiMetrics.new()
-	_font = ThemeDB.fallback_font
+	_font = ThemeTokens.font("body")
 	texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
 	clip_contents = true
 	set_process(true)
@@ -144,7 +135,7 @@ func world_to_screen(point: Vector2) -> Vector2:
 
 
 func zoom_percent() -> float:
-	return _cell_size() / LayeredTerrainView.PIXELS * 100.0
+	return _cell_size() / ThemeTokens.number("tile") * 100.0
 
 
 func zoom_at(factor: float, point: Vector2) -> void:
@@ -152,8 +143,8 @@ func zoom_at(factor: float, point: Vector2) -> void:
 		return
 	cancel_gestures()
 	var world := screen_to_world(point)
-	var minimum := minf(0.25, LayeredTerrainView.PIXELS / _fit_cell_size())
-	_zoom = clampf(_zoom * factor, minimum, maxf(1.0, 128.0 / _fit_cell_size()))
+	var minimum := minf(0.25, ThemeTokens.number("tile") / _fit_cell_size())
+	_zoom = clampf(_zoom * factor, minimum, maxf(1.0, ThemeTokens.number("tile") * 4.0 / _fit_cell_size()))
 	var centred := ((size - Vector2(_grid) * _cell_size()) * 0.5).floor()
 	_pan = point - world * _cell_size() - centred
 	_layout_terrain()
@@ -175,7 +166,7 @@ func fit_camera() -> void:
 func reset_camera() -> void:
 	fit_camera()
 	if _fit_cell_size() > 0:
-		zoom_at(LayeredTerrainView.PIXELS / _fit_cell_size(), size * 0.5)
+		zoom_at(ThemeTokens.number("tile") / _fit_cell_size(), size * 0.5)
 
 
 func pan_by(offset: Vector2) -> void:
@@ -216,6 +207,8 @@ func set_cut(layer: int) -> void:
 		terrain_view.rebuild(terrain_model)
 		_invalidate_terrain_entities()
 		terrain_view.update_entities(entity_descriptors())
+	_sync_regions()
+	_cache_excavations()
 	cut_changed.emit(terrain_model.cut)
 	queue_redraw()
 
@@ -235,8 +228,17 @@ func reset_world() -> void:
 	_visual_feet.clear()
 	_visual_motion.clear()
 	_visual_positions.clear()
-	_stored_amounts.clear()
-	_stock_pulses.clear()
+	_regions.clear()
+	_visible_regions.clear()
+	_region_buckets.clear()
+	_camera_regions.clear()
+	_region_camera_dirty = true
+	_region_revision = -1
+	_region_visibility_revision = -1
+	_alert_pins.clear()
+	_excavation_regions.clear()
+	_excavation_revision = -1
+	selected_colonist_id = -1
 	_tiles.clear()
 	_facilities.clear()
 	_colonists.clear()
@@ -404,11 +406,6 @@ func _process(delta: float) -> void:
 			if colonist.move_progress > 0 and row_visible(colonist):
 				changed = true
 				break
-	for kind: int in _stock_pulses.keys():
-		_stock_pulses[kind] = maxf(0.0, _stock_pulses[kind] - delta)
-		changed = changed or not layered
-		if _stock_pulses[kind] <= 0.0:
-			_stock_pulses.erase(kind)
 	for colonist: ContinuumColonist in _colonists:
 		if layered:
 			var previous: Dictionary = _visual_motion.get(colonist.id, {})
@@ -451,8 +448,7 @@ func _colonist_render_position(colonist: ContinuumColonist) -> Vector2:
 		lerpf(float(colonist.y), position.y, progress))
 
 
-## Called by [Main] after subscribed world rows change. Stock flashes show only
-## replicated increases, never predicted production or inferred delivery amounts.
+## Called by [Main] after subscribed world rows change.
 func refresh(changed_tables: Dictionary = {}) -> void:
 	bind_world_source(SpacetimeDB.Continuum.db)
 	if _source_db == null:
@@ -462,8 +458,17 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 	if config != null and config.generation != _generation:
 		_generation = config.generation
 		_visual_positions.clear()
-		_stored_amounts.clear()
-		_stock_pulses.clear()
+		_regions.clear()
+		_visible_regions.clear()
+		_region_buckets.clear()
+		_camera_regions.clear()
+		_region_camera_dirty = true
+		_region_revision = -1
+		_region_visibility_revision = -1
+		_alert_pins.clear()
+		_excavation_regions.clear()
+		_excavation_revision = -1
+		selected_colonist_id = -1
 		_visual_feet.clear()
 		_visual_motion.clear()
 		terrain_model.reset()
@@ -472,13 +477,6 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 		_zoom = 1.0
 		_pan = Vector2.ZERO
 		full = true
-	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
-	if colony != null:
-		for kind: int in RESOURCE_COLORS:
-			var amount: float = colony.get(ContinuumResourceKind.parse_enum_name(kind))
-			if _stored_amounts.has(kind) and amount > _stored_amounts[kind] + 0.001:
-				_stock_pulses[kind] = 1.2
-			_stored_amounts[kind] = amount
 	if full or changed_tables.has("tile"):
 		_cache_tiles()
 	if full or changed_tables.has("colonist"):
@@ -514,6 +512,9 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 		if full or changed or changed_tables.has("tile") or changed_tables.has("item_stack"):
 			_invalidate_terrain_entities()
 	terrain_view.set_visible(layered)
+	_sync_regions()
+	if full or changed_tables.has("excavation_designation") or _excavation_revision != terrain_model.revision:
+		_cache_excavations()
 	if layered:
 		terrain_view.update_entities(entity_descriptors())
 	_layout_terrain()
@@ -560,90 +561,65 @@ func _draw() -> void:
 		return
 	var origin := _origin()
 
-	if not layered:
-		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), Color("1a1d23"))
-
 	if not ready:
-		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "waiting for colony state...",
-				HORIZONTAL_ALIGNMENT_CENTER, size.x, metrics.font(14), Color(1, 1, 1, 0.5))
+		draw_rect(Rect2(Vector2.ZERO, size), ThemeTokens.color("bg-000"))
+		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "Waiting for colony state…",
+				HORIZONTAL_ALIGNMENT_CENTER, size.x, metrics.font(13), ThemeTokens.color("ink-muted"))
 		return
+	if not layered:
+		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), ThemeTokens.color("map-ground-deep"))
 
 	if layered:
 		var selected: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(selected_tile_id)
 		if selected != null and row_visible(selected):
 			var selection := tile_footprint(selected)
-			draw_rect(Rect2(origin + Vector2(selection.position) * cell, Vector2(selection.size) * cell).grow(-1), SELECTION_COLOR, false, 2)
+			MapPaint.selection(self, Rect2(origin + Vector2(selection.position) * cell, Vector2(selection.size) * cell).grow(-2 * metrics.scale), metrics.scale)
 	for tile: ContinuumTile in ([] if layered else visible_tiles()):
 		var footprint := Vector2(LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1))
 		var rect := Rect2(origin + Vector2(tile.x * cell, tile.y * cell), footprint * cell)
 		if not rect.intersects(Rect2(Vector2.ZERO, size)):
 			continue
-		var colour: Color = TILE_COLORS.get(tile.kind.value, Color("2a2e37"))
-		var terrain: Resource = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
 		if tile.kind.value == ContinuumTileKind.Options.empty:
-			colour = _soil_colour(terrain)
-		if not tile.enabled:
-			colour = colour.lerp(DISABLED_COLOR, 0.75)
-		draw_rect(rect.grow(-1.0), colour)
+			draw_rect(rect, ThemeTokens.color("map-ground"))
+		else:
+			MapPaint.zone(self, rect, tile.kind.value, -origin / cell, cell)
 
 		if not tile.enabled and tile.kind.value != ContinuumTileKind.Options.empty:
 			var pad := cell * 0.28
 			var a := rect.position + Vector2(pad, pad)
 			var b := rect.position + Vector2(cell - pad, cell - pad)
 			var width := maxf(1.0, cell * 0.07)
-			draw_line(a, b, Color("ff5c6c"), width)
-			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), Color("ff5c6c"), width)
+			draw_line(a, b, ThemeTokens.color("map-paper"), width + 2 * metrics.scale)
+			draw_line(a, b, ThemeTokens.color("map-ink"), width)
+			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), ThemeTokens.color("map-paper"), width + 2 * metrics.scale)
+			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), ThemeTokens.color("map-ink"), width)
 
 		if tile.id == selected_tile_id:
-			draw_rect(rect.grow(-1.0), SELECTION_COLOR, false, 2.0)
-		if terrain != null and terrain.forest_density > 0.45:
-			_draw_cover(rect, cell, terrain.forest_density)
+			MapPaint.selection(self, rect.grow(-2 * metrics.scale), metrics.scale)
 
 	var visible := visible_grid_rect()
-	for i in (range(visible.position.x, visible.end.x + 1) if cell >= 6 else []):
-		var x: float = origin.x + i * cell
-		draw_line(Vector2(x, maxf(0, origin.y)), Vector2(x, minf(size.y, origin.y + cell * _grid.y)), GRID_LINE_COLOR)
-	for i in (range(visible.position.y, visible.end.y + 1) if cell >= 6 else []):
-		var y: float = origin.y + i * cell
-		draw_line(Vector2(maxf(0, origin.x), y), Vector2(minf(size.x, origin.x + cell * _grid.x), y), GRID_LINE_COLOR)
+	if zoom_percent() >= 75.0:
+		for y in range(visible.position.y, visible.end.y):
+			for x in range(visible.position.x, visible.end.x):
+				if layered and terrain_model.depth_at(Vector2i(x, y)) != 0:
+					continue
+				draw_circle(origin + Vector2(x, y) * cell, metrics.scale, ThemeTokens.color("map-grid"))
 
 	if not layered:
-		_draw_zone_labels(origin, cell)
-		_draw_work_orders(origin, cell)
-		_draw_delivery_routes(origin, cell)
-		_draw_storage(origin, cell)
 		_draw_colonists(origin, cell)
 		_draw_ground_items(origin, cell)
+	_draw_zone_labels(origin, cell)
 	_draw_excavations(origin, cell)
+	_draw_actor_overlays(origin, cell)
 	if _selection_rect.size != Vector2i.ZERO and not _dragging:
 		var selection_rect := Rect2(origin + Vector2(_selection_rect.position) * cell,
 			Vector2(_selection_rect.size) * cell)
-		draw_rect(selection_rect.grow(-1.0), Color("64d8cb"), false, 2.0)
+		MapPaint.selection(self, selection_rect.grow(-2 * metrics.scale), metrics.scale)
 	_draw_drag_preview(origin, cell)
 
 
 func _soil_colour(terrain: Resource) -> Color:
-	if terrain == null:
-		return Color("2a2e37")
-	# Continuous interpolation keeps fertile, wet forest ground visibly distinct.
-	var sandy := Color("b99862")
-	var loamy := Color("78664f")
-	var chernozem := Color("403f36")
-	var fertility: float = clampf(terrain.soil_fertility, 0.0, 1.0)
-	var moisture: float = clampf(terrain.moisture, 0.0, 1.0)
-	var soil := sandy.lerp(loamy, fertility)
-	soil = soil.lerp(chernozem, fertility * moisture)
-	return soil
-
-
-func _draw_cover(rect: Rect2, cell: float, density: float) -> void:
-	var alpha := clampf((density - 0.45) * 0.9, 0.08, 0.5)
-	var cover := Color("4d8b52", alpha)
-	if density > 0.72:
-		cover = Color("1d5138", alpha)
-	var radius := maxf(1.0, cell * 0.12)
-	draw_circle(rect.position + Vector2(cell * 0.28, cell * 0.3), radius, cover)
-	draw_circle(rect.position + Vector2(cell * 0.68, cell * 0.64), radius * 0.8, cover)
+	return ThemeTokens.color("map-ground" if terrain != null else "map-ground-deep")
 
 
 func _draw_drag_preview(origin: Vector2, cell: float) -> void:
@@ -652,18 +628,15 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 	var rect := MapUiModel.normalize_rect(_drag_start, _drag_current)
 	if interaction_mode == &"facility":
 		rect = Rect2i(_drag_start, Vector2i(facility_width, facility_depth))
-	var colour := Color("d39a68") if interaction_mode == &"select" else Color("d8b06e")
-	if interaction_mode == &"facility" and layered and (terrain_model.uniform_base(rect) != selected_base \
-		or not terrain_model.placement_clear(rect, selected_base, facility_height)):
-		colour = Color("ff5c6c")
-	colour.a = 0.22
-	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour)
-	draw_rect(Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell), colour.lightened(0.3), false, 2.0)
+	var invalid: bool = interaction_mode == &"facility" and layered and (terrain_model.uniform_base(rect) != selected_base \
+		or not terrain_model.placement_clear(rect, selected_base, facility_height))
+	var preview := Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell)
+	MapPaint.selection(self, preview, metrics.scale)
 	var occupied := 0
 	for tile: ContinuumTile in facility_tiles():
 		if rect.intersects(tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
 			occupied += 1
-	var text := "%dx%d  %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
+	var text := "%d×%d · %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
 	if interaction_mode == &"build":
 		text += "  %.0f wood" % (rect.size.x * rect.size.y * 20.0)
 		if occupied > 0:
@@ -677,44 +650,89 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		text += "  z=%d..%d (%.1fm)" % [selected_base, selected_base + excavation_height - 1, excavation_height * 0.5]
 	elif interaction_mode == &"facility":
 		text = "%dx%d facility at z=%d; clearance %.1fm" % [facility_width, facility_depth, selected_base, facility_height * 0.5]
-	draw_string(_font, origin + Vector2(rect.position.x * cell + 4.0, rect.position.y * cell - 5.0),
-			text, HORIZONTAL_ALIGNMENT_LEFT, -1, metrics.font(clampf(cell * 0.34, 10, 15)), Color("f1f4f8"))
+	if invalid:
+		text += " · Blocked"
+	MapPaint.plate(self, preview.position + Vector2(4, 4) * metrics.scale, "", text, metrics.scale)
 
 
-## One label per zone, at the zone's top-left tile, so the map reads without a legend.
+## Topology changes only with facilities. Cut/terrain changes recompute exposure,
+## never connectivity from a camera crop; moving actors do neither.
+func _sync_regions() -> void:
+	if _region_revision != _tile_revision:
+		var footprints: Array = []
+		for tile: ContinuumTile in _facilities:
+			footprints.append({"kind": tile.kind.value, "z": tile.z, "rect": tile_footprint(tile)})
+		_regions = MapRegions.build(footprints)
+		_region_revision = _tile_revision
+		_region_visibility_revision = -1
+	if _region_visibility_revision == terrain_model.revision and _region_layered == layered:
+		return
+	_region_visibility_revision = terrain_model.revision
+	_region_layered = layered
+	_visible_regions.clear()
+	_region_buckets.clear()
+	_region_camera_dirty = true
+	var exposed_by_z := {}
+	for tile: ContinuumTile in _facilities:
+		if not row_visible(tile):
+			continue
+		var group := Vector2i(tile.kind.value, tile.z)
+		if not exposed_by_z.has(group):
+			exposed_by_z[group] = {}
+		var footprint := tile_footprint(tile)
+		for y in range(footprint.position.y, footprint.end.y):
+			for x in range(footprint.position.x, footprint.end.x):
+				exposed_by_z[group][Vector2i(x, y)] = true
+	for region: Dictionary in _regions:
+		var exposed: Dictionary = exposed_by_z.get(Vector2i(region.kind, region.z), {})
+		if exposed.is_empty():
+			continue
+		var visible_edges: Array[PackedVector2Array] = []
+		for edge: PackedVector2Array in region.edges:
+			var direction := edge[1] - edge[0]
+			var inside := (edge[0] + edge[1]) * 0.5 + Vector2(-direction.y, direction.x) * 0.25
+			if exposed.has(Vector2i(inside.floor())):
+				visible_edges.append(edge)
+		if visible_edges.is_empty() and not exposed.has(region.anchor):
+			continue
+		var item := region.duplicate()
+		item["visible_edges"] = visible_edges
+		item["label_visible"] = exposed.has(region.anchor)
+		item["plate_cache"] = {}
+		item["cache_id"] = _visible_regions.size()
+		_visible_regions.append(item)
+		var bounds: Rect2i = region.bounds
+		for y in range(floori(bounds.position.y / 16.0), ceili(bounds.end.y / 16.0)):
+			for x in range(floori(bounds.position.x / 16.0), ceili(bounds.end.x / 16.0)):
+				var bucket := Vector2i(x, y)
+				if not _region_buckets.has(bucket):
+					_region_buckets[bucket] = []
+				_region_buckets[bucket].append(item)
+
+
 func _draw_zone_labels(origin: Vector2, cell: float) -> void:
-	var font_size := int(maxf(9.0, cell * 0.32))
-	for kind: int in TILE_COLORS.keys():
-		if kind in [ContinuumTileKind.Options.empty, ContinuumTileKind.Options.storage]:
+	var visible := visible_grid_rect()
+	if _region_camera_dirty or visible != _region_camera_rect:
+		_region_camera_rect = visible
+		_region_camera_dirty = false
+		_camera_regions.clear()
+		var seen := {}
+		for y in range(floori(visible.position.y / 16.0), ceili(visible.end.y / 16.0)):
+			for x in range(floori(visible.position.x / 16.0), ceili(visible.end.x / 16.0)):
+				for region: Dictionary in _region_buckets.get(Vector2i(x, y), []):
+					if not seen.has(region.cache_id) and region.bounds.intersects(visible):
+						seen[region.cache_id] = true
+						_camera_regions.append(region)
+	var viewport := Rect2(Vector2.ZERO, size)
+	for region: Dictionary in _camera_regions:
+		var bounds := Rect2(origin + Vector2(region.bounds.position) * cell, Vector2(region.bounds.size) * cell)
+		if not bounds.intersects(viewport):
 			continue
-		var zone: Array[ContinuumTile] = []
-		for tile: ContinuumTile in visible_tiles():
-			if tile.kind.value == kind:
-				zone.append(tile)
-		if zone.is_empty():
-			continue
-		var anchor := Vector2i(9999, 9999)
-		for tile: ContinuumTile in zone:
-			if tile.y < anchor.y or (tile.y == anchor.y and tile.x < anchor.x):
-				anchor = Vector2i(tile.x, tile.y)
-		draw_string(_font,
-				origin + Vector2(anchor.x * cell + 3.0, anchor.y * cell + font_size + 2.0),
-				ContinuumTileKind.parse_enum_name(kind).capitalize(), HORIZONTAL_ALIGNMENT_LEFT, -1,
-				metrics.font(font_size), Color(1, 1, 1, 0.85))
-
-
-func _draw_work_orders(origin: Vector2, cell: float) -> void:
-	for order: ContinuumWorkOrder in SpacetimeDB.Continuum.db.work_order.iter():
-		var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(order.tile_id)
-		if tile == null or not row_visible(tile) or not tile.enabled or not order.enabled:
-			continue
-		var column := 0.5 if order.work.value == ContinuumWorkType.Options.hunting else 0.0
-		var rect := Rect2(origin + Vector2(tile.x + column, tile.y) * cell,
-			Vector2(cell * 0.5, maxf(10.0, cell * 0.3)))
-		var text := "%s%d" % [ContinuumWorkType.parse_enum_name(order.work.value).left(1).to_upper(), order.priority]
-		draw_rect(rect, Color("151920"))
-		draw_string(_font, rect.position + Vector2(1, rect.size.y - 1), text,
-				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x, metrics.font(clampf(cell * 0.27, 8, 11)), Color("f5d76e"))
+		for edge: PackedVector2Array in region.visible_edges:
+			draw_line(origin + edge[0] * cell, origin + edge[1] * cell, MapPaint.translucent("map-ink", 0.45), metrics.scale)
+		if region.label_visible:
+			var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
+			MapPaint.plate(self, anchor, ContinuumTileKind.parse_enum_name(region.kind).to_upper(), str(region.count), metrics.scale, false, region.plate_cache)
 
 
 static func format_amount(amount: float) -> String:
@@ -734,81 +752,23 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 		var column := 0.56 if stack.kind.value == ContinuumResourceKind.Options.meat else 0.04
 		var rect := Rect2(origin + Vector2(stack.x + column, stack.y + 0.65) * cell,
 				Vector2(cell * 0.40, cell * 0.33))
-		var colour: Color = RESOURCE_COLORS[stack.kind.value]
-		draw_rect(rect, Color("151920"))
-		draw_rect(rect, colour, false, 2.0)
-		var text := ContinuumResourceKind.parse_enum_name(stack.kind.value).left(1).to_upper()
-		var font_size := metrics.font(clampf(cell * 0.30, 8, 12))
-		draw_string(_font, rect.position + Vector2(metrics.px(1), rect.size.y * 0.5 + font_size * 0.35),
-				text, HORIZONTAL_ALIGNMENT_CENTER, rect.size.x - metrics.px(2), font_size, colour)
+		draw_rect(rect, ThemeTokens.color("map-paper"))
+		draw_rect(rect, ThemeTokens.color("map-ink"), false, metrics.scale)
+		draw_line(rect.position, rect.end, ThemeTokens.color("map-ink"), metrics.scale)
 
 
-func _draw_delivery_routes(origin: Vector2, cell: float) -> void:
-	for colonist: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
-		if not row_visible(colonist):
-			continue
-		if colonist.carried_amount <= 0.0 or colonist.goal.value != ContinuumGoal.Options.haul:
-			continue
-		if colonist.activity.value not in [ContinuumActivity.Options.travelling, ContinuumActivity.Options.hauling]:
-			continue
-		if layered and not terrain_model.entity_visible({"x": colonist.target_x, "y": colonist.target_y,
-			"z": LayeredTerrainModel.field(colonist, "target_z", 0)}):
-			continue
-		var start: Vector2 = origin + (_visual_positions.get(colonist.id,
-				Vector2(colonist.x, colonist.y)) + Vector2(0.5, 0.5)) * cell
-		var end := origin + Vector2(colonist.target_x + 0.5, colonist.target_y + 0.5) * cell
-		var colour: Color = RESOURCE_COLORS[colonist.carried_kind.value]
-		colour.a = 0.55
-		# A destination guide, not a predicted simulation path.
-		draw_dashed_line(start, end, colour, 1.5, 5.0)
-		if start.distance_to(end) > cell:
-			var direction := (end - start).normalized()
-			var wing := direction.orthogonal() * 4.0
-			draw_line(end, end - direction * 9.0 + wing, colour, 2.0)
-			draw_line(end, end - direction * 9.0 - wing, colour, 2.0)
-
-
-func _draw_storage(origin: Vector2, cell: float) -> void:
-	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
-	if colony == null:
-		return
-	var anchor := Vector2i(9999, 9999)
-	var storage_open := false
-	for tile: ContinuumTile in visible_tiles():
-		if tile.kind.value == ContinuumTileKind.Options.storage:
-			storage_open = storage_open or tile.enabled
-			if tile.y < anchor.y or (tile.y == anchor.y and tile.x < anchor.x):
-				anchor = Vector2i(tile.x, tile.y)
-	if anchor.x == 9999:
-		return
-	var font_size := clampi(int(cell * 0.36), 10, 13)
-	var line_height := float(font_size + 5)
-	var rect := Rect2(origin + Vector2(anchor) * cell + Vector2(3, 3),
-			Vector2(cell * 4.0 - 6.0, line_height * 5.0 + 6.0))
-	draw_rect(rect, Color("171d26"))
-	draw_rect(rect, Color("a38a60") if storage_open else DISABLED_COLOR, false, 1.0)
-	var at := rect.position + Vector2(5, line_height)
-	draw_string(_font, at, "STORED / SHARED" if storage_open else "STORED / CLOSED",
-			HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - metrics.px(10), metrics.font(font_size - 1), Color("ddd4c0"))
-	for kind: int in RESOURCE_COLORS:
-		at.y += line_height
-		var colour: Color = RESOURCE_COLORS[kind]
-		var key := ContinuumResourceKind.parse_enum_name(kind)
-		if _stock_pulses.has(kind):
-			var glow := colour
-			glow.a = _stock_pulses[kind] / 1.2 * 0.3
-			draw_rect(Rect2(Vector2(rect.position.x + 2, at.y - font_size - 2),
-					Vector2(rect.size.x - 4, line_height)), glow)
-		draw_string(_font, at, "%s %s" % [key.capitalize(), format_amount(colony.get(key))],
-				HORIZONTAL_ALIGNMENT_LEFT, rect.size.x - metrics.px(10), metrics.font(font_size), colour)
-
-
-func _draw_colonists(origin: Vector2, cell: float) -> void:
-	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
+## One placement calculation feeds both legacy sprites and their selection rings.
+## Authoritative occupancy determines stable offsets; interpolation determines
+## the rendered position, and the supplied camera transforms both together.
+func _legacy_colonist_descriptors(origin: Vector2, cell: float) -> Array[Dictionary]:
+	var descriptors: Array[Dictionary] = []
+	var colonists: Array[ContinuumColonist] = _colonists.duplicate()
 	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
 		return a.id < b.id)
 	var occupants: Dictionary[Vector2i, Array] = {}
 	for colonist: ContinuumColonist in colonists:
+		if not row_visible(colonist):
+			continue
 		var tile := Vector2i(colonist.x, colonist.y)
 		if not occupants.has(tile):
 			occupants[tile] = []
@@ -824,44 +784,32 @@ func _draw_colonists(origin: Vector2, cell: float) -> void:
 		var sharing: Array = occupants[Vector2i(colonist.x, colonist.y)]
 		if sharing.size() > 1:
 			centre += Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * cell * 0.25
-		var colour: Color = COLONIST_COLORS[index % COLONIST_COLORS.size()]
 		var sprite_size := cell * (0.62 if sharing.size() > 1 else 0.82)
-		var radius := sprite_size * 0.36
-
-		draw_circle(centre, radius + 2.0, Color(0, 0, 0, 0.55))
-		draw_circle(centre, radius, colour)
-		var walking := colonist.x != colonist.target_x \
-				or colonist.y != colonist.target_y \
-				or colonist.move_progress > 0.001
-		var frame := _walk_frame if walking else 0
 		var sprite_rect := Rect2(centre - Vector2.ONE * sprite_size * 0.5,
 				Vector2.ONE * sprite_size)
-		var source_rect := Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0.0,
-				COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE)
-		draw_texture_rect_region(COLONIST_WALK_TEXTURE, sprite_rect, source_rect)
+		descriptors.append({"colonist": colonist, "rect": sprite_rect})
+	return descriptors
 
-		if colonist.carried_amount > 0.0:
-			var cargo_colour: Color = RESOURCE_COLORS[colonist.carried_kind.value]
-			var cargo_rect := Rect2(centre + Vector2(radius * 0.6, -radius - cell * 0.2),
-					Vector2(cell * 0.95, maxf(13.0, cell * 0.4)))
-			draw_line(centre, cargo_rect.get_center(), cargo_colour, 2.0)
-			draw_rect(cargo_rect, Color("151920"))
-			draw_rect(cargo_rect, cargo_colour, false, 2.0)
-			var cargo_text := "%s %s" % [
-				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value).left(1).to_upper(),
-				format_amount(colonist.carried_amount),
-			]
-			draw_string(_font, cargo_rect.position + Vector2(1, cargo_rect.size.y * 0.5 + metrics.px(3)), cargo_text,
-					HORIZONTAL_ALIGNMENT_CENTER, cargo_rect.size.x - metrics.px(2), metrics.font(clampf(cell * 0.3, 8, 12)), cargo_colour)
 
-		var small := int(maxf(8.0, cell * 0.26))
-		var caption := "%s: %s" % [colonist.name,
-			ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize()]
-		var caption_at := centre + Vector2(-cell * 1.1, radius + small + 1.0)
-		draw_string_outline(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_CENTER,
-				cell * 2.2, metrics.font(small), metrics.px(3), Color("151920"))
-		draw_string(_font, caption_at, caption, HORIZONTAL_ALIGNMENT_CENTER,
-				cell * 2.2, metrics.font(small), Color("f1f4f8"))
+func _draw_colonists(origin: Vector2, cell: float) -> void:
+	for descriptor: Dictionary in _legacy_colonist_descriptors(origin, cell):
+		_draw_legacy_colonist(descriptor, cell)
+
+
+func _draw_legacy_colonist(descriptor: Dictionary, cell: float) -> void:
+	var colonist: ContinuumColonist = descriptor.colonist
+	var sprite_rect: Rect2 = descriptor.rect
+	var walking := colonist.x != colonist.target_x \
+			or colonist.y != colonist.target_y \
+			or colonist.move_progress > 0.001
+	var frame := _walk_frame if walking else 0
+	var source_rect := Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0.0,
+			COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE)
+	MapPaint.sprite(self, COLONIST_WALK_TEXTURE, sprite_rect, source_rect, metrics.scale)
+	if colonist.carried_amount > 0.0:
+		var cargo_rect := Rect2(sprite_rect.end - Vector2.ONE * cell * 0.25, Vector2.ONE * cell * 0.25)
+		draw_rect(cargo_rect, ThemeTokens.color("map-paper"))
+		draw_rect(cargo_rect, ThemeTokens.color("map-ink"), false, metrics.scale)
 
 
 func _get_tooltip(at_position: Vector2) -> String:
@@ -1111,14 +1059,11 @@ func _invalidate_terrain_entities() -> void:
 	for tile: ContinuumTile in _facilities:
 		if not row_visible(tile):
 			continue
-		var colour: Color = TILE_COLORS.get(tile.kind.value, Color("737d8b"))
-		if not tile.enabled:
-			colour = colour.lerp(DISABLED_COLOR, 0.75)
 		_index_entity({"type": "facility", "rect": Rect2(tile_footprint(tile)), "z": tile.z,
-			"colour": colour, "enabled": tile.enabled, "label": ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize()})
+			"kind": tile.kind.value, "enabled": tile.enabled})
 	for stack: ContinuumItemStack in _stacks:
 		if row_visible(stack) and stack.amount > 0:
-			_index_entity({"type": "stack", "z": stack.z, "colour": RESOURCE_COLORS[stack.kind.value],
+			_index_entity({"type": "stack", "z": stack.z,
 				"rect": Rect2(Vector2(stack.x + 0.05, stack.y + 0.65), Vector2(0.4, 0.33))})
 
 
@@ -1166,24 +1111,85 @@ func entity_descriptors() -> Array:
 		var frame := _walk_frame if colonist.move_progress > 0 else 0
 		entities.append({"type": "colonist", "z": floori(feet.z), "rect": Rect2(centre - Vector2.ONE * sprite_size * 0.5, Vector2.ONE * sprite_size),
 			"texture": COLONIST_WALK_TEXTURE, "source": Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0, COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE),
-			"colour": COLONIST_COLORS[index % COLONIST_COLORS.size()], "cargo": colonist.carried_amount > 0,
-			"cargo_colour": RESOURCE_COLORS.get(colonist.carried_kind.value, Color.WHITE)})
+			"id": colonist.id, "outline": metrics.scale / maxf(_cell_size(), 0.0001), "cargo": colonist.carried_amount > 0})
 	return entities
 
 
 func _draw_excavations(origin: Vector2, cell: float) -> void:
+	var visible := visible_grid_rect()
+	for region: Dictionary in _excavation_regions:
+		if not region.bounds.intersects(visible):
+			continue
+		for run: Rect2i in region.runs:
+			if not run.intersects(visible):
+				continue
+			var area := run.intersection(visible)
+			var rect := Rect2(origin + Vector2(area.position) * cell, Vector2(area.size) * cell)
+			MapPaint.hatch(self, rect, -origin, 6 * cell / ThemeTokens.number("tile"), MapPaint.translucent("map-plan", 0.24), metrics.scale)
+		for edge: PackedVector2Array in region.edges:
+			MapPaint.plan_edge(self, origin + edge[0] * cell, origin + edge[1] * cell, metrics.scale)
+		MapPaint.plate(self, origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale,
+			"EXCAVATION" if region.enabled else "EXCAVATION · PAUSED", str(region.count), metrics.scale, true, region.plate_cache)
+
+
+func _cache_excavations() -> void:
+	_excavation_revision = terrain_model.revision
+	_excavation_regions.clear()
 	if not layered:
 		return
-	for designation in table_rows(SpacetimeDB.Continuum.db, "excavation_designation"):
+	for designation in table_rows(_source_db, "excavation_designation"):
 		var bottom := int(LayeredTerrainModel.field(designation, "bottom_z", 0))
 		var height := int(LayeredTerrainModel.field(designation, "height", 6))
-		var area := designation_rect(designation).intersection(visible_grid_rect())
+		var area := designation_rect(designation).intersection(Rect2i(Vector2i.ZERO, _grid))
+		var footprints: Array = []
 		for y in range(area.position.y, area.end.y):
 			for x in range(area.position.x, area.end.x):
 				var surface: Variant = terrain_model.surface_at(Vector2i(x, y))
-				if surface == null or surface.z < bottom or surface.z >= bottom + height:
-					continue
-				var rect := Rect2(origin + Vector2(x, y) * cell, Vector2.ONE * cell)
-				var colour := Color("ffc35a") if designation.enabled else Color("b57878")
-				draw_rect(rect.grow(-2), colour, false, 2)
-				draw_line(rect.position + Vector2.ONE * 4, rect.end - Vector2.ONE * 4, colour, 1)
+				if surface != null and surface.z >= bottom and surface.z < bottom + height:
+					footprints.append({"kind": 0, "z": surface.z, "rect": Rect2i(x, y, 1, 1)})
+		for region: Dictionary in MapRegions.build(footprints):
+			region["enabled"] = designation.enabled
+			region["plate_cache"] = {}
+			_excavation_regions.append(region)
+
+
+func set_selected_colonist(id: int) -> void:
+	selected_colonist_id = id
+	queue_redraw()
+
+
+## Pins are supplied by the actual alert presenter, never inferred from needs.
+## Contract: {cell: Vector3i, level: "warn"|"critical"|"notice"}.
+func set_alert_pins(pins: Array[Dictionary]) -> void:
+	_alert_pins.clear()
+	for pin in pins:
+		if pin.get("cell") is Vector3i and pin.get("level", "") in ["warn", "critical", "notice"]:
+			_alert_pins.append(pin.duplicate())
+	queue_redraw()
+
+
+func _draw_actor_overlays(origin: Vector2, cell: float) -> void:
+	if selected_colonist_id >= 0:
+		if layered:
+			for entity: Dictionary in entity_descriptors():
+				if entity.type == "colonist" and entity.id == selected_colonist_id:
+					_draw_actor_ring(origin + entity.rect.get_center() * cell, entity.rect.size.x * cell * 0.6)
+		else:
+			for descriptor: Dictionary in _legacy_colonist_descriptors(origin, cell):
+				if descriptor.colonist.id == selected_colonist_id:
+					_draw_actor_ring(descriptor.rect.get_center(), cell * 0.5)
+	for pin: Dictionary in _alert_pins:
+		var position: Vector3i = pin.cell
+		if layered and not terrain_model.entity_visible({"x": position.x, "y": position.y, "z": position.z}):
+			continue
+		var rect := Rect2(origin + Vector2(position.x + 0.5, position.y + 0.5) * cell - Vector2.ONE * 10 * metrics.scale, Vector2.ONE * 20 * metrics.scale)
+		if not rect.intersects(Rect2(Vector2.ZERO, size)):
+			continue
+		draw_rect(rect, ThemeTokens.color("map-paper"))
+		draw_rect(rect, ThemeTokens.color("map-ink"), false, metrics.scale)
+		draw_texture_rect(ThemeTokens.glyph(pin.level), rect.grow(-2 * metrics.scale), false)
+
+
+func _draw_actor_ring(centre: Vector2, radius: float) -> void:
+	draw_arc(centre, radius, 0, TAU, 48, ThemeTokens.color("map-ink"), 4 * metrics.scale, true)
+	draw_arc(centre, radius, 0, TAU, 48, ThemeTokens.color("accent"), 2 * metrics.scale, true)

@@ -88,10 +88,10 @@ func _ready() -> void:
 			var b := near_only.get_pixel(x, y)
 			max_difference = maxf(max_difference, absf(a.r - b.r) + absf(a.g - b.g) + absf(a.b - b.b))
 	check(max_difference < 0.001, "composed deep shaft terrain and blurred whole entities never bleed over adjacent intact near floor")
-	var selection := composed.get_pixel(193, 20)
-	check(selection.g > 0.75 and selection.b > 0.65, "actual map selection stays sharp above depth-blurred entities")
-	var designation := composed.get_pixel(450, 213)
-	check(designation.r > 0.9 and designation.g > 0.55, "actual generated-row excavation overlay remains sharp")
+	var selection := composed.get_pixel(194, 45)
+	check(selection.is_equal_approx(ThemeTokens.color("accent")), "actual token selection stays sharp above depth-blurred entities")
+	var designation := composed.get_pixel(448, 243)
+	check(designation.is_equal_approx(ThemeTokens.color("map-plan")), "actual generated-row excavation overlay remains sharp and uses the cased plan token")
 	# Source integer xyz is still exposed in the shaft, but the real next hop
 	# crosses an intact floor. It must not be drawn at an exposed-source proxy.
 	map.terrain_view.layers[9].visible = true

@@ -32,7 +32,7 @@ func _ready() -> void:
 		var sharp := Line2D.new()
 		sharp.points = PackedVector2Array([Vector2(8, 48), Vector2(56, 48)])
 		sharp.width = 2
-		sharp.default_color = Color.RED
+		sharp.default_color = ThemeTokens.color("accent")
 		viewport.add_child(sharp)
 		views.append(viewport)
 	await RenderingServer.frame_post_draw
@@ -50,7 +50,7 @@ func _ready() -> void:
 		details.append(detail)
 		brightness.append(mean)
 		var overlay := pixels.get_pixel(32, 48)
-		overlays_sharp = overlays_sharp and overlay.r > 0.95 and overlay.g < 0.05
+		overlays_sharp = overlays_sharp and overlay.is_equal_approx(ThemeTokens.color("accent"))
 	var passed := details[0] > details[1] and details[1] > details[2] \
 		and brightness[0] > brightness[1] and brightness[1] > brightness[2] and overlays_sharp
 	print("TERRAIN_RENDER_%s detail=%s brightness=%s sharp_overlay=%s" % ["PASS" if passed else "FAIL", details, brightness, overlays_sharp])
