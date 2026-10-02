@@ -40,22 +40,26 @@ func _ready() -> void:
 	call_deferred("_run")
 
 func _run() -> void:
-	var fixture := "/tmp/opencode/continuum-local-controls-state/native-ready-%d" % OS.get_process_id()
+	var root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
+	var fixture := (root if not root.is_empty() else "/tmp/opencode").path_join("native-ready-%d" % OS.get_process_id())
 	DirAccess.make_dir_recursive_absolute(fixture)
 	OS.set_environment("CONTINUUM_NATIVE_ROOT", fixture.path_join("native"))
 	OS.set_environment("HOME", fixture)
 	for mode in ["cancel", "cancel_restart", "manual", "return", "leave", "close", "controller_cancel", "current"]:
 		await _case(mode)
+	await _case("current", ContinuumClientProfile.ADMIN)
+	await _case("current", ContinuumClientProfile.NORMAL)
 	await _retirement_case(true)
 	await _retirement_case(false)
 	await _retirement_case(false, true)
 	print("NATIVE_READY_HANDOFF_PASS" if failures == 0 else "NATIVE_READY_HANDOFF_FAIL")
 	get_tree().quit(0 if failures == 0 else 1)
 
-func _case(mode: String) -> void:
+func _case(mode: String, profile := ContinuumClientProfile.DEVELOPER) -> void:
 	var main := preload("res://scenes/main.tscn").instantiate()
 	main.set_script(preload("res://tools/session_handoff_main_fixture.gd"))
 	get_tree().root.add_child(main)
+	main._profile = profile
 	main._native_controller.request_shutdown()
 	_check(await _wait_for(main._native_controller.finish_shutdown), "initial private status worker shuts down")
 	main._native_controller.queue_free()
@@ -113,8 +117,10 @@ func _case(mode: String) -> void:
 	elif mode == "manual":
 		_check(main.starts.size() == 1 and main.starts[0].database == "manual-selected" and main._database == "manual-selected", "native completion cannot overwrite a newer manual target")
 		_check(main._session_requested and main._server_management._join_button.disabled, "new manual target stays legitimately busy")
+		_check(main._profile == profile, "manual Servers join preserves selected client profile")
 	elif mode == "current":
 		_check(main.starts.size() == 1 and main.starts[0].database == "first-native" and main._session_requested, "current native intent joins successfully")
+		_check(main._profile == profile, "native Start/Ready preserves selected client profile: " + profile)
 		# An emitted duplicate must not reselect even the same native target.
 		controller._emit_server_ready(fake.host, fake.database, emissions[0].epoch)
 		await _frames()

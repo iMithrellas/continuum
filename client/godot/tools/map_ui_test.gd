@@ -170,8 +170,8 @@ func _test_controller_surface() -> void:
 
 
 func _test_workspace_surface(main: Control) -> void:
-	_assert(main._sections.size() == 8 and main.workspace.windows.size() == 8,
-		"workspace manager exposes eight extensible panels")
+	_assert(main._sections.size() == 10 and main.workspace.windows.size() == 10,
+		"workspace manager exposes ten extensible panels")
 	_assert(main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
 		"workspace manager starts on the daily built-in layout")
 	_assert(not main._build_help.text.contains("\n") and not main._orders_help.text.contains("\n"),
@@ -216,7 +216,10 @@ func _test_workspace_surface(main: Control) -> void:
 		"inconsistent admin flags fail closed")
 	_set_role(main, "admin", true, true)
 	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"] and
-			main._speed_strip.visible, "admin can see workspace panels and header speed controls")
+			main.workspace.authorized["admin"], "verified admin can see the admin panel")
+	_assert(main._speed_label.get_parent() == main._sections["admin"] and
+		main._speed_strip.get_parent() == main._sections["admin"], "speed controls belong to admin content, not telemetry")
+	_assert(not main.workspace.authorized["developer"], "normal profile has no developer utilities")
 	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
 	var desktop_size := main.size
 	main.size = Vector2(390, 844)

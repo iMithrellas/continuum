@@ -32,6 +32,22 @@ func _ready() -> void:
 			restored.workspaces[id].panels.people.minimized and restored.workspaces[id].panels.people.pinned and
 			restored.workspaces[id].panels.people.z == 17, "saved custom geometry and flags round-trip")
 	_assert(not restored.show_panel_headers, "header visibility persists independently of panel geometry")
+	# New panel keys are optional in version-one layouts, including custom layouts.
+	var legacy_data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	for entry: Dictionary in legacy_data.workspaces.values():
+		entry.panels.erase("admin")
+		entry.panels.erase("developer")
+	var legacy_file := FileAccess.open(path, FileAccess.WRITE)
+	legacy_file.store_string(JSON.stringify(legacy_data))
+	legacy_file.close()
+	var migrated := WorkspaceLayout.new()
+	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.size() == 10,
+		"version-one layouts migrate optional admin and developer panel keys")
+	_assert(migrated.workspaces[id].panels.people == restored.workspaces[id].panels.people and
+		not migrated.show_panel_headers and migrated.active == id,
+		"migration preserves old geometry, open/minimized/pinned/layer, headers and workspace")
+	_assert(migrated.workspaces[id].panels.admin.open and migrated.workspaces[id].panels.developer.open,
+		"new panels default open without changing old panel preferences")
 	var other_id := restored.create_workspace("Other", ["overview"], false)
 	var other_rect: Array = restored.workspaces[other_id].panels.overview.rect.duplicate()
 	restored.active = id
@@ -135,7 +151,33 @@ func _test_manager() -> void:
 	deck.apply_metrics(UiMetrics.new(13))
 	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 38), "header row returns without compounding")
 	map.input_blocked = deck.blocks_map_input
-	_assert(deck.windows.size() == 8 and deck.authorized.size() == 8, "manager creates all actual game panels")
+	_assert(deck.windows.size() == 10 and deck.authorized.size() == 10, "manager creates all actual game panels")
+	_assert(deck.windows.keys() == ["overview", "people", "inspector", "operations", "policies", "alerts", "activity", "trends", "admin", "developer"], "F1-F8 keep existing order with Admin F9 and Developer F10")
+	for index in 10:
+		var panel_key: String = deck.windows.keys()[index]
+		deck.state(panel_key).open = true
+		deck.state(panel_key).minimized = false
+		var key_event := InputEventKey.new()
+		key_event.pressed = true
+		key_event.keycode = KEY_F1 + index
+		deck._unhandled_key_input(key_event)
+		_assert(deck.state(panel_key).minimized, "F%d toggles its stable panel" % (index + 1))
+		deck.state(panel_key).minimized = false
+	deck.set_panel_authorized("admin", false)
+	var denied_event := InputEventKey.new()
+	denied_event.pressed = true
+	denied_event.keycode = KEY_F9
+	deck._unhandled_key_input(denied_event)
+	_assert(not deck.state("admin").minimized, "F9 cannot change a denied admin panel")
+	deck.set_panel_authorized("admin", true)
+	var developer_window: WorkspaceWindow = deck.windows.developer
+	deck.windows.erase("developer")
+	denied_event.keycode = KEY_F10
+	deck._unhandled_key_input(denied_event)
+	_assert(not deck.state("developer").minimized, "fast F10 lookup is safe before every window exists")
+	deck.windows.developer = developer_window
+	deck.model.workspaces.daily = WorkspaceLayout.defaults().daily
+	deck._apply_layout()
 	var framed: WorkspaceWindow = deck.windows.people
 	for child: Node in framed.titlebar.get_children():
 		if child is Button:

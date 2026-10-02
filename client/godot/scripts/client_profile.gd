@@ -3,13 +3,15 @@ class_name ContinuumClientProfile extends RefCounted
 
 const NORMAL := "normal"
 const ADMIN := "admin"
+const DEVELOPER := "developer"
+
+static func validated(profile: String) -> String:
+	return profile if profile in [NORMAL, ADMIN, DEVELOPER] else NORMAL
 
 static func token_path(profile: String, host: String, database: String) -> String:
-	if profile != NORMAL and profile != ADMIN:
-		push_error("unknown Continuum client profile: %s" % profile)
-		return "user://continuum_invalid_profile.token"
+	profile = validated(profile)
 	var key := (host + "/" + database).md5_text()
 	if profile == NORMAL:
 		# Preserve the existing main-client identity without migration or copying.
 		return "user://continuum_identity_%s.token" % key
-	return "user://continuum_admin_identity_%s.token" % key
+	return "user://continuum_%s_identity_%s.token" % [profile, key]

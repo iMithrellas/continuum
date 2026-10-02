@@ -117,7 +117,11 @@ var _profile := ContinuumClientProfile.NORMAL
 var _clock: Label
 var _resource_labels: Dictionary = {}
 var _population: Label
-var _speed_strip: HBoxContainer
+var _speed_strip: HFlowContainer
+var _developer_summary: Label
+var _developer_diagnostics: CheckBox
+var _developer_graph: CheckBox
+var _developer_refresh_timer := 0.0
 var _settings := ClientSettings.new()
 var _metrics := UiMetrics.new()
 var _settings_warning := ""
@@ -161,6 +165,7 @@ var _colonist_empty: Label
 
 func _ready() -> void:
 	get_tree().auto_accept_quit = false
+	_profile = ContinuumClientProfile.validated(_cli_option("--profile", ContinuumClientProfile.NORMAL))
 	var settings_path := _cli_option("--settings-file", ClientSettings.path_from_args())
 	_settings_warning = _settings.load_from(settings_path)
 	_metrics = UiMetrics.new(_settings.font_size)
@@ -246,7 +251,6 @@ func _ready() -> void:
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_bind_client(client)
-	_profile = _cli_option("--profile", ContinuumClientProfile.NORMAL)
 	if _has_cli_connection():
 		_direct_launch = true
 		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3001"),
@@ -378,7 +382,7 @@ func _on_native_ready(value_host: String, value_database: String, epoch: int,
 	_server_management.set_native_busy(false)
 	_server_management.set_busy(true)
 	_server_management.set_status("Native server ready. Joining...")
-	configure_connection(value_host, value_database)
+	configure_connection(value_host, value_database, _profile)
 
 func _on_native_state(value: String, message: String) -> void:
 	if _exit_requested:
@@ -436,7 +440,8 @@ func configure_connection(host: String, database: String, profile := ContinuumCl
 	_cancel_reconnect()
 	_host = host.strip_edges()
 	_database = database.strip_edges()
-	_profile = profile
+	_profile = ContinuumClientProfile.validated(profile)
+	_refresh_permissions()
 	_direct_launch = direct_launch
 	_session_requested = true
 	if _access != null:
@@ -567,7 +572,7 @@ func leave_session() -> void:
 
 
 func _on_menu_join_requested(host: String, database: String) -> void:
-	configure_connection(host, database, ContinuumClientProfile.NORMAL, false)
+	configure_connection(host, database, _profile, false)
 
 func _show_server_management() -> void:
 	_menu.visible = false
@@ -604,7 +609,7 @@ func _on_server_management_join_requested(target: Dictionary) -> void:
 	var host := str(target.get("endpoint", ""))
 	var database := str(target.get("database", ""))
 	if not host.is_empty() and not database.is_empty():
-		configure_connection(host, database, ContinuumClientProfile.NORMAL, false)
+		configure_connection(host, database, _profile, false)
 
 
 func _has_cli_connection() -> bool:
@@ -690,6 +695,11 @@ func _process(delta: float) -> void:
 			get_tree().quit()
 		return
 	_process_diagnostics()
+	if _profile == ContinuumClientProfile.DEVELOPER:
+		_developer_refresh_timer -= delta
+		if _developer_refresh_timer <= 0.0:
+			_developer_refresh_timer = REFRESH_INTERVAL
+			_refresh_developer_summary()
 	_sample_history()
 	if _intent_request != null:
 		_intent_seconds -= delta
@@ -1151,11 +1161,11 @@ func _toggle_recreation_zone() -> void:
 
 
 func _change_speed(speed: float) -> void:
-	if not _is_admin:
+	if not _is_admin or not _state_ready or _intent_request != null or SpacetimeDB.Continuum.db == null:
 		return
 	_refresh_controls()
 	# Authorization remains entirely in the reducer; there is no client-side admin guess.
-	if _state_ready and _intent_request == null:
+	if _state_ready and _intent_request == null and SpacetimeDB.Continuum.db.config.id.find(0) != null:
 		_track_intent(SpacetimeDB.Continuum.reducers.set_time_scale(speed), "Simulation speed")
 
 
@@ -1363,19 +1373,24 @@ func _build_panels() -> void:
 	_history_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_history_chart)
 
+	side = _sections["admin"]
+	side.add_child(_heading("Simulation speed"))
 	_speed_label = Label.new()
+	_speed_label.text = "Config: waiting"
 	_speed_label.tooltip_text = "Authoritative simulation speed"
-	workspace.telemetry.add_child(_speed_label)
-	_speed_strip = HBoxContainer.new()
+	side.add_child(_speed_label)
+	_speed_strip = HFlowContainer.new()
 	for speed: int in [0, 6, 60, 600, 3600]:
 		var button := Button.new()
 		button.text = "Pause" if speed == 0 else "%dx" % (speed / 6)
 		button.toggle_mode = true
+		button.disabled = true
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.pressed.connect(_change_speed.bind(float(speed)))
 		_speed_strip.add_child(button)
 		_speed_buttons[speed] = button
-	workspace.telemetry.add_child(_speed_strip)
+	side.add_child(_speed_strip)
+	_build_developer_panel()
 
 	section = _sections["operations"]
 	side = section
@@ -1502,6 +1517,121 @@ func _build_panels() -> void:
 	_refresh_permissions()
 
 
+## Developer is a local client mode, never an authorization role.
+func _build_developer_panel() -> void:
+	var side: VBoxContainer = _sections["developer"]
+	side.add_child(_heading("Local troubleshooting"))
+	_developer_summary = Label.new()
+	_developer_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(_developer_summary)
+	for action: String in ["copy", "refresh", "fit", "camera", "samples"]:
+		var button := Button.new()
+		button.text = {"copy": "Copy sanitized summary", "refresh": "Refresh local view/cache",
+			"fit": "Fit map camera", "camera": "Reset camera to 1:1", "samples": "Reset diagnostic samples"}[action]
+		button.pressed.connect(_developer_action.bind(action))
+		side.add_child(button)
+	_developer_diagnostics = CheckBox.new()
+	_developer_diagnostics.text = "Show diagnostics"
+	_developer_diagnostics.toggled.connect(_developer_toggle_diagnostics)
+	side.add_child(_developer_diagnostics)
+	_developer_graph = CheckBox.new()
+	_developer_graph.text = "Show diagnostics graph"
+	_developer_graph.toggled.connect(_developer_toggle_graph)
+	side.add_child(_developer_graph)
+	var note := Label.new()
+	note.text = "Local tools only: no world reset, reducers, grants or server commands. Tests and builds run from the terminal. Server role still controls colony editing."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	side.add_child(note)
+	_refresh_developer_summary()
+
+
+func _developer_summary_text() -> String:
+	if _profile != ContinuumClientProfile.DEVELOPER:
+		return ""
+	# Never copy arbitrary snapshots or transport errors: use an explicit allowlist.
+	var frame: Dictionary = _diagnostics_overlay.frame_snapshot if is_instance_valid(_diagnostics_overlay) else {}
+	var rtt: Dictionary = _diagnostics_overlay.rtt_snapshot if is_instance_valid(_diagnostics_overlay) else {}
+	var lines: Array[String] = ["Continuum local diagnostics", "Endpoint: %s" % _sanitized_endpoint(_host),
+		"Database: %s" % _safe_summary_identifier(_database), "Client profile: developer",
+		"Verified role: %s" % (_role_name if _role_name in ["Viewer", "Operator", "Admin"] else "Unknown"),
+		"Session: %s" % ("state ready" if _state_ready else ("joining" if _session_requested else "offline"))]
+	for key: String in ["mean_fps", "p50_frame_ms", "p95_frame_ms", "p99_frame_ms"]:
+		var value: Variant = frame.get(key)
+		if (value is float or value is int) and is_finite(float(value)):
+			lines.append("%s: %.2f" % [key, float(value)])
+	var latency: Variant = rtt.get("rtt_ms")
+	if (latency is float or latency is int) and is_finite(float(latency)):
+		lines.append("RTT ms: %.2f" % float(latency))
+	return "\n".join(lines)
+
+
+func _safe_summary_identifier(value: String) -> String:
+	var result := ""
+	for character: String in value.left(128):
+		if character in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-:":
+			result += character
+	return result
+
+
+func _sanitized_endpoint(value: String) -> String:
+	# Only scheme + host/port. Strip credentials, query, fragments and paths.
+	var scheme := ""
+	var authority := value
+	var separator := value.find("://")
+	if separator >= 0:
+		var candidate := value.left(separator).to_lower()
+		if candidate not in ["http", "https", "ws", "wss"]:
+			return "(not configured)"
+		scheme = candidate + "://"
+		authority = value.substr(separator + 3)
+	for delimiter: String in ["/", "?", "#"]:
+		authority = authority.get_slice(delimiter, 0)
+	authority = authority.get_slice("@", authority.get_slice_count("@") - 1)
+	return scheme + _safe_summary_identifier(authority) if not authority.is_empty() else "(not configured)"
+
+
+func _refresh_developer_summary() -> void:
+	if _profile != ContinuumClientProfile.DEVELOPER or not is_instance_valid(_developer_summary):
+		return
+	var text := _developer_summary_text()
+	if _developer_summary.text != text:
+		_developer_summary.text = text
+	_developer_diagnostics.set_pressed_no_signal(_settings.diagnostics_enabled)
+	_developer_graph.set_pressed_no_signal(_settings.diagnostics_graph_enabled)
+	_developer_graph.disabled = not _settings.diagnostics_enabled
+
+
+func _developer_action(action: String) -> void:
+	if _profile != ContinuumClientProfile.DEVELOPER or _closing or _exit_requested:
+		return
+	match action:
+		"copy": DisplayServer.clipboard_set(_developer_summary_text())
+		"refresh":
+			# Refresh derived caches only; do not reconnect or reset replicated state.
+			_full_ui_refresh = true
+			_dirty = true
+			_map_dirty = true
+			_map_tables_changed.clear()
+		"fit": map.fit_camera()
+		"camera": map.reset_camera()
+		"samples": _reset_diagnostics_samples()
+	_refresh_developer_summary()
+
+
+func _developer_toggle_diagnostics(enabled: bool) -> void:
+	if _profile != ContinuumClientProfile.DEVELOPER or _closing or _exit_requested:
+		return
+	configure_diagnostics(enabled, _settings.diagnostics_graph_enabled, false)
+	_refresh_developer_summary()
+
+
+func _developer_toggle_graph(enabled: bool) -> void:
+	if _profile != ContinuumClientProfile.DEVELOPER or _closing or _exit_requested:
+		return
+	configure_diagnostics(_settings.diagnostics_enabled, enabled, false)
+	_refresh_developer_summary()
+
+
 func _build_telemetry() -> void:
 	_clock = Label.new()
 	_clock.text = "DAY --  --:--"
@@ -1603,6 +1733,11 @@ func _refresh_permissions() -> void:
 	# Unknown and disconnected are deliberately equivalent to viewer permissions.
 	workspace.set_panel_authorized("policies", _can_operate)
 	workspace.set_panel_authorized("operations", _can_operate)
+	workspace.set_panel_authorized("admin", _is_admin)
+	workspace.set_panel_authorized("developer", _profile == ContinuumClientProfile.DEVELOPER)
+	for button: Button in _speed_buttons.values():
+		if not _is_admin or not _state_ready:
+			button.disabled = true
 	if is_instance_valid(_speed_strip):
 		_speed_strip.visible = _is_admin
 	for mode: StringName in [&"build", &"excavate", &"facility"]:
@@ -2153,7 +2288,7 @@ func _refresh_controls() -> void:
 		_speed_label.text += " | stale"
 	for speed: int in _speed_buttons:
 		var speed_button: Button = _speed_buttons[speed]
-		speed_button.disabled = not _is_admin or busy or config == null
+		speed_button.disabled = not _is_admin or not _state_ready or busy or config == null
 		speed_button.set_pressed_no_signal(config != null and is_equal_approx(config.time_scale, float(speed)))
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
 	if tile != null and not map.row_visible(tile):
@@ -2208,6 +2343,8 @@ func _refresh_alerts() -> void:
 	for child in _alert_box.get_children():
 		_alert_box.remove_child(child)
 		child.queue_free()
+	if SpacetimeDB.Continuum.db == null:
+		return
 
 	var active: Array[ContinuumAlert] = []
 	for alert: ContinuumAlert in SpacetimeDB.Continuum.db.alert.iter():
