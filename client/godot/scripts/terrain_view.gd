@@ -14,6 +14,7 @@ var entity_layers: Array[TextureRect] = []
 var viewports: Array[SubViewport] = []
 var canvases: Array[Node2D] = []
 var parent_control: Control
+var _ground: ColorRect
 var _visible := false
 var _model: LayeredTerrainModel
 var _origin := Vector2.ZERO
@@ -31,6 +32,13 @@ var entity_update_count := 0
 
 func attach(parent: Control) -> void:
 	parent_control = parent
+	_ground = ColorRect.new()
+	_ground.color = ThemeTokens.color("map-ground-deep")
+	_ground.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ground.show_behind_parent = true
+	_ground.z_index = -4096
+	_ground.visible = false
+	parent.add_child(_ground)
 
 func _new_layer(depth: int, entity: bool) -> TextureRect:
 	var layer := TextureRect.new()
@@ -120,10 +128,12 @@ func _build_terrain() -> void:
 				images[depth] = _image()
 				masks[depth] = Image.create(_region.size.x, _region.size.y, false, Image.FORMAT_RGBA8)
 			var at := xy - _region.position
-			var colour := Color("887047") if _model.material_at(surface) == 1 else Color("737d8b")
+			var colour := ThemeTokens.color("map-ground" if depth == 0 else "map-ground-deep")
 			images[depth].fill_rect(Rect2i(at * _pixels, Vector2i.ONE * _pixels), colour)
-			images[depth].fill_rect(Rect2i(at * _pixels, Vector2i(_pixels, maxi(1, roundi(2.0 * _pixels / PIXELS)))), colour.lightened(0.18))
-			images[depth].fill_rect(Rect2i(at * _pixels + Vector2i(12, 16) * _pixels / PIXELS, Vector2i.ONE * maxi(1, _pixels / 8)), colour.darkened(0.25))
+			# Neutral material texture retains depth detail without inventing a
+			# material palette. Actual material identity remains in inspection.
+			images[depth].fill_rect(Rect2i(at * _pixels + Vector2i(12, 16) * _pixels / PIXELS,
+				Vector2i.ONE * maxi(1, _pixels / 8)), colour.blend(MapPaint.translucent("map-ink", 0.22)))
 			masks[depth].set_pixelv(at, Color.WHITE)
 	for depth in count:
 		layers[depth].texture = _upload(layers[depth].texture, images[depth])
@@ -224,6 +234,9 @@ func _apply_entities(force := false) -> void:
 func layout(origin: Vector2, extent: Vector2) -> void:
 	_origin = origin
 	_extent = extent
+	if _ground != null:
+		_ground.position = origin
+		_ground.size = extent
 	_sync_region()
 	_layout_layers()
 
@@ -256,6 +269,8 @@ func set_visible(value: bool) -> void:
 	if _visible == value:
 		return
 	_visible = value
+	if _ground != null:
+		_ground.visible = value
 	for layer in layers + entity_layers:
 		layer.visible = value and layer.texture != null
 	for depth in viewports.size():

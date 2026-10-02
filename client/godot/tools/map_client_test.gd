@@ -58,10 +58,11 @@ func run() -> void:
 	map.fit_camera()
 	check(map._zoom == 1.0 and map._pan == Vector2.ZERO, "Fit restores the original fit camera")
 	map.reset_camera()
-	check(is_equal_approx(map.zoom_percent(), 100.0), "1:1 resets to native 32px cells")
+	check(is_equal_approx(map.zoom_percent(), 100.0) and is_equal_approx(map._cell_size(), ThemeTokens.number("tile")), "1:1 resets to the 16 logical pixel display cell without changing physical coordinates")
 	map.fit_camera()
 	map.zoom_at(2.0, map.size * 0.5)
-	map.pan_by(Vector2(19.25, -11.5))
+	# 400% display zoom is now 64px; explicitly pan the test cell outside.
+	map.pan_by(Vector2(-60.25, -45.5))
 	var point := map.world_to_screen(Vector2(3.5, 1.5))
 	check(map._cell_at(point) == Vector2i(3, 1), "zoomed and panned picking uses exact actual coordinates")
 	check(map._cell_at(map.world_to_screen(Vector2(0.5, 0.5))) == null, "offscreen cells cannot be picked through the map's clip rectangle")

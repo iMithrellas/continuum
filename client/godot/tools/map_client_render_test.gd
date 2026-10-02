@@ -171,9 +171,9 @@ func _ready() -> void:
 	check(descriptors.size() == 2, "large-world culling draws exactly one complete facility and one whole actor")
 	var complete := await capture(viewport)
 	complete.save_png("res://build/map-client/camera-%d.png" % edge)
-	var selection := map.world_to_screen(Vector2(base + 3, base + 2)) + Vector2(1, 20)
+	var selection := map.world_to_screen(Vector2(base + 3, base + 2)) + Vector2(2, 40)
 	var colour := complete.get_pixelv(Vector2i(selection))
-	check(colour.g > 0.75 and colour.b > 0.65, "selection is sharp above cropped deep entity/terrain passes at zoom")
+	check(colour.is_equal_approx(ThemeTokens.color("accent")), "token selection is sharp above cropped deep entity/terrain passes at zoom")
 	check(map._cell_at(map.world_to_screen(centre)) == Vector2i(base + 4, base + 4), "GPU camera and exact world-coordinate picking agree")
 	check(map.tile_at(Vector2i(base + 4, base + 2)).id == 50000, "zoomed picking finds the complete facility rather than an underlying empty row")
 	map.terrain_view.layers[9].visible = false
