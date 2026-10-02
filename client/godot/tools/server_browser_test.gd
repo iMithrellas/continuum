@@ -194,7 +194,7 @@ func _test_rendered_browser() -> void:
 			await process_frame
 			_assert(scroll.get_global_rect().grow(2).encloses(button.get_global_rect()), "scroll reaches %s at %s: %s in %s" % [button.text, viewport_size, button.get_global_rect(), scroll.get_global_rect()])
 		for label: Label in manager._history_list.find_children("*", "Label", true, false):
-			_assert(label.size.y >= manager._metrics.base_font_size, "history labels have readable height")
+			_assert(label.size.y >= label.get_theme_font_size("font_size") and label.get_theme_font_size("font_size") >= 11, "history labels retain readable logical typography")
 	manager.set_status("A detailed connection failure. ".repeat(30), true)
 	for _frame in 8: await process_frame
 	_assert(manager.get_global_rect().encloses(manager._content.get_global_rect()) and

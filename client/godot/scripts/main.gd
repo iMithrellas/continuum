@@ -70,7 +70,7 @@ var _recreation_button: Button
 var _feed: RichTextLabel
 var _connection_label: Label
 var _connection_message := ""
-var _connection_colour := Color("7f8b9c")
+var _connection_colour := ThemeTokens.color("ink-muted")
 var _haul_button: Button
 var _haul_description: Label
 var _haul_feedback: Label
@@ -484,7 +484,7 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 	options.debug_mode = false
 	options.one_time_token = false
 	options.save_token = true
-	_set_connection_text("connecting to %s / %s ..." % [_host, _database], Color("ffb74d"))
+	_set_connection_text("Connecting · %s / %s" % [_host, _database], ThemeTokens.color("ink-muted"))
 	if client.is_connected_db():
 		_on_connected(client.get_local_identity(), str(client.get_token()))
 	else:
@@ -757,12 +757,12 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_cancel_reconnect()
 	_session_diagnostics.set_connected(true)
 	print("Continuum identity: %s" % identity.hex_encode())
-	_set_connection_text("connected as %s..." % identity.hex_encode().substr(0, 12),
-			Color("6fcf7f"))
+	_set_connection_text("Connected · %s · waiting for colony state" % identity.hex_encode().substr(0, 12),
+			ThemeTokens.color("ink-muted"))
 	_release_main_subscription()
 	_subscription = SpacetimeDB.Continuum.subscribe(SUBSCRIPTION_QUERIES)
 	if _subscription.error != OK:
-		_set_connection_text("subscription failed (%d)" % _subscription.error, Color("ff5c6c"))
+		_set_connection_text("Subscription failed · %d" % _subscription.error, ThemeTokens.color("critical"))
 		if not _direct_launch:
 			_fail_manual_session("Subscription failed (%d)." % _subscription.error)
 		return
@@ -805,8 +805,8 @@ func _on_disconnected() -> void:
 	_set_permissions("Unknown", false, false)
 	_history.reset()
 	_history_chart.set_points([])
-	_set_connection_text("disconnected - the colony keeps running without us",
-			Color("ff5c6c"))
+	_set_connection_text("Offline · the colony keeps running without us",
+			ThemeTokens.color("critical"))
 	if _session_requested and _direct_launch:
 		_server_management.set_status("Disconnected. Retrying in the background; you can join another server.", true)
 		_server_management.set_busy(false)
@@ -820,7 +820,7 @@ func _on_connection_error(code: int, reason: String) -> void:
 	_session_diagnostics.set_connected(false)
 	_reset_diagnostics_samples()
 	_release_main_subscription()
-	_set_connection_text("connection error %d: %s" % [code, reason], Color("ff5c6c"))
+	_set_connection_text("Connection error · %d: %s" % [code, reason], ThemeTokens.color("critical"))
 	if _session_requested and _direct_launch:
 		_server_management.set_status("Connection error %d: %s. Retrying in the background; you can join another server." % [code, reason], true)
 		_server_management.set_busy(false)
@@ -883,7 +883,7 @@ func _schedule_reconnect() -> void:
 	_dirty = true
 	if _closing or _reconnect_timer != null:
 		return
-	_set_connection_text("disconnected - retrying in %.0fs" % RECONNECT_DELAY, Color("ffb74d"))
+	_set_connection_text("Reconnecting · retrying in %.0f s" % RECONNECT_DELAY, ThemeTokens.color("warn"))
 	_reconnect_timer = get_tree().create_timer(RECONNECT_DELAY)
 	_reconnect_timer.timeout.connect(_retry_connection.bind(_reconnect_timer))
 
@@ -1259,16 +1259,16 @@ func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 	var generation := _session_generation
 	if call.error != OK:
 		_set_connection_text("%s could not be sent (%d)" % [reducer_name, call.error],
-				Color("ff5c6c"))
+				ThemeTokens.color("critical"))
 		return
 	var response: ReducerResultMessage = await call.response
 	if not _client_epoch_current(client, generation): return
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 		_set_connection_text("%s was rejected: %s" % [
-			reducer_name, response.reducer_result.get_err()], Color("ff5c6c"))
+			reducer_name, response.reducer_result.get_err()], ThemeTokens.color("critical"))
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
 		_set_connection_text("%s failed: %s" % [
-			reducer_name, response.reducer_result.get_internal_error()], Color("ff5c6c"))
+			reducer_name, response.reducer_result.get_internal_error()], ThemeTokens.color("critical"))
 
 
 func _build_panels() -> void:
@@ -1496,6 +1496,7 @@ func _build_developer_panel() -> void:
 	var side: VBoxContainer = _sections["developer"]
 	side.add_child(_heading("Local troubleshooting"))
 	_developer_summary = Label.new()
+	ThemeTokens.apply_label(_developer_summary, "readout")
 	_developer_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_developer_summary)
 	for action: String in ["copy", "refresh", "fit", "camera", "samples"]:
@@ -1533,8 +1534,10 @@ func _developer_summary_text() -> String:
 		if (value is float or value is int) and is_finite(float(value)):
 			lines.append("%s: %.2f" % [key, float(value)])
 	var latency: Variant = rtt.get("rtt_ms")
-	if (latency is float or latency is int) and is_finite(float(latency)):
-		lines.append("RTT ms: %.2f" % float(latency))
+	if rtt.get("source", "") == "tcp_info" and not rtt.get("rtt_stale", false) and (latency is float or latency is int) and is_finite(float(latency)):
+		lines.append("TCP RTT ms: %.2f" % float(latency))
+	else:
+		lines.append("TCP RTT: unavailable")
 	return "\n".join(lines)
 
 
@@ -1728,8 +1731,7 @@ func _refresh_permissions() -> void:
 func _heading(text: String) -> Label:
 	var label := Label.new()
 	label.text = text.to_upper()
-	label.add_theme_font_size_override("font_size", _metrics.font(11))
-	label.add_theme_color_override("font_color", Color("7f8b9c"))
+	ThemeTokens.apply_label(label, "section")
 	return label
 
 

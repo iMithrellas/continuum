@@ -29,8 +29,8 @@ func _run() -> void:
 	get_tree().root.add_child(main)
 	await get_tree().process_frame
 	_assert(main._server_management._metrics.base_font_size == 19 and
-		main._server_management._join_button.get_theme_font_size("font_size") == 19,
-		"production browser uses the saved font before any settings changes")
+		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"),
+		"production browser preserves saved metrics while using canonical logical typography")
 	_assert(main._server_management._join_host.text == settings.server_host and
 		main._server_management._join_database.text == settings.database, "server form loads the saved endpoint")
 	main.set_size(Vector2(360, 480))
@@ -151,7 +151,7 @@ func _run() -> void:
 		"menu sees the last server saved through the shared settings object")
 	main.apply_font_size(22, false)
 	_assert(main._server_management._join_host.text == "http://127.0.0.1:1" and
-		main._server_management._join_button.get_theme_font_size("font_size") == 22, "browser font rebuild preserves the draft endpoint")
+		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"), "browser rebuild preserves the draft endpoint and logical typography")
 	_assert(main._menu.settings.diagnostics_enabled and main._menu.settings.font_size == 22 and
 			main._menu.settings.server_host == "http://joined.test" and
 			main._menu.settings.database == "joined-db",

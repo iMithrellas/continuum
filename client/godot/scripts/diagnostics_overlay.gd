@@ -75,43 +75,42 @@ func _draw_text(font: Font, position: Vector2, text: String, font_size: int, col
 	var bounds := panel_rect()
 	if position.y - font_size < bounds.position.y or position.y + font_size > bounds.end.y:
 		return
-	var fitted := text
-	while not fitted.is_empty() and font.get_string_size(fitted, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > width:
-		fitted = fitted.left(fitted.length() - 1)
-	draw_string(font, position, fitted, HORIZONTAL_ALIGNMENT_LEFT, width, font_size, color)
+	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width:
+		draw_string(font, position, text, HORIZONTAL_ALIGNMENT_LEFT, width, font_size, color)
 
 func _draw() -> void:
 	if not show_diagnostics:
 		return
 	var rect := panel_rect()
-	draw_rect(rect, Color("181b1fdd"), true)
-	draw_rect(rect, Color("68727add"), false, metrics.px(1.0))
-	var font := ThemeDB.fallback_font
+	draw_rect(rect, ThemeTokens.color("bg-100"), true)
+	draw_rect(rect, ThemeTokens.color("line-100"), false, metrics.px(1.0))
+	var font := ThemeTokens.font("readout")
 	var text_width := maxf(1.0, rect.size.x - metrics.px(16))
-	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(16)), "DIAGNOSTICS", metrics.font(10), Color("b6c0c5"), text_width)
+	_draw_text(ThemeTokens.font("section"), rect.position + Vector2(metrics.px(8), metrics.px(16)), "DIAGNOSTICS", ThemeTokens.font_size("section"), ThemeTokens.color("ink-subtle"), text_width)
 	var frame_text := "FPS --  frame-time N/A"
 	if frame_snapshot.get("ready", false):
 		frame_text = "FPS %.1f  p95 %.2f ms" % [frame_snapshot.mean_fps, frame_snapshot.p95_frame_ms]
 	else:
 		frame_text = "FPS --  warmup %d/%d" % [frame_snapshot.get("count", 0), frame_snapshot.get("minimum", 0)]
-	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(33)), frame_text, metrics.font(10), Color("d6dadd"), text_width)
-	var rtt_text := "RTT N/A  packet loss N/A"
-	if rtt_snapshot.get("rtt_ms", null) != null:
-		rtt_text = "RTT %.1f ms  avg %.1f ms" % [rtt_snapshot.rtt_ms, rtt_snapshot.get("rtt_smoothed_ms", rtt_snapshot.rtt_ms)]
+	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(33)), frame_text, ThemeTokens.font_size("readout"), ThemeTokens.color("ink"), text_width)
+	var rtt_text := "TCP RTT N/A"
+	if rtt_snapshot.get("source", "") == "tcp_info" and rtt_snapshot.get("rtt_ms", null) != null and not rtt_snapshot.get("rtt_stale", false):
+		rtt_text = "TCP RTT %.1f ms" % rtt_snapshot.rtt_ms
 	elif rtt_snapshot.get("rtt_stale", false):
-		rtt_text = "RTT N/A (stale)  packet loss N/A"
-	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(48)), rtt_text, metrics.font(10), Color("d6dadd"), text_width)
-	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(63)), "probe timeouts %.0f%%" % (float(rtt_snapshot.get("probe_timeout_ratio", 0.0)) * 100.0) if rtt_snapshot.get("probe_timeout_ratio", null) != null else "probe timeouts N/A", metrics.font(9), Color("9ca8ad"), text_width)
+		rtt_text = "TCP RTT N/A (stale)"
+	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(48)), rtt_text, ThemeTokens.font_size("readout"), ThemeTokens.color("ink"), text_width)
+	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(63)), "probe timeouts %.0f%%" % (float(rtt_snapshot.get("probe_timeout_ratio", 0.0)) * 100.0) if rtt_snapshot.get("probe_timeout_ratio", null) != null else "probe timeouts N/A", ThemeTokens.font_size("log"), ThemeTokens.color("ink-subtle"), text_width)
 	if not graph_lane_rects().is_empty():
 		var lanes := graph_lane_rects()
-		_draw_series(lanes[0], frame_snapshot.get("frame_graph", []), Color("b07b4f"), "frame-time ms")
-		_draw_series(lanes[1], rtt_snapshot.get("rtt_graph", []), Color("7fa6b8"), "RTT ms")
+		_draw_series(lanes[0], frame_snapshot.get("frame_graph", []), ThemeTokens.color("ink-muted"), "frame-time ms")
+		if rtt_snapshot.get("source", "") == "tcp_info" and not rtt_snapshot.get("rtt_stale", false):
+			_draw_series(lanes[1], rtt_snapshot.get("rtt_graph", []), ThemeTokens.color("meter-fill"), "TCP RTT ms")
 
 func _draw_series(rect: Rect2, values: Array, color: Color, _label: String) -> void:
 	if values.is_empty():
 		return
 	var plot := Rect2(rect.position + Vector2(metrics.px(8), metrics.px(2)), Vector2(maxf(1.0, rect.size.x - metrics.px(16)), maxf(1.0, rect.size.y - metrics.px(4))))
-	_draw_text(ThemeDB.fallback_font, plot.position, _label, metrics.font(8), color, plot.size.x)
+	_draw_text(ThemeTokens.font("small"), plot.position, _label, ThemeTokens.font_size("small"), color, plot.size.x)
 	var maximum := 1.0
 	for value in values:
 		var scalar = value.value if value is Dictionary else value
@@ -130,4 +129,4 @@ func _draw_series(rect: Rect2, values: Array, color: Color, _label: String) -> v
 		if previous != Vector2.ZERO:
 			draw_line(previous, point, color, metrics.px(1.0))
 		previous = point
-	_draw_text(ThemeDB.fallback_font, plot.end - Vector2(metrics.px(36), -metrics.px(1)), "time", metrics.font(7), color, metrics.px(36))
+	_draw_text(ThemeTokens.font("small"), plot.end - Vector2(metrics.px(36), -metrics.px(1)), "time", ThemeTokens.font_size("small"), color, metrics.px(36))
