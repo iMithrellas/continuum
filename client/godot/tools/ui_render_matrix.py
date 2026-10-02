@@ -1,15 +1,24 @@
-"""Private software-GL chrome matrix; no human display or live colony connection.
+"""Private software-GL matrix; no human display or live colony connection.
 
 GODOT and PATH may point to the supplied private DummyAudio/Xvfb tools.
-Full component/map coverage is added only after dependency handoffs land.
+--live exercises typed production-main composition and actual GUI contracts.
 """
 import itertools
+import argparse
 import os
 from pathlib import Path
 import shutil
 import subprocess
 
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--live", action="store_true", help="render actual typed-fixture production main, not phase 2 chrome")
+parser.add_argument("--review-only", action="store_true", help="three focused review-fix GPU cases, not the unchanged full matrix")
+options = parser.parse_args()
+scene = "ui_composition_fixture" if options.live else "ui_chrome_fixture"
+if options.review_only:
+    scene = "ui_review_regression"
+marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only else "UI_INTEGRATION_FIXTURE_PASS"
 project = Path(__file__).resolve().parents[1]
 base = Path(os.environ.get("UI_RENDER_OUTPUT", "/tmp/opencode/continuum-ui-integration-state/matrix"))
 base.mkdir(parents=True, exist_ok=True)
@@ -39,14 +48,35 @@ with (base / "xvfb.log").open("w") as log:
             raise RuntimeError("Private Xvfb failed")
         env["DISPLAY"] = ":" + number
         results = []
-        for screen, scale, status, reduced, focus in itertools.product(["1440x900", "960x640"], [100, 125, 150], ["nominal", "problem"], [False, True], [False, True]):
+        cases = [(screen, scale, status, reduced, focus, "") for screen, scale, status, reduced, focus in itertools.product(["1440x900", "960x640"], [100, 125, 150], ["nominal", "problem"], [False, True], [False, True])]
+        if options.live:
+            cases += [("1440x900", scale, status, True, True, "floating") for scale, status in itertools.product([100, 125], ["nominal", "problem"])]
+            cases += [(screen, scale, "problem", True, True, "digest") for screen, scale in [("1440x900", 100), ("960x640", 150)]]
+        if options.review_only:
+            cases = [("1440x900", 100, "problem", False, True, ""), ("960x640", 125, "problem", False, True, ""), ("960x640", 150, "problem", True, True, "digest")]
+        for screen, scale, status, reduced, focus, extra in cases:
             name = f"{screen}-{scale}-{status}-motion{'reduced' if reduced else 'normal'}-focus{int(focus)}"
-            command = [godot, "--path", str(project), "--display-driver", "x11", "--rendering-method", "gl_compatibility", "--scene", "res://tools/ui_chrome_fixture.tscn", "--", f"--screen={screen}", f"--scale={scale}", f"--status={status}", f"--capture={base / (name + '.png')}"]
+            if extra:
+                name += "-" + extra
+            command = [godot, "--disable-vsync", "--path", str(project), "--display-driver", "x11", "--rendering-method", "gl_compatibility", "--scene", f"res://tools/{scene}.tscn", "--", f"--screen={screen}", f"--scale={scale}", f"--status={status}", f"--capture={base / (name + '.png')}"]
             command += (["--reduced-motion"] if reduced else []) + (["--focus"] if focus else [])
-            result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+            if options.live:
+                command.append("--layout-qa")
+            if extra:
+                command.append("--" + extra)
+            try:
+                result = subprocess.run(command, env=env, capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired as error:
+                def text(value):
+                    return value.decode(errors="replace") if isinstance(value, bytes) else value or ""
+                output = text(error.stdout) + text(error.stderr) + "\nTIMEOUT 60s: " + repr(command)
+                (base / (name + ".log")).write_text(output)
+                results.append("FAIL timeout " + name)
+                (base / "summary.log").write_text("\n".join(results) + "\n")
+                raise SystemExit(output) from error
             output = result.stdout + result.stderr
             (base / (name + ".log")).write_text(output)
-            passed = result.returncode == 0 and "UI_INTEGRATION_FIXTURE_PASS" in output and "ERROR:" not in output
+            passed = result.returncode == 0 and marker in output and "ERROR:" not in output
             results.append(f"{'PASS' if passed else 'FAIL'} {name}")
             print(results[-1], flush=True)
             (base / "summary.log").write_text("\n".join(results) + "\n")

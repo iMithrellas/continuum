@@ -30,7 +30,9 @@ def run(name, args, marker, gpu=False):
         [sys.executable, str(project / "tools/map_client_x11.py")]
         if gpu else [os.environ.get("GODOT", "godot"), "--headless", "--path", str(project)]
     )
-    command += ["--quit-after", "1200", *args]
+    # Dense workspace/focus coverage legitimately exceeds 1200 frames under
+    # DummyAudio. Keep a crash-safe frame cap; the real wall timeout is below.
+    command += ["--quit-after", "12000", *args]
     start = time.monotonic()
     result = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=180)
     (output / f"{name}.log").write_text(result.stdout)

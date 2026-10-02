@@ -28,7 +28,7 @@ func _run() -> void:
 	main.diagnostics_settings_path = settings_path
 	get_tree().root.add_child(main)
 	await get_tree().process_frame
-	_assert(main._server_management._metrics.base_font_size == 19 and
+	_assert(main._server_management._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and
 		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"),
 		"production browser preserves saved metrics while using canonical logical typography")
 	_assert(main._server_management._join_host.text == settings.server_host and
@@ -103,7 +103,7 @@ func _run() -> void:
 			_assert(main.get_viewport_rect().encloses(host.get_global_rect()), "diagnostics fit inside the actual game viewport")
 			_assert(host.size.x <= host.get_parent().size.x * 0.4 + 1, "diagnostics never reserve over 40 percent of the header")
 			_assert(host.get_global_rect().position.x >= telemetry_view.get_global_rect().end.x, "diagnostics do not cover telemetry")
-			_assert(is_equal_approx(telemetry_view.custom_minimum_size.y, main._metrics.px(38)), "telemetry viewport preserves the scaled 38px row")
+			_assert(is_equal_approx(telemetry_view.custom_minimum_size.y, ThemeTokens.number("topbar")), "telemetry viewport preserves the 40 logical pixel row")
 			_assert(host.get_global_rect().end.y <= main.workspace.area.get_global_rect().position.y, "diagnostics never cover map or workspace windows")
 			main.configure_diagnostics(true, true, false)
 			for lane: Rect2 in main._diagnostics_overlay.graph_lane_rects():
@@ -141,8 +141,8 @@ func _run() -> void:
 	main.apply_font_size(10, false)
 	_assert(main._menu.settings == main._settings and main._settings.diagnostics_enabled and
 			main._settings.server_host == settings.server_host and
-			main._settings.database == settings.database and main._metrics.base_font_size == 10,
-		"font changes preserve all settings fields and menu ownership")
+			main._settings.database == settings.database and main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100,
+		"legacy font changes migrate to whole-ui scale and preserve settings and menu ownership")
 	_assert(main._settings.remember_server("http://joined.test", "joined-db", settings_path) == OK,
 		"successful server save updates shared settings")
 	main._menu._refresh_last_button()
@@ -152,7 +152,7 @@ func _run() -> void:
 	main.apply_font_size(22, false)
 	_assert(main._server_management._join_host.text == "http://127.0.0.1:1" and
 		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"), "browser rebuild preserves the draft endpoint and logical typography")
-	_assert(main._menu.settings.diagnostics_enabled and main._menu.settings.font_size == 22 and
+	_assert(main._menu.settings.diagnostics_enabled and main._menu.settings.font_size == 13 and main._settings.ui_scale_percent == 150 and
 			main._menu.settings.server_host == "http://joined.test" and
 			main._menu.settings.database == "joined-db",
 		"later font changes do not toggle diagnostics or lose last server")

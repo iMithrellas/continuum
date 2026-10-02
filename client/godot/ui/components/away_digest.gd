@@ -12,7 +12,18 @@ var model: Dictionary = {}
 ## span/coverage copy; deltas [{name,baseline,current,level}]; provided event groups.
 ## No baselines, events, handles or coverage are manufactured from current state.
 func set_model(data: Dictionary) -> void:
-	model = Models.digest(data)
+	var next := Models.digest(data)
+	if next == model:
+		return
+	var focus_key := ""
+	var scroll_value := 0
+	if is_inside_tree():
+		var focused := get_viewport().gui_get_focus_owner()
+		if focused != null and is_ancestor_of(focused):
+			focus_key = str(focused.get_meta("digest_focus_key", "back"))
+		if get_parent() is ScrollContainer:
+			scroll_value = get_parent().scroll_vertical
+	model = next
 	UI.clear(self)
 	# Foundation owns the token-exact two-layer floating shadow.
 	theme_type_variation = "PanelFloating"
@@ -39,7 +50,7 @@ func set_model(data: Dictionary) -> void:
 			deltas.add_child(cell)
 		content.add_child(deltas)
 	var needs = UI.column()
-	needs.add_child(UI.label("Needs you", "section", "ink-subtle"))
+	needs.add_child(UI.label("Needs you now · live alerts", "section", "ink-subtle"))
 	if model.group_coverage.needs_you.status != "complete":
 		needs.add_child(UI.coverage_notice("Needs-you", model.group_coverage.needs_you))
 	elif model.needs_you.is_empty():
@@ -72,6 +83,7 @@ func set_model(data: Dictionary) -> void:
 			if Models.valid_identifier(item_id) and target_available:
 				goto_requested.emit(item_id))
 		go_to.disabled = not goto_reason.is_empty()
+		go_to.set_meta("digest_focus_key", "goto:%s:%s" % [typeof(item_id), item_id])
 		details.add_child(go_to)
 		needs.add_child(row)
 	content.add_child(needs)
@@ -92,12 +104,42 @@ func set_model(data: Dictionary) -> void:
 		content.add_child(group)
 	var actions = UI.flow()
 	if not ids.is_empty():
-		actions.add_child(UI.button("Review available alerts" if ids.size() < model.needs_you.size() else "Review alerts", func(): review_requested.emit(ids), "ButtonPrimary"))
+		var review = UI.button("Review available alerts" if ids.size() < model.needs_you.size() else "Review alerts", func(): review_requested.emit(ids), "ButtonPrimary")
+		review.set_meta("digest_focus_key", "review")
+		actions.add_child(review)
 		actions.add_child(UI.label(str(ids.size()), "readout"))
 	elif not model.needs_you.is_empty():
 		var review = UI.button("Review alerts · identifiers unavailable", func(): pass, "ButtonPrimary")
 		review.disabled = true
 		actions.add_child(review)
-	actions.add_child(UI.button("Back to the colony", func(): dismiss_requested.emit()))
+	var back = UI.button("Back to the colony", func(): dismiss_requested.emit())
+	back.set_meta("digest_focus_key", "back")
+	actions.add_child(back)
 	content.add_child(actions)
 	add_child(content)
+	if is_inside_tree():
+		_restore_view.call_deferred(focus_key, scroll_value)
+
+func _find_focus(key: String, node: Node) -> Control:
+	if node is Button and node.get_meta("digest_focus_key", "") == key and not node.disabled:
+		return node
+	for child in node.get_children():
+		var found := _find_focus(key, child)
+		if found != null:
+			return found
+	return null
+
+func _restore_view(key: String, value: int, settling_frames := 2) -> void:
+	if not is_inside_tree() or not is_visible_in_tree():
+		return
+	if settling_frames > 0:
+		get_tree().create_timer(0.0).timeout.connect(_restore_view.bind(key, value, settling_frames - 1), CONNECT_ONE_SHOT)
+		return
+	if not key.is_empty():
+		var target := _find_focus(key, self)
+		if target == null:
+			target = _find_focus("back", self)
+		if target != null:
+			target.grab_focus()
+	if get_parent() is ScrollContainer:
+		get_parent().scroll_vertical = value

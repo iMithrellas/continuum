@@ -124,22 +124,19 @@ func _test_controller_surface() -> void:
 	await get_tree().process_frame
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 10 and main._haul_button.get_theme_font_size("font_size") == 12 and
-			main._build_menu.get_theme_font_size("font_size") == 10,
-		"runtime font can shrink dynamic and inherited controls to the lower bound: haul=%d build=%d" % [main._haul_button.get_theme_font_size("font_size"), main._build_menu.get_theme_font_size("font_size")])
+	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and main.get_window().content_scale_factor == 1.0 and
+			main._haul_button.get_theme_font_size("font_size") == 13 and main._build_menu.get_theme_font_size("font_size") == 13,
+		"legacy lower font bound migrates to 100% without shrinking canonical typography")
 	main.apply_font_size(24, false)
-	_assert(main._metrics.base_font_size == 24 and main._feed.custom_minimum_size.y > 120 and
-			main._history_chart.custom_minimum_size.y > 300 and main._clock.custom_minimum_size.x > 250 and
-			main.workspace.telemetry.get_parent().custom_minimum_size.y > 60 and
-			main._haul_button.get_theme_font_size("font_size") == 28 and
-			main._connection_label.get_theme_font_size("font_size") == 24,
-		"runtime max scale updates fonts, feed, chart, clock, and telemetry minima: haul=%d connection=%d" % [main._haul_button.get_theme_font_size("font_size"), main._connection_label.get_theme_font_size("font_size")])
+	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 150 and main.get_window().content_scale_factor == 1.5 and
+			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock.custom_minimum_size.x == 140 and
+			main.workspace.telemetry.get_parent().custom_minimum_size.y == 40 and main._haul_button.get_theme_font_size("font_size") == 13 and main._connection_label.get_theme_font_size("font_size") == 13,
+		"legacy maximum font bound scales the entire viewport once while logical metrics remain fixed")
 	main.apply_font_size(13, false)
-	_assert(main._haul_button.get_theme_font_size("font_size") == 15, "runtime reference size restores exactly")
+	_assert(main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0, "runtime reference size restores exactly")
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 10 and main._feed.custom_minimum_size.y < 70 and
-			main._haul_button.get_theme_font_size("font_size") == 12,
-		"runtime scaling returns to small metrics without compounding")
+	_assert(main._metrics.base_font_size == 13 and main._feed.custom_minimum_size.y == 70 and main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0,
+		"runtime scaling returns to 100% without compounding or shrinking typography")
 	main.apply_font_size(13, false)
 	_assert(main._mode_buttons.size() == 4, "select, build, excavate, and facility mode buttons are reachable")
 	_set_role(main, "operator", true, false)
@@ -228,7 +225,7 @@ func _test_workspace_surface(main: Control) -> void:
 	_assert(main.workspace.compact and main.workspace.area.size.x == 390,
 		"production UI fits a phone viewport without a fixed-width sidebar")
 	_assert(main.workspace.area.position.y < 140,
-		"telemetry text cannot inflate the header through narrow wrapping")
+		"telemetry text cannot inflate the header through narrow wrapping (actual y=%.1f toolbar=%s groups=%s/%s)" % [main.workspace.area.position.y, main._map_toolbar.size, main._map_layer_label.get_parent().get_combined_minimum_size(), main._map_zoom_label.get_parent().get_combined_minimum_size()])
 	main.size = desktop_size
 	await get_tree().process_frame
 	await get_tree().process_frame

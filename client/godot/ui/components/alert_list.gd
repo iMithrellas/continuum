@@ -13,9 +13,18 @@ var model: Dictionary = {}
 ## null/missing means unavailable. coverage.status optionally marks partial or
 ## unavailable query coverage; it can never upgrade rejected input to complete.
 func set_model(rows: Variant = null, coverage: Dictionary = {}) -> void:
-	UI.clear(self)
+	var next := Models.alert_collection(rows, coverage)
+	if next == model:
+		return
+	var retained: Dictionary = {}
+	for child in get_children():
+		if child is AlertRow and Models.valid_identifier(child.model.get("id")):
+			retained[child.model.id] = child
+		else:
+			remove_child(child)
+			child.queue_free()
 	add_theme_constant_override("separation", 0)
-	model = Models.alert_collection(rows, coverage)
+	model = next
 	var ordered: Array = model.rows
 	if model.status != "complete":
 		add_child(UI.coverage_notice("Alerts", model))
@@ -25,7 +34,8 @@ func set_model(rows: Variant = null, coverage: Dictionary = {}) -> void:
 		nominal.add_child(UI.label("Nominal · no active alerts"))
 		add_child(nominal)
 	for model in ordered:
-		var row = Row.new()
+		var row = retained[model.id] if retained.has(model.get("id")) else Row.new()
+		retained.erase(model.get("id"))
 		row.set_reduced_motion(reduced_motion)
 		row.set_model(model)
 		var row_id: Variant = model.get("id")
@@ -35,9 +45,16 @@ func set_model(rows: Variant = null, coverage: Dictionary = {}) -> void:
 				row.set_acknowledgement_state(state.pending, state.error)
 			elif model.acknowledged == true:
 				_ack_states.erase(row_id)
-		row.acknowledge_requested.connect(func(id): acknowledge_requested.emit(id))
-		row.goto_requested.connect(func(id): goto_requested.emit(id))
-		add_child(row)
+		if not row.has_meta("list_connected"):
+			row.acknowledge_requested.connect(func(id): acknowledge_requested.emit(id))
+			row.goto_requested.connect(func(id): goto_requested.emit(id))
+			row.set_meta("list_connected", true)
+		if row.get_parent() == null:
+			add_child(row)
+		move_child(row, -1)
+	for row in retained.values():
+		remove_child(row)
+		row.queue_free()
 
 func set_reduced_motion(enabled: bool) -> void:
 	reduced_motion = enabled

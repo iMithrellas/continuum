@@ -212,7 +212,7 @@ func test_hud(local: LocalDatabase) -> void:
 	var card_id := card.get_instance_id()
 	local._tables["colonist"][1].name = "Updated worker"
 	main._refresh_colonists()
-	check(main._colonist_cards[1].get_instance_id() == card_id and card.get_meta("colonist_controls").header.text.begins_with("Updated worker"), "People cards update authoritative fields without destroying/rebuilding their nodes")
+	check(main._colonist_cards[1].get_instance_id() == card_id and card.model.name == "Updated worker", "People roster rows update authoritative fields without destroying/rebuilding their nodes")
 	main._refresh()
 	var alert_child: int = main._alert_box.get_child(0).get_instance_id()
 	var excavation_children: Array = main._excavation_list.get_children()
@@ -240,7 +240,7 @@ func test_hud(local: LocalDatabase) -> void:
 	main._state_ready = true
 	main.map.refresh({"config": true})
 	main._refresh()
-	check(main.map.tile_at(Vector2i(3, 0)) == local._tables["tile"][1] and main._colonist_cards[1].get_meta("colonist_controls").header.text.begins_with("Updated worker"), "actual Main refresh recovers map and cached People fields after provider restoration")
+	check(main.map.tile_at(Vector2i(3, 0)) == local._tables["tile"][1] and main._colonist_cards[1].model.name == "Updated worker", "actual Main refresh recovers map and cached People fields after provider restoration")
 	var settings_path: String = main.fixture_settings_path
 	var workspace_path: String = main.fixture_workspace_path
 	main.free()

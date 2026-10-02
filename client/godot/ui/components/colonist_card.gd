@@ -9,10 +9,16 @@ const Models = preload("models.gd")
 const UI = preload("presentation.gd")
 const Meter = preload("need_meter.gd")
 var model: Dictionary = {}
+var _actions: HFlowContainer
 
 ## Backend need fields: hunger, fatigue, recreation, mood, productivity.
 ## Optional commands: [{id: String, label: String, disabled_reason: String}].
 func set_model(data: Dictionary, config: Dictionary = {}) -> void:
+	var focused: Control = get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	var retained_actions: HFlowContainer
+	if is_instance_valid(_actions) and model.get("id") == data.get("id") and model.get("target") == data.get("target") and model.get("commands") == data.get("commands"):
+		retained_actions = _actions
+		_actions.get_parent().remove_child(_actions)
 	model = Models.colonist(data, config)
 	UI.clear(self)
 	add_theme_stylebox_override("panel", UI.surface("bg-200", "accent" if model.selected else "line-100"))
@@ -22,7 +28,14 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	head.add_child(UI.tag(model.state, model.state_level))
 	content.add_child(head)
 	content.add_child(UI.wrapped(model.job))
-	content.add_child(UI.wrapped("Cargo: " + model.cargo, "readout"))
+	var cargo = UI.flow()
+	cargo.add_child(UI.label("Cargo:", "small"))
+	if Models.numeric(model.get("cargo_amount")):
+		cargo.add_child(UI.label("%.1f" % model.cargo_amount, "readout"))
+		cargo.add_child(UI.wrapped(Models.text(model, "cargo_kind"), "small"))
+	else:
+		cargo.add_child(UI.wrapped(model.cargo, "small"))
+	content.add_child(cargo)
 	for need in model.needs:
 		var meter = Meter.new()
 		meter.set_presentation_model(need)
@@ -53,6 +66,30 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 			actions.add_child(button)
 	content.add_child(actions)
 	add_child(content)
+	if retained_actions != null:
+		content.remove_child(actions)
+		actions.queue_free()
+		content.add_child(retained_actions)
+		_actions = retained_actions
+		if is_instance_valid(focused) and retained_actions.is_ancestor_of(focused):
+			focused.grab_focus()
+			_reveal_action.call_deferred(focused)
+	else:
+		_actions = actions
+
+func _reveal_action(control: Control, settling_frames := 2) -> void:
+	if not is_instance_valid(control) or not is_inside_tree():
+		return
+	if settling_frames > 0:
+		get_tree().create_timer(0.0).timeout.connect(_reveal_action.bind(control, settling_frames - 1), CONNECT_ONE_SHOT)
+		return
+	if get_viewport().gui_get_focus_owner() != control:
+		return
+	var parent := get_parent()
+	while parent != null:
+		if parent is ScrollContainer:
+			parent.ensure_control_visible(control)
+		parent = parent.get_parent()
 
 func _gui_input(event: InputEvent) -> void:
 	if model.get("id_available", false) and event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:

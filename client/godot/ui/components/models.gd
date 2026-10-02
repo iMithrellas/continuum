@@ -109,7 +109,7 @@ static func worst_need(needs: Array) -> Dictionary:
 static func signed(value: Variant) -> String:
 	if not numeric(value):
 		return "Unavailable"
-	return ("+" if value > 0 else "−" if value < 0 else "") + str(abs(value))
+	return ("+" if value > 0 else "−" if value < 0 else "") + ("%.1f" % abs(value))
 
 static func resource(data: Dictionary, config: Dictionary = {}) -> Dictionary:
 	var rate = measurement(data, "rate_per_game_hour")
@@ -123,7 +123,7 @@ static func resource(data: Dictionary, config: Dictionary = {}) -> Dictionary:
 		if rate < 0:
 			if eta != null:
 				severity = band(eta, thresholds(config, 24, 2))
-				copy += " · estimate " + str(eta) + " game h left"
+				copy += " · estimate %.1f game h left (as observed)" % eta
 			else:
 				copy += " · horizon unavailable"
 	return {"name": text(data, "name", "Resource"), "value": measurement(data, "value"), "level": severity, "rate_copy": copy}

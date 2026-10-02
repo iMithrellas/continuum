@@ -14,9 +14,16 @@ var _border: StyleBoxFlat
 func _init() -> void:
 	set_process(false)
 
+func _ready() -> void:
+	# Godot enables a declared _process when attaching a new control. Reapply
+	# the model's motion decision after attachment, not only during construction.
+	_refresh_motion()
+
 ## Required: id, level, title OR raw message, acknowledged (shared bool).
 ## Optional: detail, target, time_label, ack_handle, ack_time, consequence_game_hours.
 func set_model(data: Dictionary) -> void:
+	if Models.alert(data) == model:
+		return
 	var previous_id: Variant = model.get("id")
 	var next_id: Variant = data.get("id")
 	if not Models.same_identifier(previous_id, next_id):
@@ -41,6 +48,13 @@ func set_reduced_motion(enabled: bool) -> void:
 func _render() -> void:
 	if model.is_empty():
 		return
+	var focus_copy := ""
+	var owned_focus := false
+	if is_inside_tree():
+		var focused := get_viewport().gui_get_focus_owner()
+		owned_focus = focused != null and is_ancestor_of(focused)
+		if owned_focus and focused is Button:
+			focus_copy = focused.text.split(" · ")[0]
 	UI.clear(self)
 	_border = UI.surface("critical-soft" if model.level == "critical" else "bg-100", "critical" if model.level == "critical" else "line-100")
 	add_theme_stylebox_override("panel", _border)
@@ -67,9 +81,10 @@ func _render() -> void:
 			foot.tooltip_text = "Acknowledgement actor or time unavailable"
 	elif model.acknowledged == false:
 		var ack_copy = "Acknowledge · identifier unavailable" if not model.id_available else "Acknowledge · pending" if pending else "Acknowledge"
-		var acknowledge = UI.button(ack_copy, _request_acknowledgement, "")
-		acknowledge.disabled = pending or not model.id_available
-		actions.add_child(acknowledge)
+		if model.get("can_acknowledge", true) == true:
+			var acknowledge = UI.button(ack_copy, _request_acknowledgement, "")
+			acknowledge.disabled = pending or not model.id_available
+			actions.add_child(acknowledge)
 		foot.add_child(UI.wrapped("Unacknowledged", "small"))
 	else:
 		foot.add_child(UI.wrapped("Acknowledgement unavailable", "small"))
@@ -82,10 +97,19 @@ func _render() -> void:
 	if not error_copy.is_empty():
 		content.add_child(UI.wrapped(error_copy))
 	add_child(content)
+	if owned_focus:
+		var restored := false
+		for action in actions.get_children():
+			if action is Button and not action.disabled and action.text.split(" · ")[0] == focus_copy:
+				action.grab_focus()
+				restored = true
+		if not restored:
+			focus_mode = Control.FOCUS_ALL
+			grab_focus()
 	_refresh_motion()
 
 func _request_acknowledgement() -> void:
-	if model.id_available and model.acknowledged == false and not pending:
+	if model.id_available and model.acknowledged == false and not pending and model.get("can_acknowledge", true) == true:
 		acknowledge_requested.emit(model.id)
 
 func _request_goto() -> void:
