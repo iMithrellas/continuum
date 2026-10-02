@@ -130,6 +130,11 @@ func _init() -> void:
 	overlay.size = Vector2(1000, 500)
 	var lanes := overlay.graph_lane_rects()
 	var panel := overlay.panel_rect()
+	assert(is_equal_approx(panel.end.x, overlay.size.x - overlay.metrics.px(8)) and
+		is_equal_approx(panel.position.y, overlay.metrics.px(8)), "diagnostics anchor to the game window's upper-right corner")
+	overlay.size = Vector2(2000, 1072)
+	panel = overlay.panel_rect()
+	assert(is_equal_approx(panel.end.x, 2000 - overlay.metrics.px(8)), "diagnostics follow viewport resizing, not another monitor's coordinates")
 	assert(lanes[0].position.y < lanes[1].position.y and lanes[1].end.y <= panel.end.y and lanes[1].end.x <= panel.end.x, "graph uses separate bounded lanes")
 	overlay.set_safe_rect(Rect2(20, 15, 300, 200))
 	assert(overlay.panel_rect().position.x >= 20.0 and overlay.panel_rect().position.y >= 15.0 and overlay.panel_rect().end.x <= 320.0 and overlay.panel_rect().end.y <= 215.0, "offset safe rect contains panel")

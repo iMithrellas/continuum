@@ -23,6 +23,7 @@ func _ready() -> void:
 	model.workspaces[id].panels.people.minimized = true
 	model.workspaces[id].panels.people.pinned = true
 	model.workspaces[id].panels.people.z = 17
+	model.show_panel_headers = false
 	_assert(model.remove_workspace("daily") == false and model.workspaces.has("daily"), "built-in workspaces cannot be deleted")
 	_assert(model.save_to(path) == OK, "layout persists to the isolated test path")
 	var restored := WorkspaceLayout.new()
@@ -30,6 +31,7 @@ func _ready() -> void:
 	_assert(restored.workspaces[id].name == "Renamed notes" and restored.workspaces[id].panels.people.rect == [0.1, 0.2, 0.4, 0.5] and
 			restored.workspaces[id].panels.people.minimized and restored.workspaces[id].panels.people.pinned and
 			restored.workspaces[id].panels.people.z == 17, "saved custom geometry and flags round-trip")
+	_assert(not restored.show_panel_headers, "header visibility persists independently of panel geometry")
 	var other_id := restored.create_workspace("Other", ["overview"], false)
 	var other_rect: Array = restored.workspaces[other_id].panels.overview.rect.duplicate()
 	restored.active = id
@@ -50,6 +52,7 @@ func _ready() -> void:
 		"corrupted preferences retain defaults and a safe active workspace")
 	_assert(recovered.workspaces["bad"].panels.people.rect == WorkspaceLayout.defaults().daily.panels.people.rect,
 		"corrupted nested panel data is discarded")
+	_assert(recovered.show_panel_headers, "old layout files default to visible headers")
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(malformed))
 	await _test_geometry(model)
 	if failed:
@@ -80,6 +83,18 @@ func _test_geometry(_model: WorkspaceLayout) -> void:
 	var viewport_resize := WorkspaceLayout.snap_rect(Rect2(500, 300, 494, 394), area, [], true)
 	_assert(viewport_resize.position == Vector2(500, 300) and viewport_resize.end == area,
 		"resize snaps both trailing edges to viewport")
+	var leading := WorkspaceLayout.snap_rect(Rect2(12, 12, 488, 388), area, [], true, UiMetrics.new(), Vector2i(-1, -1))
+	_assert(leading.position == Vector2.ZERO and leading.end == Vector2(500, 400),
+		"top-left resizing snaps moving edges without moving the opposite corner")
+	var left_only := WorkspaceLayout.snap_rect(Rect2(12, 12, 488, 388), area, [], true, UiMetrics.new(), Vector2i(-1, 0))
+	_assert(left_only.position == Vector2(0, 12) and left_only.end == Vector2(500, 400),
+		"single-edge resizing never snaps the untouched axis")
+	var minimum := WorkspaceLayout.clamp_resize_rect(Rect2(600, 500, -100, -100), area, Vector2i(-1, -1))
+	_assert(minimum.size == WorkspaceLayout.MIN_SIZE and minimum.end == Vector2(500, 400),
+		"crossing top-left edges clamps to minimum size with the opposite corner fixed")
+	var maximum := WorkspaceLayout.clamp_resize_rect(Rect2(-900, -900, 1400, 1300), area, Vector2i(-1, -1))
+	_assert(maximum.position == Vector2.ZERO and maximum.end == Vector2(500, 400),
+		"top-left resize cannot escape the workspace")
 
 func _test_manager() -> void:
 	var previous_db := SpacetimeDB.Continuum.db
@@ -110,10 +125,24 @@ func _test_manager() -> void:
 		"runtime metric application reaches the deck and every window")
 	_assert(deck._dialog.min_size.x >= 550, "workspace dialog minimum scales with runtime metrics")
 	_assert(deck._rows[0].custom_minimum_size.y >= 70, "telemetry header row scales at runtime")
+	await get_tree().process_frame
+	var scaled: WorkspaceWindow = deck.windows.people
+	for child: Node in scaled.titlebar.get_children():
+		if child is Button:
+			_assert(scaled.get_global_rect().encloses(child.get_global_rect()), "scaled action buttons stay inside their panel")
+			for handle: Control in scaled.resize_handles.values():
+				_assert(not child.get_global_rect().intersects(handle.get_global_rect()), "scaled action buttons do not overlap resize hit areas")
 	deck.apply_metrics(UiMetrics.new(13))
 	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 38), "header row returns without compounding")
 	map.input_blocked = deck.blocks_map_input
 	_assert(deck.windows.size() == 8 and deck.authorized.size() == 8, "manager creates all actual game panels")
+	var framed: WorkspaceWindow = deck.windows.people
+	for child: Node in framed.titlebar.get_children():
+		if child is Button:
+			_assert(child.text.is_empty() and child.icon != null and not child.tooltip_text.is_empty(),
+				"window actions use actual icons with descriptive tooltips")
+	_assert(framed.resize_handles.size() == 8, "every edge and corner has a resize hit area")
+	await _test_headers(deck, manager_path)
 	var active := deck.model.active
 	deck.toggle_panel("people")
 	_assert(deck.state("people").minimized, "panel minimizes to the dock")
@@ -149,6 +178,7 @@ func _test_manager() -> void:
 	_assert(not deck.compact and deck.state("people").rect == desktop_rect,
 		"returning to desktop preserves preferred geometry")
 	await _test_viewport_input(deck, map)
+	await _test_resize_edges(deck)
 	deck.toggle_map_only()
 	var map_point := deck.area.get_global_rect().position + Vector2(500, 300)
 	_assert(not deck.blocks_map_input(map_point), "map-only mode passes map input")
@@ -178,6 +208,140 @@ func _test_manager() -> void:
 	map.queue_free()
 	SpacetimeDB.Continuum.db = previous_db
 	local.free()
+
+func _test_headers(deck: WorkspaceDeck, manager_path: String) -> void:
+	var window: WorkspaceWindow = deck.windows.people
+	var original := Rect2(window.position, window.size)
+	deck._layout_action(2)
+	_assert(not deck.model.show_panel_headers and not window.titlebar.visible and not window.divider.visible,
+		"Layout's header option hides bars and dividers")
+	_assert(is_equal_approx(window.scroll.offset_top, deck.metrics.px(12)) and Rect2(window.position, window.size) == original,
+		"hidden headers give space back to content without changing window geometry")
+	var reloaded := WorkspaceLayout.new()
+	_assert(reloaded.load_from(manager_path) and not reloaded.show_panel_headers,
+		"UI header toggle auto-saves the preference")
+	deck.switch_workspace("build")
+	_assert(not deck.windows.operations.titlebar.visible, "header preference also applies after switching workspaces")
+	deck.apply_metrics(UiMetrics.new(24))
+	_assert(not deck.windows.operations.titlebar.visible and is_equal_approx(deck.windows.operations.scroll.offset_top, deck.metrics.px(12)),
+		"font scaling preserves hidden headers and their compact inset")
+	deck.apply_metrics(UiMetrics.new(13))
+	var shortcut := InputEventKey.new()
+	shortcut.keycode = KEY_H
+	shortcut.ctrl_pressed = true
+	shortcut.shift_pressed = true
+	shortcut.pressed = true
+	deck._unhandled_key_input(shortcut)
+	_assert(deck.model.show_panel_headers and deck.windows.operations.titlebar.visible,
+		"Ctrl+Shift+H restores headers without needing the hidden controls")
+	_assert(deck._menu.get_popup().is_item_checked(deck._menu.get_popup().get_item_index(2)),
+		"Layout checkmark stays in sync with the keyboard toggle")
+	deck.switch_workspace("daily")
+	await get_tree().process_frame
+
+func _test_resize_edges(deck: WorkspaceDeck) -> void:
+	deck.state("people").pinned = false
+	deck.state("people").rect = [0.35, 0.3, 0.3, 0.45]
+	deck._apply_layout()
+	await get_tree().process_frame
+	var window: WorkspaceWindow = deck.windows.people
+	var viewport := get_viewport()
+	var original := Rect2(window.position, window.size)
+	var builds_before := viewport_builds
+	var selections_before := viewport_selections
+	for key: String in WorkspaceWindow.RESIZE_DIRECTIONS:
+		window.position = original.position
+		window.size = original.size
+		await get_tree().process_frame
+		var handle: Control = window.resize_handles[key]
+		var pointer := handle.get_global_rect().get_center()
+		var edges: Vector2i = WorkspaceWindow.RESIZE_DIRECTIONS[key]
+		var delta := Vector2(edges) * Vector2(28, 22)
+		viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		_assert(window._gesture == "resize" and window._resize_edges == edges, "real %s handle arms the correct edges" % key)
+		var motion := _mouse_motion(pointer + delta)
+		motion.alt_pressed = true
+		viewport.push_input(motion)
+		viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + delta))
+		var expected := original
+		for axis in 2:
+			if edges[axis] < 0:
+				expected.position[axis] += delta[axis]
+				expected.size[axis] -= delta[axis]
+			elif edges[axis] > 0:
+				expected.size[axis] += delta[axis]
+		_assert(window.position.distance_to(expected.position) < 1 and window.size.distance_to(expected.size) < 1,
+			"real %s resize preserves the stationary edges" % key)
+		_assert(window._gesture.is_empty(), "releasing %s finishes its resize" % key)
+		for overshoot: float in [-3000.0, 3000.0]:
+			window.position = original.position
+			window.size = original.size
+			await get_tree().process_frame
+			pointer = handle.get_global_rect().get_center()
+			viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+			motion = _mouse_motion(pointer + Vector2(edges) * overshoot)
+			motion.alt_pressed = true
+			viewport.push_input(motion)
+			viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+			var actual := Rect2(window.position, window.size)
+			_assert(Rect2(Vector2.ZERO, deck.area.size).encloses(actual), "real %s overshoot remains inside the workspace" % key)
+			for axis in 2:
+				if edges[axis] != 0:
+					var stationary := actual.end[axis] if edges[axis] < 0 else actual.position[axis]
+					var expected_stationary := original.end[axis] if edges[axis] < 0 else original.position[axis]
+					_assert(is_equal_approx(stationary, expected_stationary), "real %s overshoot preserves the opposite edge" % key)
+					if overshoot < 0:
+						_assert(is_equal_approx(actual.size[axis], WorkspaceLayout.minimum_size(deck.metrics)[axis]), "real %s crossing clamps to minimum" % key)
+				else:
+					_assert(is_equal_approx(actual.position[axis], original.position[axis]) and is_equal_approx(actual.size[axis], original.size[axis]), "real %s overshoot leaves the untouched axis unchanged" % key)
+	window.position = original.position
+	window.size = original.size
+	await get_tree().process_frame
+	var cancel_point: Vector2 = window.resize_handles.top_left.get_global_rect().get_center()
+	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, true, cancel_point))
+	viewport.push_input(_mouse_motion(cancel_point - Vector2(30, 30)))
+	window._notification(NOTIFICATION_WM_WINDOW_FOCUS_OUT)
+	_assert(window._gesture.is_empty() and Rect2(window.position, window.size) == original, "focus loss cancels resizing and restores starting geometry")
+	_assert(WorkspaceLayout.to_pixels(deck.state("people").rect, deck.area.size, deck.metrics).position.distance_to(original.position) < 1, "cancelled geometry persists coherently")
+	_assert(viewport_builds == builds_before and viewport_selections == selections_before, "no edge or corner drag paints the map")
+	deck.toggle_panel_headers()
+	await get_tree().process_frame
+	var point := window.scroll.get_global_rect().get_center()
+	var position_before := window.position
+	var press := _mouse_button(MOUSE_BUTTON_LEFT, true, point)
+	press.alt_pressed = true
+	viewport.push_input(press)
+	_assert(window._gesture == "move", "Alt-drag moves headerless panels through their contents")
+	var motion := _mouse_motion(point + Vector2(20, 16))
+	motion.alt_pressed = true
+	viewport.push_input(motion)
+	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, point + Vector2(20, 16)))
+	_assert(window.position.distance_to(position_before + Vector2(20, 16)) < 1, "headerless movement changes the panel, not the map")
+	for key: String in ["left", "top_left"]:
+		var handle: Control = window.resize_handles[key]
+		await get_tree().process_frame
+		var pointer := handle.get_global_rect().get_center()
+		var resize_press := _mouse_button(MOUSE_BUTTON_LEFT, true, pointer)
+		resize_press.alt_pressed = true
+		viewport.push_input(resize_press)
+		_assert(window._gesture == "resize", "Alt with hidden headers retains the %s resize handle instead of moving" % key)
+		var escape := InputEventKey.new()
+		escape.keycode = KEY_ESCAPE
+		escape.pressed = true
+		viewport.push_input(escape)
+	deck.state("people").pinned = true
+	deck._apply_layout()
+	for handle: Control in window.resize_handles.values():
+		_assert(not handle.visible, "pinning disables every edge and corner")
+	_assert(window.pin_button.icon == WorkspaceWindow.PINNED_ICON, "pinned panels use the active pin icon")
+	press = _mouse_button(MOUSE_BUTTON_LEFT, true, window.scroll.get_global_rect().get_center())
+	press.alt_pressed = true
+	viewport.push_input(press)
+	_assert(window._gesture.is_empty(), "Alt cannot move a pinned headerless panel")
+	viewport.push_input(_mouse_button(MOUSE_BUTTON_LEFT, false, press.position))
+	deck.state("people").pinned = false
+	deck._apply_layout()
+	deck.toggle_panel_headers()
 
 func _test_viewport_input(deck: WorkspaceDeck, map: ColonyMap) -> void:
 	for key: String in deck.windows:

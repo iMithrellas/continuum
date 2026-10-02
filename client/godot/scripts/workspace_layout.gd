@@ -18,6 +18,7 @@ static func minimum_size(metrics := UiMetrics.new()) -> Vector2:
 
 var workspaces: Dictionary = defaults()
 var active := "daily"
+var show_panel_headers := true
 var last_load_status := "missing"
 
 
@@ -55,6 +56,29 @@ static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new()) -
 	return Rect2(rect.position.clamp(Vector2.ZERO, available - extent), extent)
 
 
+## Clamp only the dragged edges, keeping the opposite edges fixed.
+static func clamp_resize_rect(rect: Rect2, area: Vector2, edges: Vector2i, metrics := UiMetrics.new()) -> Rect2:
+	var available := area.max(Vector2.ONE)
+	var minimum := minimum_size(metrics).min(available)
+	var result := rect
+	for axis in 2:
+		var start := rect.position[axis]
+		var end := rect.end[axis]
+		if edges[axis] < 0:
+			end = clampf(end, minimum[axis], available[axis])
+			start = clampf(start, 0.0, end - minimum[axis])
+		elif edges[axis] > 0:
+			start = clampf(start, 0.0, available[axis] - minimum[axis])
+			end = clampf(end, start + minimum[axis], available[axis])
+		else:
+			var extent := clampf(rect.size[axis], minimum[axis], available[axis])
+			start = clampf(start, 0.0, available[axis] - extent)
+			end = start + extent
+		result.position[axis] = start
+		result.size[axis] = end - start
+	return result
+
+
 static func to_pixels(values: Array, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
 	return clamp_rect(Rect2(Vector2(values[0], values[1]) * area,
 		Vector2(values[2], values[3]) * area), area, metrics)
@@ -67,32 +91,40 @@ static func to_normalized(rect: Rect2, area: Vector2) -> Array:
 
 
 ## Align parallel edges and leave a small gutter between adjacent windows.
-static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new()) -> Rect2:
-	var result := clamp_rect(rect, area, metrics)
+static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new(), resize_edges := Vector2i.ONE) -> Rect2:
+	var result := clamp_resize_rect(rect, area, resize_edges, metrics) if resizing else clamp_rect(rect, area, metrics)
+	var distance := metrics.px(SNAP_DISTANCE)
+	var gap := metrics.px(GAP)
 	for axis in 2:
+		if resizing and resize_edges[axis] == 0:
+			continue
 		var edges: Array[float] = [0.0, area[axis]]
 		for other: Rect2 in others:
 			var cross := 1 - axis
-			if result.end[cross] < other.position[cross] - SNAP_DISTANCE or result.position[cross] > other.end[cross] + SNAP_DISTANCE:
+			if result.end[cross] < other.position[cross] - distance or result.position[cross] > other.end[cross] + distance:
 				continue
 			edges.append_array([other.position[axis], other.end[axis],
-				other.position[axis] - GAP, other.end[axis] + GAP])
-		var best := SNAP_DISTANCE + 1.0
+				other.position[axis] - gap, other.end[axis] + gap])
+		var best := distance + 1.0
 		var shift := 0.0
 		for edge: float in edges:
-			var candidates: Array[float] = [edge - result.end[axis]]
+			var candidates: Array[float] = [edge - (result.position[axis] if resizing and resize_edges[axis] < 0 else result.end[axis])]
 			if not resizing:
 				candidates.append(edge - result.position[axis])
 			for delta: float in candidates:
 				if absf(delta) < best:
 					best = absf(delta)
 					shift = delta
-		if best <= SNAP_DISTANCE:
+		if best <= distance:
 			if resizing:
-				result.size[axis] += shift
+				if resize_edges[axis] < 0:
+					result.position[axis] += shift
+					result.size[axis] -= shift
+				else:
+					result.size[axis] += shift
 			else:
 				result.position[axis] += shift
-	return clamp_rect(result, area, metrics)
+	return clamp_resize_rect(result, area, resize_edges, metrics) if resizing else clamp_rect(result, area, metrics)
 
 
 func create_workspace(title: String, selected: Array[String], copy_current := true) -> String:
@@ -135,7 +167,7 @@ func save_to(path := SAVE_PATH) -> Error:
 	var file := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
-	file.store_string(JSON.stringify({"version": 1, "active": active, "workspaces": workspaces}))
+	file.store_string(JSON.stringify({"version": 1, "active": active, "show_panel_headers": show_panel_headers, "workspaces": workspaces}))
 	file.flush()
 	var error := file.get_error()
 	file.close()
@@ -186,6 +218,7 @@ func load_from(path := SAVE_PATH) -> bool:
 				panels[key].z = clampi(int(z), 0, 10000)
 		loaded[id] = {"name": entry.name.left(40), "panels": panels}
 	workspaces = loaded
+	show_panel_headers = data.get("show_panel_headers", true) if data.get("show_panel_headers", true) is bool else true
 	active = str(data.get("active", "daily"))
 	if not workspaces.has(active):
 		active = "daily"

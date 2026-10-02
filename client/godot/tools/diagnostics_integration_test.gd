@@ -76,6 +76,18 @@ func _run() -> void:
 		"enabled diagnostics show without enabling the subordinate graph")
 	_assert(main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		"diagnostics overlay never consumes game input")
+	var diagnostics_rect: Rect2 = main._diagnostics_overlay.panel_rect()
+	_assert(is_equal_approx(diagnostics_rect.end.x, main.get_viewport_rect().size.x - main._metrics.px(8)),
+		"production diagnostics sit at the viewport's upper-right edge")
+	_assert(main.workspace.telemetry.get_child(0) == main._clock,
+		"game telemetry starts with the clock, without the Continuum brand")
+	var original_viewport_size := get_tree().root.size
+	get_tree().root.size = Vector2i(2000, 1072)
+	await get_tree().process_frame
+	_assert(is_equal_approx(main._diagnostics_overlay.panel_rect().end.x, 2000 - main._metrics.px(8)),
+		"viewport resize keeps production diagnostics at the new upper-right edge")
+	get_tree().root.size = original_viewport_size
+	await get_tree().process_frame
 	main._diagnostics_stats.reset()
 	main._diagnostics_stats.observe_tick(1_000_000)
 	main._diagnostics_stats.observe_tick(1_016_000)
