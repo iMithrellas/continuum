@@ -905,20 +905,17 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 
 
 func _create_diagnostics_overlay() -> void:
-	var layer := CanvasLayer.new()
-	layer.layer = 1000
-	_diagnostics_overlay = DiagnosticsOverlayControl.new()
+	_diagnostics_overlay = preload("res://scripts/diagnostics_bar.gd").new()
 	_diagnostics_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.add_child(_diagnostics_overlay)
-	add_child(layer)
+	workspace.diagnostics_host.add_child(_diagnostics_overlay)
+	_diagnostics_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	workspace.diagnostics_host.resized.connect(_resize_diagnostics_overlay)
 	get_viewport().size_changed.connect(_resize_diagnostics_overlay)
 	_resize_diagnostics_overlay()
 
 
 func _resize_diagnostics_overlay() -> void:
-	if _diagnostics_overlay != null and get_viewport() != null:
-		_diagnostics_overlay.position = Vector2.ZERO
-		_diagnostics_overlay.size = get_viewport_rect().size
+	if _diagnostics_overlay != null:
 		_diagnostics_overlay.queue_redraw()
 
 
@@ -928,6 +925,7 @@ func _configure_diagnostics_overlay() -> void:
 	_diagnostics_overlay.apply_metrics(_metrics)
 	_diagnostics_overlay.configure(_settings.diagnostics_enabled,
 		_settings.diagnostics_graph_enabled)
+	workspace.set_diagnostics_visible(_settings.diagnostics_enabled)
 	if not _settings.diagnostics_enabled:
 		_reset_diagnostics_samples()
 
