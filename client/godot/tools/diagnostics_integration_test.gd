@@ -77,16 +77,52 @@ func _run() -> void:
 	_assert(main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		"diagnostics overlay never consumes game input")
 	var diagnostics_rect: Rect2 = main._diagnostics_overlay.panel_rect()
-	_assert(is_equal_approx(diagnostics_rect.end.x, main.get_viewport_rect().size.x - main._metrics.px(8)),
-		"production diagnostics sit at the viewport's upper-right edge")
+	_assert(main._diagnostics_overlay is DiagnosticsBar and main._diagnostics_overlay.get_parent() == main.workspace.diagnostics_host,
+		"production diagnostics are an inline bar, not a floating CanvasLayer")
+	_assert(diagnostics_rect == Rect2(Vector2.ZERO, main.workspace.diagnostics_host.size),
+		"production diagnostics use local header bounds")
 	_assert(main.workspace.telemetry.get_child(0) == main._clock,
 		"game telemetry starts with the clock, without the Continuum brand")
 	var original_viewport_size := get_tree().root.size
 	get_tree().root.size = Vector2i(2000, 1072)
 	await get_tree().process_frame
-	_assert(is_equal_approx(main._diagnostics_overlay.panel_rect().end.x, 2000 - main._metrics.px(8)),
-		"viewport resize keeps production diagnostics at the new upper-right edge")
+	_assert(main._diagnostics_overlay.panel_rect().size == main.workspace.diagnostics_host.size,
+		"viewport resize keeps diagnostics within its resized header host")
 	get_tree().root.size = original_viewport_size
+	await get_tree().process_frame
+	for font_size in [10, 13, 24]:
+		main.apply_font_size(font_size, false)
+		for viewport_size in [Vector2i(360, 480), Vector2i(1440, 900), Vector2i(2000, 1072)]:
+			get_tree().root.size = viewport_size
+			main.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			for _frame in 8: await get_tree().process_frame
+			var host: Control = main.workspace.diagnostics_host
+			var telemetry_view: ScrollContainer = main.workspace._rows[0]
+			_assert(host.get_parent() == telemetry_view.get_parent(), "diagnostics and telemetry viewport are header siblings")
+			_assert(host.get_parent().get_global_rect().encloses(host.get_global_rect()), "diagnostics fit inside the first header row")
+			_assert(main.get_viewport_rect().encloses(host.get_global_rect()), "diagnostics fit inside the actual game viewport")
+			_assert(host.size.x <= host.get_parent().size.x * 0.4 + 1, "diagnostics never reserve over 40 percent of the header")
+			_assert(host.get_global_rect().position.x >= telemetry_view.get_global_rect().end.x, "diagnostics do not cover telemetry")
+			_assert(is_equal_approx(telemetry_view.custom_minimum_size.y, main._metrics.px(38)), "telemetry viewport preserves the scaled 38px row")
+			_assert(host.get_global_rect().end.y <= main.workspace.area.get_global_rect().position.y, "diagnostics never cover map or workspace windows")
+			main.configure_diagnostics(true, true, false)
+			for lane: Rect2 in main._diagnostics_overlay.graph_lane_rects():
+				_assert(main._diagnostics_overlay.panel_rect().encloses(lane), "inline graphs remain inside the bar")
+			if viewport_size.x == 360:
+				_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "narrow header collapses sparklines")
+			var area_before: Rect2 = main.workspace.area.get_global_rect()
+			var left_before: float = telemetry_view.size.x
+			main.configure_diagnostics(false, true, false)
+			for _frame in 8: await get_tree().process_frame
+			_assert(not host.visible and host.custom_minimum_size.x == 0, "disabled diagnostics release all reserved space")
+			_assert(telemetry_view.size.x > left_before, "disabled diagnostics return width to telemetry")
+			_assert(main.workspace.area.get_global_rect() == area_before, "diagnostics toggles do not change the map area")
+			main.configure_diagnostics(true, true, false)
+			_assert(host.visible and main._diagnostics_overlay.frame_snapshot.is_empty(), "reenable shows the bar with cleared samples")
+			for _frame in 8: await get_tree().process_frame
+			await _render_preview(main, font_size, viewport_size)
+	get_tree().root.size = original_viewport_size
+	main.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	await get_tree().process_frame
 	main._diagnostics_stats.reset()
 	main._diagnostics_stats.observe_tick(1_000_000)
@@ -137,6 +173,33 @@ func _run() -> void:
 		return
 	print("DIAGNOSTICS_INTEGRATION_PASS")
 	get_tree().quit(0)
+
+
+func _render_preview(main: Control, font_size: int, viewport_size: Vector2i) -> void:
+	if DisplayServer.get_name() == "headless" or font_size != 24:
+		return
+	var directory := ""
+	for argument in OS.get_cmdline_user_args():
+		if argument.begins_with("--diagnostics-render-dir="):
+			directory = argument.trim_prefix("--diagnostics-render-dir=")
+	if directory.is_empty():
+		return
+	main._menu.visible = false
+	main._diagnostics_overlay.set_snapshots(
+		{"ready": true, "mean_fps": 60.0, "p95_frame_ms": 16.7, "frame_graph": [16.0, 20.0, 16.7]},
+		{"source": "tcp_info", "rtt_ms": 7.2, "rtt_graph": [7.1, 9.0, 7.2]})
+	for _frame in 3: await get_tree().process_frame
+	await RenderingServer.frame_post_draw
+	_assert(main._diagnostics_overlay.is_visible_in_tree(), "bar remains visible with gameplay and viewer panels")
+	_assert(get_viewport().get_texture().get_image().save_png(directory.path_join("topbar_%d_font24.png" % viewport_size.x)) == OK,
+		"private display screenshot saves")
+	main._menu.visible = true
+	_assert(main.workspace.process_mode == Node.PROCESS_MODE_DISABLED and main._diagnostics_overlay.visible,
+		"menu disables workspace input without destroying the header bar")
+	if viewport_size.x == 360:
+		await RenderingServer.frame_post_draw
+		_assert(get_viewport().get_texture().get_image().save_png(directory.path_join("topbar_menu_360_font24.png")) == OK,
+			"private menu screenshot saves for stacking review")
 
 
 func _assert(condition: bool, message: String) -> void:

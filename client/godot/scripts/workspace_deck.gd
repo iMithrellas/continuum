@@ -27,6 +27,8 @@ var _map: Control
 var _confirmation: ConfirmationDialog
 var _status: Label
 var _rows: Array[ScrollContainer] = []
+var diagnostics_host: Control
+var _telemetry_header: HBoxContainer
 
 
 func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
@@ -43,7 +45,17 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	stack.add_child(header)
 	var rows := VBoxContainer.new()
 	header.add_child(rows)
-	telemetry = _scroll_row(rows, metrics.px(38))
+	_telemetry_header = HBoxContainer.new()
+	_telemetry_header.add_theme_constant_override("separation", 0)
+	rows.add_child(_telemetry_header)
+	telemetry = _scroll_row(_telemetry_header, metrics.px(38))
+	diagnostics_host = Control.new()
+	diagnostics_host.name = "DiagnosticsHost"
+	diagnostics_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	diagnostics_host.clip_contents = true
+	diagnostics_host.visible = false
+	_telemetry_header.add_child(diagnostics_host)
+	_telemetry_header.resized.connect(_resize_diagnostics_host)
 	var workspace_row := _scroll_row(rows, metrics.px(34))
 	var label := Label.new()
 	label.text = "WORKSPACE"
@@ -83,12 +95,29 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 func apply_metrics(ui_metrics: UiMetrics) -> void:
 	_scale_control_tree(self, ui_metrics)
 	metrics = ui_metrics
+	_resize_diagnostics_host()
 	for window: WorkspaceWindow in windows.values():
 		window.metrics = metrics
 		window.refresh_metrics()
 	if is_instance_valid(_dialog):
 		_dialog.min_size = Vector2i(metrics.px(300), 0)
 	_apply_layout()
+
+
+func set_diagnostics_visible(enabled: bool) -> void:
+	diagnostics_host.visible = enabled
+	_resize_diagnostics_host()
+
+
+func _resize_diagnostics_host() -> void:
+	if not is_instance_valid(diagnostics_host):
+		return
+	# The scroll viewport keeps its original row height, but never dictates the
+	# window width. Diagnostics reserve at most 40% of the actual header width.
+	diagnostics_host.custom_minimum_size = Vector2(
+		minf(metrics.px(360), maxf(0, _telemetry_header.size.x * 0.4)) if diagnostics_host.visible else 0,
+		0)
+
 
 func _scale_control_tree(root: Node, target_metrics: UiMetrics) -> void:
 	for child: Node in root.get_children():
