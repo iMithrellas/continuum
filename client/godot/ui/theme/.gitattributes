@@ -1,0 +1,3 @@
+# Preserve the supplied OFL bytes, including the exact copy embedded in Theme.
+fonts/OFL.txt -text whitespace=-blank-at-eol,cr-at-eol
+theme.tres -text whitespace=-blank-at-eol,cr-at-eol

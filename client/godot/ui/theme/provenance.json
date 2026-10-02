@@ -1,0 +1,11 @@
+{
+  "source": "UI design package supplied by the user",
+  "tokens": "tokens.json contains the supplied theme values; authoritative source for runtime and generation",
+  "fonts": "Seven original IBM Plex WOFF2 files copied unchanged; native Godot FontFile import, no conversion",
+  "font_license": "fonts/OFL.txt; exact OFL text also embedded in the generated Theme for exported resource-only builds",
+  "packaging": "Generated Theme embeds exact tokens.json text; runtime uses it only when the source JSON is absent in an exported build",
+  "glyphs": "Six original 16px status SVG files copied unchanged",
+  "generation": "godot --headless --path client/godot --script res://ui/theme/generate_theme.gd",
+  "tracking": "Godot FontVariation spacing_glyph uses integer pixels; em values rounded at the logical token size (section 1px, tag 0px, display 0px)",
+  "line_height": "Label line_spacing is the token lineHeight minus the imported font height; apply_label also sets logical minimum height and uppercase for section/tag"
+}
