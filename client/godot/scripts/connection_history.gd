@@ -2,11 +2,11 @@
 class_name ContinuumConnectionHistory
 extends RefCounted
 
+const Endpoint = preload("res://scripts/server_endpoint.gd")
 const DEFAULT_WORLD := "default-world"
 const MAX_ENTRIES := 100
 const HISTORY_PATH := "user://continuum_connection_history.json"
 const FAVORITES_PATH := "user://continuum_connection_favorites.json"
-const DEFAULT_PORTS := {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
 var history_path := HISTORY_PATH
 var favorites_path := FAVORITES_PATH
@@ -111,42 +111,11 @@ static func canonical_key(endpoint: String, database: String, world_slug := DEFA
 	return target.get("key", "")
 
 static func _target(endpoint: String, database: String, world_slug: String) -> Dictionary:
-	var raw := endpoint.strip_edges()
-	var marker := raw.find("://")
-	if marker <= 0: return {}
-	var scheme := raw.substr(0, marker).to_lower()
-	if not _valid_scheme(scheme): return {}
-	var authority := raw.substr(marker + 3)
-	if authority.is_empty() or authority.contains("/") or authority.contains("?") or authority.contains("#") or authority.contains("@"): return {}
-	var host := ""
-	var port := -1
-	if authority.begins_with("["):
-		var close := authority.find("]")
-		if close < 0 or close == 1: return {}
-		host = authority.substr(0, close + 1)
-		if authority.length() > close + 1:
-			if authority[close + 1] != ":": return {}
-			port = _port(authority.substr(close + 2))
-			if port < 0: return {}
-		if not host.contains(":"): return {}
-		if not _valid_ipv6(host.substr(1, host.length() - 2)): return {}
-	else:
-		var colon := authority.find(":")
-		if colon >= 0:
-			host = authority.substr(0, colon)
-			port = _port(authority.substr(colon + 1))
-			if port < 0: return {}
-		else: host = authority
-		if host.is_empty() or host.contains(":"): return {}
-	if host.is_empty(): return {}
-	if not host.begins_with("[") and not _valid_dns_or_ipv4(host): return {}
+	var parsed := Endpoint.parse(endpoint)
 	var db := database.strip_edges()
 	var world := world_slug.strip_edges().to_lower()
-	if not _valid_database(db) or world.is_empty() or not _valid_slug(world): return {}
-	var canonical_host := host if host.begins_with("[") else host.to_lower()
-	var endpoint_key := scheme + "://" + canonical_host
-	if port >= 0 and (not DEFAULT_PORTS.has(scheme) or port != DEFAULT_PORTS[scheme]): endpoint_key += ":%d" % port
-	return {"key": endpoint_key + "/" + db.to_lower() + "/" + world, "endpoint": raw,
+	if parsed.is_empty() or not Endpoint.valid_database(db) or not _valid_slug(world): return {}
+	return {"key": parsed.canonical + "/" + db.to_lower() + "/" + world, "endpoint": parsed.endpoint,
 		"database": db, "database_canonical": db.to_lower(), "world": world,
 		"status": "unknown", "last_seen": 0, "last_sample": 0}
 
@@ -161,40 +130,6 @@ static func _valid_slug(value: String) -> bool:
 		if character == "-" and previous_dash: return false
 		previous_dash = character == "-"
 	return true
-
-static func _valid_scheme(value: String) -> bool:
-	return value == "http" or value == "https" or value == "ws" or value == "wss"
-
-static func _valid_database(value: String) -> bool:
-	var canonical := value.to_lower()
-	if canonical.length() < 1 or canonical.length() > 128: return false
-	if not ((canonical[0] >= "a" and canonical[0] <= "z") or (canonical[0] >= "0" and canonical[0] <= "9")): return false
-	if not ((canonical[-1] >= "a" and canonical[-1] <= "z") or (canonical[-1] >= "0" and canonical[-1] <= "9")): return false
-	var previous_dash := false
-	for character in canonical:
-		var alphanumeric := (character >= "a" and character <= "z") or (character >= "0" and character <= "9")
-		if not alphanumeric and character != "-": return false
-		if character == "-" and previous_dash: return false
-		previous_dash = character == "-"
-	return true
-
-static func _valid_dns_or_ipv4(host: String) -> bool:
-	if host.length() > 253 or host.begins_with(".") or host.ends_with("."): return false
-	for label in host.split("."):
-		if label.is_empty() or label.length() > 63 or label.begins_with("-") or label.ends_with("-"): return false
-		for character in label.to_lower():
-			if not ((character >= "a" and character <= "z") or (character >= "0" and character <= "9") or character == "-"): return false
-	return true
-
-static func _valid_ipv6(value: String) -> bool:
-	return value.is_valid_ip_address() and value.contains(":")
-
-static func _port(value: String) -> int:
-	if value.is_empty() or (value.length() > 1 and value.begins_with("0")): return -1
-	for character in value:
-		if character < "0" or character > "9": return -1
-	var port := int(value)
-	return port if port > 0 and port <= 65535 else -1
 
 func _matches(entry: Dictionary, needle: String) -> bool:
 	for field in ["display_name", "endpoint", "database", "world"]:

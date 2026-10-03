@@ -61,13 +61,6 @@ func _configure_from(supervisor: String) -> void:
 	if _configured_supervisor.is_empty():
 		configure(supervisor)
 
-func self_test(supervisor: String) -> Dictionary:
-	var report := capability_report()
-	report["supervisor_present"] = FileAccess.file_exists(supervisor)
-	report["control_helper_present"] = FileAccess.file_exists(helperpath(supervisor))
-	report["ready"] = bool(report.supported) and bool(report.supervisor_present) and bool(report.control_helper_present)
-	return report
-
 func launch(supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, startup_nonce: String) -> Dictionary:
 	configure(supervisor, runtime, cli, data_path, config_path, manifest_path, lock_path)
 	if not supports_native_hosting():

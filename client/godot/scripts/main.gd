@@ -19,6 +19,7 @@ const ServerProbesControl = preload("res://scripts/server_probes.gd")
 const ServerManagementControl = preload("res://scripts/server_management.gd")
 const NativeServerController = preload("res://scripts/native_server_controller.gd")
 const SessionSamples = preload("res://scripts/session_observations.gd")
+const PresentationModels = preload("res://ui/components/models.gd")
 const ReturnStore = preload("res://scripts/return_snapshots.gd")
 const ResourceControl = preload("res://ui/components/resource_readout.gd")
 const RosterControl = preload("res://ui/components/roster_row.gd")
@@ -453,13 +454,6 @@ func configure_diagnostics(show: bool, graph: bool, persist := true) -> Error:
 	return apply_settings(settings, persist)
 
 
-## The backend can provide this later without coupling Main to a transport API.
-## The callable receives a request id and returns whether the echo was sent.
-func attach_diagnostics_transport(send_authenticated_echo: Callable) -> void:
-	_session_diagnostics.configure_probe(send_authenticated_echo)
-	_session_diagnostics.reset()
-
-
 func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
 		direct_launch := false) -> void:
 	if _closing or _exit_requested: return
@@ -711,10 +705,6 @@ func _cli_option(option: String, fallback: String) -> String:
 
 func _create_access(client: ContinuumModuleClient) -> ContinuumAccess:
 	return ContinuumAccess.new(client)
-
-
-func _identity_token_path(host: String, database: String) -> String:
-	return "user://continuum_identity_%s.token" % (host + "/" + database).md5_text()
 
 
 func _process(delta: float) -> void:
@@ -1988,10 +1978,6 @@ func _set_feedback(label: Label, compact: String, details: String) -> void:
 	label.tooltip_text = details
 
 
-func _compact_text(text: String, limit: int) -> String:
-	return text if text.length() <= limit else text.substr(0, maxi(1, limit - 3)) + "..."
-
-
 func _render_connection_role() -> void:
 	if _connection_label == null:
 		return
@@ -2612,7 +2598,8 @@ func _observe_session_state() -> void:
 	var needs := {}
 	for row: ContinuumColonist in SpacetimeDB.Continuum.db.colonist.iter():
 		var raw := {}
-		for field: String in SessionObservations.NEED_FIELDS.values():
+		for descriptor: Array in PresentationModels.NEEDS:
+			var field: String = descriptor[1]
 			raw[field] = row.get(field)
 		needs[row.id] = SessionObservations.satisfaction(raw)
 	if _session_observations.observe(snapshot.game_seconds, snapshot.generation, snapshot.resources, needs):

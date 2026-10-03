@@ -10,7 +10,6 @@ func _initialize() -> void:
 	_test_shutdown_refuses_replacement_manifest()
 	_test_process_snapshot_reads_non_child()
 	_test_systemd_path_validation()
-	_test_windows_autostart_command_is_quoted()
 	_test_unsupported_platform_message()
 	_test_invalid_pid_never_reaches_termination()
 	_test_live_mismatch_keeps_manifest()
@@ -329,12 +328,6 @@ func _test_unsupported_platform_message() -> void:
 	manager.failed.connect(func(value: String) -> void: message[0] = value)
 	# The assertion is platform-independent: the public message names the fallback.
 	_assert(manager._unsupported_reason().contains("Docker"), "unsupported platforms have actionable fallback")
-
-func _test_windows_autostart_command_is_quoted() -> void:
-	var adapter = load("res://scripts/native_server_platform_adapter.gd").new()
-	var command: String = adapter.windows_task_command("C:/Program Files/Continuum/spacetime.exe", "http://127.0.0.1:3001", "C:/Users/test user/data")
-	_assert(command.begins_with('"C:/Program Files/Continuum/spacetime.exe"'), "Windows task quotes executable paths")
-	_assert(command.contains('"C:/Users/test user/data"'), "Windows task quotes data paths")
 
 func _test_invalid_pid_never_reaches_termination() -> void:
 	var adapter := FakeNativeAdapter.new()

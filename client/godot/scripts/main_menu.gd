@@ -12,7 +12,6 @@ var metrics := UiMetrics.new()
 var _status: Label
 var _last_button: Button
 var _settings_panel: VBoxContainer
-var _font_size: SpinBox
 var _ui_scale: OptionButton
 var _reduced_motion: CheckButton
 var _diagnostics_toggle: CheckButton
@@ -163,14 +162,6 @@ func _toggle_settings() -> void:
 
 func _open_server_management() -> void:
 	server_management_requested.emit()
-
-func _font_size_changed(value: float) -> void:
-	# Legacy caller compatibility; the visible surface only offers whole-UI scales.
-	settings.ui_scale_percent = ClientSettings.legacy_ui_scale(roundi(value))
-	settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
-	if main != null and main.has_method("apply_settings"):
-		main.apply_settings(settings)
-	settings_changed.emit(settings)
 
 func _diagnostics_changed(value: bool) -> void:
 	settings.diagnostics_enabled = value

@@ -1,45 +1,46 @@
+# Continuum roadmap
+
+Reconciled on **2026-10-03** against `main` at `68b7807` and its implementation,
+tests, and feature contracts. Checked items describe the implemented scope, not
+completion of the broader game or certification on every platform. Unchecked
+items are remaining work or verification; design principles are ordinary bullets.
+
 ## Core game
-- [ ] Persistent multiplayer colony that runs 24/7
-- [ ] Very slow simulation, roughly **2–6 real hours per in-game day**
-- [ ] Server/world chooses initial simulation speed
-- [ ] Later allow simulation-speed changes through player voting/quorum
-- [x] Optional cooldown on speed changes
-- [ ] Optional hardcore mode with immutable speed
-- [ ] Colony continues operating while nobody is online
-- [ ] Designed around asynchronous play throughout the week
-- [ ] Multiple players manage the same colony
-- [ ] Soft player specialization without hard classes
-- [ ] Colony should tolerate being unattended when engineered well
-- [ ] Main progression loop: **observe → understand → stabilize → automate → trust → expand**
+
+The goal is asynchronous play throughout the week: multiple players engineer a
+colony that tolerates being unattended. Main progression loop:
+**observe → understand → stabilize → automate → trust → expand**.
+
+- [x] Persistent shared colony in one SpacetimeDB module database; the server scheduler advances it while clients are disconnected
+- [x] Slow default simulation: six in-game seconds per real second, or **four real hours per in-game day** (within the intended 2–6-hour range)
+- [x] Server-authoritative speed, admin speed/pause controls, and optional real-time cooldown on changes
+- [ ] Server-owner choice of initial speed at world creation; the current seed uses the default
+- [ ] Simulation-speed voting/quorum and an optional immutable-speed hardcore mode
+- [ ] Soft player specialization and shared responsibility areas without hard classes
+- [ ] Validate the unattended multiplayer loop through sustained play, including return comprehension and recovery from interacting failures
 
 ## Simulation
-- [ ] Colonists with individual needs and wants
-- [ ] Sleep and sleep quality
-- [ ] Food and food quality
-- [ ] Recreation
-- [ ] Social interaction
-- [ ] Comfort / housing quality
-- [ ] Safety
-- [ ] Workload / fatigue
-- [ ] Relationships between colonists
-- [ ] Mood
-- [ ] Needs should interact and produce cascading effects
-- [ ] Example: no recreation → bad mood → poor sleep → fatigue → lower productivity
-- [ ] Autonomous colonists rather than direct unit control
-- [ ] Jobs / work orders
-- [ ] Work priorities
-- [x] Instant rectangular construction for all seven operational tile kinds; construction jobs are not implemented
-- [ ] Resource gathering
-- [ ] Production chains
-- [ ] Storage
-- [ ] Logistics
-- [ ] Maintenance / degradation
-- [ ] Research
-- [ ] Population growth
-- [ ] Events / incidents
-- [ ] Failures caused primarily by systems interacting, not arbitrary random punishment
-- [ ] Cascading failures
-- [ ] Failures should generally be understandable after investigating them
+
+### Implemented slices
+
+- [x] Individual hunger, fatigue, recreation, mood, productivity, sleep hours, and recent sleep quality
+- [x] Autonomous goals for eating, sleeping, recreation, work, and hauling
+- [x] Farming, logging, and hunting produce food, wood, and meat through compatible work orders; physical-world mining excavates finite cells for prototype stone output
+- [x] Standing per-tile orders with priorities `1..=3`, pause/remove, deterministic selection, and independent forest logging/hunting orders
+- [x] Self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage; goods must be delivered before consumption
+- [x] Instant construction of all seven semantic operational tile kinds for 20 stored wood per footprint cell; rectangular builds are atomic and limited to 4,096 cells per request
+- [x] Seeded, bounded, overlapping soil fertility, forest density, and moisture fields; these ecological fields do not yet modify production or needs
+- [x] Recreation loss can cause lower mood and sleep quality, more fatigue, reduced productivity, and food shortage; failure/recovery and resource conservation have regression coverage
+
+### Remaining systems
+
+Failures should emerge primarily from understandable interactions rather than
+arbitrary punishment. The recreation chain is the first implemented example.
+
+- [ ] Food quality, social interaction, comfort/housing, safety, relationships, and richer individual wants
+- [ ] Richer production chains, material-specific inventories, storage capacity, and mass-limited carrying
+- [ ] Maintenance/degradation, research, population growth, and additional interacting failure chains
+- [ ] Events/incidents and tools to explain why work or production stopped
 
 ### Construction direction
 
@@ -60,168 +61,133 @@ simulation should not require a discrete `FoodStorageBuilding` entity.
 - [ ] Allow unfinished, damaged, improvised, and partially suitable spaces to remain meaningful
 - [ ] Replace semantic facility requirements with capability and suitability checks wherever practical
 
-### Implemented slices
-- [x] Needs slice: hunger, fatigue, recreation, mood, productivity, sleep hours, and recent sleep quality are simulated per colonist; social, comfort, safety, relationships, and food quality are not implemented
-- [x] Autonomous colonist goals cover eating, sleeping, recreation, work, and hauling; direct unit control is not implemented
-- [x] Production slice: farming, logging, mining, and hunting produce food, wood, stone, and meat on work tiles
-- [x] Work-order slice: standing per-tile orders, priorities `1..=3`, pause/remove, deterministic selection, and forest's independent logging and hunting orders
-- [x] Hauling slice: self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage
-- [x] Construction PoC: operators can instantly build any of the seven semantic operational tile kinds for 20 stored wood per cell across a fully empty rectangle; construction jobs are not implemented
-- [x] Environmental slice: every tile can have seeded, bounded, overlapping soil fertility, forest density, and moisture fields; no terrain-driven production or need effects are implemented
-- [x] Failure-chain slice: disabling recreation can produce unmet recreation, lower mood and sleep quality, more fatigue, lower productivity, and food shortage; this is not the full failure model
-
 ## Unattended operation
-- [ ] Standing orders
-- [x] Policies (meal rationing slice; broader policy systems remain)
-- [ ] Priorities
-- [ ] Automation
+
+Automation should itself be progression: players should be rewarded for making
+routine situations require less attention.
+
+- [x] Persistent standing orders and priorities; publish/load/tick do not rewrite those intents
+- [x] Colony-wide meal rationing and hauling policies
+- [ ] Player-configurable automation and broader standing policies
 - [ ] Threshold-based behavior
 - [ ] Emergency procedures
 - [ ] Reusable macros
-- [ ] Colony should increasingly manage routine situations automatically
-- [ ] Automation should itself be progression
-- [ ] Players should feel rewarded for making systems require less attention
-
-### Implemented slices
-- [x] Server scheduler advances the authoritative colony while clients are disconnected
-- [x] Standing work orders persist and are not backfilled or rewritten by publish/load/tick
 
 ## Event modes
+
+- [x] Ordinary production continues while the server is running without connected players
 - [ ] **Chill mode:** dangerous events only while someone is online
-- [ ] Normal production continues while unattended
 - [ ] **Scheduled mode:** dangerous events only during configured real-world windows
 - [ ] **Hardcore mode:** incidents and failures can occur at any time
 - [ ] Differentiate ordinary simulation failures from externally triggered dangerous events
 - [ ] Allow server owners to define how punishing unattended operation should be
 
 ## World / settlements
-- [ ] Persistent main colony
-- [ ] Potentially multiple settlements/outposts later
-- [ ] Remote mines / farms / industrial sites
-- [ ] Trade and resource transfer between settlements
-- [ ] Expeditions
-- [ ] New settlements introduce new operational problems
-- [ ] Old settlements remain relevant instead of becoming obsolete
-- [ ] Different players can manage different locations simultaneously
+
+See [physical-world coordinates and interaction](docs/vertical-terrain.md) and
+[geometry verification/budgets](backend/spacetimedb/VERTICAL_GEOMETRY.md).
 
 ### Implemented slices
-- [x] Persistent 24x24 seeded colony grid with seven non-empty operational tile kinds plus `empty`
-- [x] Rectangular operator intents normalize reversed inclusive bounds, prevalidate builds, and charge 20 stored wood per cell
-- [x] Rectangular control and work-order reducers update only non-empty or work-compatible tiles respectively; incompatible cells are skipped
+
+- [x] One persistent colony; fresh/reset worlds are 128×128 physical cells with a 24×24 starter colony and a finite hillside fixture
+- [x] Authoritative 0.5 m material cells in 16³ chunks, with elevation `z = -16 .. 15`; existing initialized world dimensions survive upgrades
+- [x] Explicit admin-only non-destructive expansion up to 256 cells per horizontal axis; new land is flat soil over stone
+- [x] Finite excavation designations/jobs, supported navigation, body clearance, elevation-aware facilities, and protected occupied volumes
+- [x] Walking uses 1.4 m per in-game second and each validated hop's 3D geometric length
+- [x] Rectangular operator intents normalize reversed inclusive bounds and atomically validate placement/cost; control/order reducers skip incompatible cells and layer-aware variants target an explicit elevation
+- [x] Material density, strength, conductivity, and specific heat metadata; these values do not yet drive structural or thermal physics
+
+### Remaining world work
+
+- [ ] Persistent named blocks/designations that can be reused, renamed, and edited
+- [ ] Terrain fertility, forest density, and moisture effects on operational outcomes; physical geometry already affects movement, placement, and mining
+- [ ] Procedural physical landscapes beyond the seeded ecological fields and current flat/hillside fixtures
+- [ ] Structural, thermal, and environmental simulation as required by material-driven construction
+- [ ] Multiple settlements/outposts, remote mines/farms/industrial sites, trade, resource transfer, and expeditions
+- [ ] Keep older settlements relevant while new sites introduce operational problems and parallel player responsibilities
 
 ## Observability
-- [ ] Basic in-game status overview
-- [x] Historical graphs (client-only bounded session history; no server persistence)
-- [ ] Event log / audit timeline
-- [ ] Explain why systems stopped or degraded
-- [ ] Production throughput metrics
-- [ ] Storage utilization
-- [ ] Resource reserves
-- [ ] Colonist mood / fatigue / productivity metrics
-- [ ] Infrastructure health
-- [ ] Alerts
-- [ ] Alert acknowledgement
-- [ ] Diagnostics improve through progression
-- [ ] Instrumentation itself should be unlockable
-- [ ] Custom player-defined metrics later
-- [ ] External metrics endpoint later
-- [ ] Ideally Prometheus-compatible metrics
-- [ ] Let players use Grafana if they want
-- [ ] Let players build custom alerting outside the game
-- [ ] Telemetry availability can itself become part of the simulation
-- [ ] Remote sites can lose communications while continuing to operate
-- [ ] Better sensors/comms unlock better visibility
 
 ### Implemented slices
-- [x] Replicated colony overview exposes pooled stocks, population, aggregate mood/productivity, and smoothed mood/productivity
-- [x] Replicated colonist overview exposes needs, goal, activity, profession, derived hauling role, and cargo
-- [x] Event/audit feed records state-changing operator commands with caller identity; only the newest 200 event rows are retained and reset clears history
-- [x] Alerts can be observed and acknowledged by operators; alerting is not a general notification system yet
+
+- [x] Replicated stocks, population, current/smoothed mood and productivity, plus per-colonist needs, goals, activity, profession, hauling role, and cargo
+- [x] Bounded client-session history charts with colony-generation/clock resets
+- [x] Observed resource rates since connection, estimated depletion horizons, and last-hour need trends; missing/warming/paused values stay unavailable
+- [x] Local “Since you left” snapshots keyed by endpoint, database, profile, and authenticated identity; reset/backward-clock checks invalidate baselines
+- [x] Event/audit messages include command caller identities as literal text; the server retains the newest 200 event rows and reset clears history
+- [x] Active alerts and shared operator acknowledgement; no structured acknowledgement actor/time or alert location is available
+
+### Remaining observability work
+
+- [ ] Durable away history and structured event actor/source/verb/subject data; local snapshots and the capped feed cannot provide complete absence history
+- [ ] Explain production/need degradation and stopped jobs; add authoritative throughput accounting rather than treating net stock change as production
+- [ ] Storage utilization once finite capacity exists, infrastructure health, and broader notifications
+- [ ] Progression-linked instrumentation, custom player-defined metrics, and better sensors/comms
+- [ ] External metrics/alerting, ideally Prometheus-compatible and usable with Grafana or custom clients
+- [ ] Remote communications loss while sites continue operating; telemetry availability as a simulation mechanic
 
 ## Clients
-- [ ] Full **Godot desktop client**
-- [ ] Godot mainly handles rendering, UI and input
-- [ ] Mobile client
-- [ ] Mobile colony overview
-- [ ] Mobile notifications
-- [ ] Mobile emergency actions
-- [ ] Mobile predefined macros
-- [ ] Mobile limited management
-- [ ] Lightweight browser client
-- [ ] Browser dashboards
-- [ ] Browser alerts / logs / metrics
-- [ ] Browser macro execution
-- [ ] Different clients intentionally have different capability levels
 
 ### Implemented client slices
-- [x] Godot `Select` and `Build` modes, with a build type menu for farm, forest, mine, storage, dining, sleep, and recreation
-- [x] Godot drag-to-select inclusive rectangles, including one-cell selections; Build releases dispatch one `build_tile_block` intent after local occupied-cell and wood checks
-- [x] Map painting cancellation on Escape, right-click, release outside the drawn grid, or window focus loss
-- [x] Select-mode block controls for enabling/disabling non-empty tiles and setting or pausing compatible farming, logging, mining, and hunting orders; incompatible cells are skipped by the reducer
-- [x] Blended soil and ecological-cover terrain visualization, with independent overlapping soil/forest fields; terrain is decorative and has no production modifiers yet
-- [x] Concise searchable, collapsible, draggable-width sidebar with responsive font, button, spacing, and padding scale
-- [x] Role-aware sidebar controls fail closed from the authenticated sender-scoped role view; operator loss cancels Build immediately
-- [x] Separate normal/admin client profiles and verified admin bootstrap flow through the authorized publisher
-- [x] Offline launch menu with Join last server, Join server, Start local server, Settings, Servers, and Exit actions
-- [x] Menu endpoint validation, successful-last-server persistence, cancellation, stale-callback guards, and session replacement across endpoint/profile changes
-- [x] Local native-process launch replaces Docker in the menu; pinned first-use installation/module preparation, Start/Stop/status controls, timeout-confirmed force stop, persistent data, and reopen discovery are implemented
-- [x] Native startup cancellation prevents later start/join steps; an in-progress atomic download/build may finish while the UI remains responsive
-- [x] `prepare-native-export` and Linux/Windows export presets stage the module and bootstrap assets; exported clients copy bootstrap resources from the PCK into durable per-user storage
-- [x] Shared base-font setting from 10..24 (default 13), persisted metric scaling, alternate `--settings-file=PATH` support, and muted menu/workspace presentation
-- [x] Removed bottom legend/footer strip; map labels, inspection, panel chooser, function keys, and workspace dock provide the remaining access paths
-- [x] Just-first project, client, backend, and isolated-test workflow is exposed through documented `just` recipes; helper scripts remain private
+
+- [x] Godot desktop prototype handles rendering, UI, input, subscriptions, and intent dispatch; simulation authority remains server-side
+- [x] Select, Build, Excavate, and Facility modes; inclusive rectangle selection, local placement/cost checks, and explicit elevation-aware reducer dispatch
+- [x] Editing cancellation on Escape, right-click, invalid release/focus loss, camera gestures, and lost operator permission
+- [x] Cut-height terrain, whole-entity occlusion/depth rendering, connected-region labels/patterns, cursor-anchored zoom, panning, Fit, and 1:1 controls
+- [x] Cached/sparse rendering with bounded texture budgets; initial terrain snapshots and cut changes remain synchronous
+- [x] Named workspaces with movable/resizable/collapsible floating panels over the full map; pinning locks geometry, and v1/v2 layouts migrate to floating-only v3
+- [x] Two compact global strips, panel/workspace menu, map-local navigation, narrow-window forecast reflow, and visible action failures
+- [x] Token-backed theme, licensed fonts/icons, reusable live-state components, focus handling, and reduced-motion preference
+- [x] Whole-window UI scale at 100/125/150%, migration from old font-size settings, and `--settings-file=PATH`; logical font metrics are not scaled twice
+- [x] Normal/admin/developer local profiles with separate identities; F9 requires server admin authority and F10 requires the developer profile
+- [x] Offline menu with Join last server, Servers, Settings, and Exit; direct Join and native Start/Stop live in Servers
+- [x] Connection cancellation, successful-last-server persistence, session replacement, and stale-callback/startup-handoff guards
+- [x] `just` recipes for development, backend checks, client fixtures, and export staging; see [UI implementation and verification](docs/ui-redesign.md)
+
+### Remaining clients
+
+- [ ] Complete and validate the desktop game experience through multiplayer/unattended play
+- [ ] Mobile overview, notifications, emergency actions, macros, and limited management
+- [ ] Lightweight browser dashboards, alerts/logs/metrics, and macro execution
+- [ ] Deliberately different client capabilities backed by server-enforced scopes
 
 ### Hosting and connection management
 
-- [ ] Verify native SpacetimeDB support, runtime distribution, module packaging, and graceful shutdown on every target platform before implementation
-- [x] Shared server-manager/controller contract covers discovery, start, status, graceful/confirmed-force stop, health, ownership, and unsupported-platform errors
-- [x] Dedicated Docker/manual-service workflows remain separate; local controls never target remote history entries
-- [x] First-use native provisioning binds locally at `127.0.0.1:3001`; ordinary menu launch does not start a server
-- [x] Runtime/module are pinned for the shared server/database, not per logical world; starts reuse the installed module and refuse digest changes pending an explicit upgrade flow
-- [x] Stable per-user native data, logs, config, runtime, and module paths are independent of client scene/profile state
-- [x] Process start identities plus data locks and snapshot-checked manifests gate management; Linux supervisor-loss adoption and two-process force stop have real isolated coverage
-- [x] Server Management exposes Start/Stop/Refresh/status and explicit confirmation after graceful-stop timeout
-- [x] Client exit leaves the server running and reopen rediscovers it; Stop is a separate explicit action
-- [x] Starting/stopping and enabling/disabling autostart are separate actions
-- [x] Linux user-systemd and Windows per-user logon-task registration/readback are implemented; actual Windows OS/logon validation remains below as a release gate
-- [x] Managed-local status/actions are distinct from remote history/list ownership
-- [ ] Add durable server connection history from successful subscriptions only, keyed by normalized endpoint plus database identity without changing existing profile credential partitioning
-- [ ] Keep history free of authentication tokens; removing history must not remove credentials or world data
-- [ ] Add durable favorites and preserve them across restarts; allow history removal without removing a favorite unless explicitly requested
-- [ ] Show `unknown`, `checking`, `online`, and `unreachable` in history/list views; `unreachable` is not definitive proof that a server is offline
-- [ ] Record last seen and last sample time; display stale samples as stale rather than implying current status
-- [ ] Measure latency using actual health/request round trips, not ICMP, and do not describe it as one-way network latency
-- [x] Connected-session echo acknowledgements produce latest/smoothed RTT; disconnected/stale readings remain unavailable
-- [ ] Bound background checks while the browser is visible with limited concurrency, timeouts, backoff, and no new subscription/reconnect per probe
-- [ ] Distinguish server reachable, database joinable, and profile authentication failure in status and diagnostics
-- [ ] Preserve existing menu, endpoint validation, successful-last-server persistence, cancellation, callback guards, and session replacement behavior
+Current contracts: [native hosting](docs/native-hosting-contract.md) and
+[Windows implementation/release gate](docs/windows-native-hosting.md).
 
-#### Phased work
+- [x] Non-blocking native manager/controller with discovery, installation/module preparation, start, status, health, graceful stop, and timeout-confirmed force stop
+- [x] First-use native server at `127.0.0.1:3001`; ordinary menu launch does not start it, client exit leaves it running, and reopen rediscovers it
+- [x] Pinned SpacetimeDB 2.10.0 distribution/hashes and module digest, durable per-user data/logs/config, locks, process start identities, and snapshot-checked ownership manifests
+- [x] Startup cancellation invalidates later start/join stages while an atomic download/build may finish; the UI remains responsive
+- [x] Native local controls are independent of remote history entries and dedicated Docker/manual-service workflows
+- [x] Linux user-systemd and Windows per-user logon-task registration/readback; Windows adapter includes dedicated console and Job Object ownership
+- [x] Linux/Windows export presets and `just prepare-native-export` stage module/bootstrap assets; exported clients copy executable resources from the PCK to durable storage
+- [x] Verified publisher ownership/admin bootstrap and shell-safe path handling
+- [x] Searchable durable successful-connection history, separately persisted favorites, last-joined timestamps, selection, and favorite-first ordering
+- [x] History canonicalizes scheme/DNS host/database and known default ports, preserves display spelling/bracketed IPv6, and uses a placeholder `default-world`; raw credential keys remain separate
+- [x] History/favorite removal does not delete credentials or world data; legacy last-server import is one-time
+- [x] Bounded visible-browser HTTP health probes: four concurrent requests, three-second timeout, ten-second refresh, capped backoff, last-sample/stale state, and cancellation when hidden
+- [x] Health status distinguishes `unknown`, `checking`, `online`, and `unreachable`; health reachability does not assert database joinability or authentication, which remain unknown until a join
 
-- [ ] Phase 1: document and test the shared contract; confirm native SpacetimeDB platform support, distribution, module/runtime pinning, data paths, and shutdown behavior
-- [ ] Phase 2: implement first-use native provisioning and managed-process ownership/status/recovery without changing dedicated-host setup
-- [ ] Phase 3: add graceful stop/timeout handling, restart discovery, post-login autostart registration, conflict handling, and clear unsupported-platform UX
-- [ ] Phase 4: add history, favorites, status/last-seen/latency presentation, bounded probes, and reachable-versus-joinable/auth diagnostics
-- [ ] Phase 5: document upgrades, migrations, operational paths, and dedicated Docker/manual service guidance
+#### Verification and remaining hosting work
 
-#### Current handoff
-
-- [x] Client-side browser, history/favorites, bounded HTTP probes, and menu/settings integration are complete and backend-free.
-- [x] Native Linux launch, UI start/stop, persistence/reopen, process ownership, and timeout-force-restart gates pass inside a private PID namespace; the menu no longer invokes Docker.
-- [x] Windows adapter, installer, dedicated console/Job Object ownership, and logon-task integration are implemented and wired into the UI; Windows archive contents/checksums and Linux-safe helper tests were verified.
-- [ ] Run the Windows lifecycle/Task Scheduler integration gate on a disposable Windows x86_64 account and exercise actual login on both operating systems; do not treat Linux-side mocks as Windows runtime proof.
-- [ ] Multiworld backend contract is approved in task/world-backend `e421d5f`, but client binding selection/adoption is not integrated; the current browser and SDK remain single-world.
-- [x] Session diagnostics, persisted toggles, optional graph, and live echo RTT are integrated; packet loss deliberately remains `N/A` because no transport counters are available.
-
-#### Hosting and connection tests
-
-- [ ] Test Linux and Windows login autostart, UI close/reopen discovery, clean shutdown, timeout/force offer, process crash recovery, duplicate starts, ownership conflicts, and paths containing spaces
-- [ ] Test unsupported platforms and unavailable native distributions with actionable errors; test pinned runtime/module startup and explicit upgrade behavior
-- [ ] Test remote entries cannot invoke local stop/control; test local managed actions remain separate from remote list ownership
-- [ ] Test new history-key canonicalization, including `Continuum`/`continuum` deduplication with original display spelling retained, favorites persistence, successful subscriptions only, failed joins excluded, credential/world data retained after removal, and selection/sorting behavior; cover host case, conservative default-port rules, schemes, IPv4, hostnames, and bracketed IPv6 without changing raw credential keys or implicitly migrating credentials
-- [ ] Test probe success, timeout, backoff, stale samples, limited concurrency, no probe-created subscriptions, reachable-but-not-joinable servers, and profile authentication failures
+- [x] Existing Linux private-PID-namespace gates cover native launch/join, stop/reopen, ownership, supervisor-loss adoption, and timeout/force/restart
+- [x] Existing backend-free browser/diagnostics tests cover history canonicalization, favorites, removal boundaries, bounded probes, and menu integration
+- [x] Windows archives/checksums and Linux-safe adapter/PowerShell helper coverage exist
+- [ ] Run real Windows lifecycle/Task Scheduler integration on a disposable Windows x86_64 account, and exercise actual login autostart on both operating systems
+- [ ] Add an explicit backup/upgrade/migration flow for the pinned installed module; ordinary starts currently refuse changed digests
+- [ ] Validate packaged native first-use and lifecycle behavior on release targets beyond the existing PCK/widget and source-hosting gates
+- [x] Shared endpoint/database validation for direct join and history, with regression coverage for malformed addresses, limits, and existing history/credential behavior
 
 ### Multiple logical worlds in one module database
+
+**Not integrated on current main.** Backend configuration/geometry remain
+singletons, and the generated client has no world catalog. The history's
+`default-world` field and unused selection hooks are scaffolding, not world
+isolation. Historical runtime/API work remains available at `e421d5f` (the earlier
+`task/world-backend` handoff); it needs reconciliation with current terrain,
+schema, and client code before integration, rather than being marked complete.
 
 This is a logical-world feature, not a second-process or second-database design. A
 SpacetimeDB **server instance** can host a logical module database, and that one
@@ -265,155 +231,109 @@ rules, not a claim that the current slice already supports them.
 - [ ] Test global scheduler fairness/cadence and that stopping one world neither stops other worlds nor the server process; separately test local managed-server stop to preserve the distinction
 - [ ] Test world-aware connection selection, creation permissions, status rendering, selected-world display, history/favorite keys, legacy bookmark adoption, reconnect/session replacement, and profile token paths remaining host/database scoped
 
-#### Server Management menu
-
-- [x] Add a separate **Server Management** menu, distinct from the existing offline launch actions and from in-game colony panels; provide an explicit launch entry and a clear return path to the game/menu
-- [x] Show successful connection history in a searchable list, pin favorites above unpinned history, and preserve successful-last-server behavior
-- [ ] Define a new history-only canonical key from the endpoint scheme/host/port and database identity: lowercase the scheme, DNS host, and database component to match the current `spacetimedb_client.gd` provider behavior, require brackets around IPv6 literals without address rewriting, remove a port only when it is the explicitly known default for that scheme, and preserve unknown or non-default ports; retain the original database spelling separately for display, do not reuse or rewrite the existing raw profile credential key, and do not migrate credentials or move tokens
-- [ ] Keep history removal, favorite removal, and local-world/server-data removal as separate explicit actions; never remove credentials or world data as a side effect of clearing history
-- [ ] Include local managed-server discovery, status, start, graceful stop, timeout/force offer, and ownership-conflict details in this view; native process actions remain disabled with `Native process management pending` until the incomplete native branch is validated
-- [x] Preserve the last successful action and selection when returning to the menu, while clearly distinguishing `unknown`, `checking`, `online`, `unreachable`, and stale samples
-- [x] Keep search and list operations local and bounded; background checks use a maximum of 4 concurrent probes, a 3-second timeout, a 10-second visible-list refresh interval, and capped retry backoff; hidden views do not poll or create subscriptions
-
 ## Client diagnostics
 
-- [x] Add persisted Settings toggles for in-game diagnostics and, independently, a small diagnostics graph; the graph is subordinate to the main diagnostics toggle and both settings follow the existing per-device settings persistence and font scaling
-- [ ] Render diagnostics as a compact, neutral technical badge/overlay rather than gameplay UI: subdued border, restrained contrast, monospace metric values where useful, no neon, safe-area placement, input pass-through when collapsed, and accessible global font scaling
-- [ ] Keep the overlay unobtrusive and visually distinct from colony panels; it may show frame-time and RTT graphs with separate units and visible gaps for missing/stale data, but never imply that an absent sample is zero
+The current client targets Godot 4.7 and SpacetimeDB 2.10.0, with vendored Flametime
+SDK 0.3.2 (upstream commit `f6c59d7` plus local transport instrumentation). See
+[protocol notes](docs/API.md#connection-and-transport) and
+[the implemented session-echo contract](docs/session-ping.md).
 
-### Timing and statistics contract
+### Implemented collection and presentation
 
-- [ ] Record bounded per-frame wall-clock interval samples with `Time.get_ticks_usec()` at a render/process observation callback; the callback is a valid observation point, but do not use its `_process(delta)` value for elapsed time because `delta` follows engine time scaling, and do not use system wall-clock time
-- [ ] Treat `Performance.TIME_FPS` as an optional coarse display only: the official monitor is updated once per second; `Engine.get_frames_per_second()` is also an average, not a percentile source
-- [ ] Compute mean FPS over the active window as `N / sum(frame_interval_seconds)`; compute p50, p95, and p99 from the sorted frame-time samples in milliseconds using a specified nearest-rank rule (`ceil(percentile * N)`, 1-based, clamped to `1..N`)
-- [ ] If an FPS equivalent is shown for a percentile, label it exactly as `p99 frame-time equivalent FPS` (and similarly for other percentiles); never label the inverse p99 frame time as `99th percentile FPS` or as “1% low average”
-- [ ] Recalculate and refresh displayed statistics at a low fixed frequency rather than sorting on every frame; use a bounded time/count window and expose sample count/window age so sparse data is not overinterpreted
-- [ ] Exclude paused, minimized, hidden/unfocused transition gaps, and other invalid intervals from the timing sample window; reset or segment after a long gap, show a warmup/incomplete label until the minimum sample budget is met, and do not pretend this is exact GPU presentation timing
-- [ ] Document that the measurement is main-loop/render-observation timing: it identifies client frame stalls, but does not independently measure GPU scanout, compositor latency, or presentation timing
+- [x] Persisted diagnostics/graph toggles; graph enablement depends on diagnostics, and the compact input-transparent readout lives in the telemetry header
+- [x] Monotonic `Time.get_ticks_usec()` frame-interval samples, bounded to 300 samples/ten seconds, with warmup and invalid/long-gap resets
+- [x] Mean FPS is `N / sum(intervals)`; p50/p95/p99 are nearest-rank frame times in milliseconds; Main refreshes snapshots every 250 ms
+- [x] Focus-loss resets, resume re-anchoring, and session reset handling; long frame gaps restart warmup
+- [x] Authenticated, role-independent `diagnostic_echo` acknowledgements supply latest/smoothed session RTT from WebSocket send/packet-observation timestamps, excluding SDK parse/dispatch delay
+- [x] One echo in flight, at least one second between probes, stale/disconnected values unavailable, graph gaps for missing samples, and SDK call cancellation on timeout/reset/disconnect
+- [x] HTTP health RTT stays separate; packet loss is unavailable, and probe-timeout ratio counts settled successes/timeouts only
+- [x] Existing deterministic statistics, sampler/transport, settings, layout, and isolated real-session echo tests
 
-### Network diagnostics contract
+Frame timing measures main-loop observation, not GPU scanout/compositor latency.
+Echo RTT measures the application's acknowledged request path, not kernel TCP
+RTT. Neither provides packet-loss counters. No percentile-FPS equivalent is
+currently displayed; any future equivalent must be labelled as such.
 
-- [x] Display transport-observed RTT using successful `diagnostic_echo` reducer acknowledgements on the active client connection; timestamp at WebSocket send/packet observation, excluding SDK parse/dispatch delay, reject failed/late replies, and cancel pending SDK calls on reset, timeout, or disconnect
-- [ ] Confirm before implementation that the pinned SpacetimeDB/Flametime SDK currently has no application echo/heartbeat response for the active WebSocket path; `/v1/ping` is not an active-session RTT measurement. Validate the smallest backend/provider addition needed for the session echo, and show session RTT as `N/A` until it exists
-- [x] If an optional HTTP health probe is useful before session echo support exists, label it `HTTP health RTT`, keep it separate from session RTT, and never use it as a session-RTT fallback
-- [x] Mark RTT unavailable when disconnected/stale and retain missing intervals as graph gaps
-- [ ] Do not call WebSocket/TCP transport reliable delivery “packet loss”: generic Godot `WebSocketPeer`/TCP APIs do not expose actual IP packet-loss counters, and the current SDK protocol does not provide them
-- [x] Packet loss is `N/A`; `probe timeouts` counts settled successes/timeouts only, excluding cancellation, in-flight attempts, and explicit server rejection
+### Remaining diagnostics work
 
-### Diagnostics tests
-
-- [ ] Unit-test deterministic interval samples for mean FPS, nearest-rank p50/p95/p99 frame times, sample/window bounds, low-frequency refresh, minimum sample warmup, and correctly labelled percentile FPS equivalents
-- [ ] Test stalls, pause/resume, minimize/unfocus transitions, long gaps, engine time-scale changes, session reset, and invalid/missing samples without contaminating the active timing window
-- [ ] Test permission-independent session-echo RTT success, timeout, stale expiry, disconnect/reconnect reset, rolling timestamps, settled-attempt denominator/reset behavior, optional separately labelled HTTP health RTT, and honest `N/A` packet-loss presentation
-- [x] Test diagnostics setting persistence, graph dependency on the main toggle, safe-area/input pass-through behavior, accessibility scaling, separate frame-time/RTT units, and missing-data gaps
-- [x] Test Server Management launch/return navigation, searchable history, favorites pinned first, last-successful selection/action persistence, local management controls, remote-control isolation, new history-key canonicalization including IPv6, and history/favorite/data deletion boundaries
-
-### Diagnostics research references
-
-The client is Godot `4.7` (`client/godot/project.godot`), with SpacetimeDB `2.10.0`, schema v10, and vendored Flametime Godot-SpacetimeDB-SDK `0.3.2` at commit `f6c59d7`. The current provider path is an authenticated SpacetimeDB WebSocket (`v3.bsatn.spacetimedb`) carrying subscriptions and reducer calls; there is no separate Continuum REST service or current application echo/heartbeat on that active WebSocket path. Use the pinned SDK/provider contract rather than reimplementing wire messages.
-
-- [ ] Verify timing implementation against [Godot Performance](https://docs.godotengine.org/en/stable/classes/class_performance.html): `Performance.TIME_FPS` is a once-per-second average monitor, while `TIME_PROCESS` is a per-frame process duration and neither is a percentile history
-- [ ] Verify the distinction against [Godot Engine](https://docs.godotengine.org/en/stable/classes/class_engine.html): `Engine.get_frames_per_second()` returns average rendered FPS and is not a p50/p95/p99 calculation
-- [ ] Use [Godot Time](https://docs.godotengine.org/en/stable/classes/class_time.html): `Time.get_ticks_usec()` is monotonic and explicitly preferred over adjustable system clock methods for precise elapsed-time calculations
-- [ ] Ground transport capability in [Godot WebSocketPeer](https://docs.godotengine.org/en/stable/classes/class_websocketpeer.html) and [Godot StreamPeerTCP](https://docs.godotengine.org/en/stable/classes/class_streampeertcp.html): available connection state, polling, buffering, and WebSocket heartbeat behavior do not constitute IP packet-loss counters
-- [ ] Reconcile the implementation with the repository's [current protocol notes](docs/API.md#connection-and-transport) and [pinned SDK/runtime notes](README.md#architecture) before choosing an application echo/heartbeat path
+- [ ] Resolve the collection/display mismatch: `DiagnosticsBar`, the older overlay, and the developer summary require `source == "tcp_info"`, but `SessionDiagnostics.snapshot()` provides echo RTT without that source. Current production UI therefore shows TCP RTT unavailable and omits the RTT sparkline despite successful echo samples
+- [ ] Add collection-to-visible-readout regression coverage using a real sampler snapshot; current presentation tests inject a synthetic `tcp_info` snapshot
 
 ## API
-- [ ] API-first design from the beginning
-- [ ] Official clients use the same underlying command model as external clients
-- [ ] Godot desktop client is the most privileged
-- [ ] Mobile clients have fewer capabilities
-- [ ] Web client has fewer again
-- [ ] Custom clients have explicitly granted scopes
-- [ ] Capability/permission system
-- [ ] Read-only scopes
-- [ ] Metrics scopes
-- [ ] Alert scopes
-- [ ] Command scopes
-- [ ] Intent-level commands rather than raw state mutation
-- [ ] Stable versioned command/API contract
-- [ ] Capability discovery
-- [ ] Eventually allow custom clients
-- [ ] CLI/TUI clients should be possible
-- [ ] Bots should be possible
-- [ ] Discord integrations should be possible
-- [ ] Custom automation should be possible
-- [x] Public protocol/API documentation
 
-### Implemented slices
-- [x] Public SpacetimeDB tables and reducer signatures are documented for the current schema snapshot
-- [x] Operator/admin authorization is enforced server-side; unauthorized clients may still subscribe to public state
-- [x] Reducer flow is intent-based with replicated-state reconciliation; the current docs make no compatibility promise
+- [x] API-first public tables and intent-level reducers shared by Godot and external clients; [protocol documentation](docs/API.md) describes the current surface
+- [x] Server-enforced operator/admin permissions and authenticated sender-scoped role discovery; public state remains readable by viewers
+- [x] Replicated-state reconciliation after commands; local profile/client type does not grant server authority
+- [ ] Stable versioned compatibility contract beyond the current schema snapshot
+- [ ] Fine-grained read-only/metrics/alerts/command scopes and capability discovery beyond current roles
+- [ ] Scoped mobile/web/custom clients, CLI/TUI clients, bots, Discord integrations, and external automation
 
 ## Backend
-- [ ] Separate backend project from Godot
-- [ ] **Rust SpacetimeDB module**
-- [ ] Keep simulation logic separated from SpacetimeDB-specific glue where practical
-- [ ] Authoritative state lives server-side
-- [ ] Clients subscribe only to relevant state
-- [ ] Reducers/commands enforce game rules
-- [ ] Slow/coarse simulation ticks rather than continuous high-frequency updates
-- [ ] Event-driven updates where possible
-- [ ] Scheduled state transitions
-- [ ] Avoid unnecessary per-colonist ticking
-- [ ] Benchmark how many colonists one SpacetimeDB instance can realistically handle
-- [ ] Potentially add Go services later for things that do not belong inside SpacetimeDB
-- [ ] Push notification service later
-- [ ] Server discovery/invites later
-- [ ] External integration services later
 
-### Implemented slices
-- [x] Separate Rust SpacetimeDB module with pure simulation core and persistence/event/auth glue
-- [x] Authoritative state is persisted in public tables; scheduled ticks load, step, and save server-side state
-- [x] Deterministic four-octave fBm terrain sampling is seeded and persisted; missing terrain rows are filled additively without rewriting existing fields
-- [x] Rectangular build, tile-control, and compatible work-order reducers are atomic SpacetimeDB transactions
+- [x] Separate Rust SpacetimeDB module, pure composed simulation, thin responsibility-specific reducers, and explicit persistence/event/auth boundaries
+- [x] Server-authoritative state and game rules; one one-second scheduler advances bounded substeps in durable actor-ID order
+- [x] Behavioral golden traces, row-order independence, persistence mappings, conservation, and failure/recovery tests
+- [x] Seeded four-octave fBm ecological fields and additive physical geometry migration preserve existing state
+- [x] Atomic bounded construction planning, delta persistence, dirty excavation writes, and cached/resumable supported navigation
+- [x] Native/WASM geometry, expansion, migration, and construction-budget fixtures for current population sizes
+- [ ] Benchmark population scaling and practical colonist limits separately from geometry/map-size budgets
+- [ ] Narrow subscriptions to relevant/spatial state as needed; Main currently subscribes to whole public operational/terrain tables
+- [ ] Reduce unnecessary actor work through event-driven scheduling where it preserves the explicit behavioral contract
+- [ ] Optional external services (potentially Go) for push notifications, discovery/invites, and integrations
 
 ## Multiplayer / governance
-- [ ] Player identity
-- [ ] Colony membership
-- [ ] Roles / permissions
-- [ ] Soft responsibility areas
-- [ ] Shared activity/audit log
-- [ ] See who changed what
-- [ ] Player voting
-- [ ] Minimum quorum for important changes
-- [ ] Simulation-speed voting
-- [ ] Prevent tiny overnight minorities from changing major server settings
-- [ ] Potentially use governance for other colony-wide decisions later
 
-### Implemented slices
-- [x] Publishing identity bootstraps the sole admin; admins can add or revoke operator identities
-- [x] Operators can manage facilities, zones, work orders, hauling/meal policy, and alert acknowledgement; admins additionally manage speed, cooldown, reset, and membership
-- [x] Command and membership changes include the caller identity in the event feed
-- [x] Godot role discovery is live, sender-scoped, fail-closed on unavailable views, and reflected in the sidebar without claiming blanket permissions
+- [x] Persistent client identities and private membership roles; the publisher bootstraps the initial admin, and admins grant/revoke operators
+- [x] Operators manage facilities, excavation, work orders, hauling/meal policy, and alert acknowledgement; admins additionally manage speed, cooldown, reset, expansion, and membership
+- [x] Shared command/membership audit text includes caller identity; client role discovery is sender-scoped, live, and fail-closed
+- [ ] Soft responsibility areas and richer membership/governance UX
+- [ ] Voting and minimum quorum for speed/major colony decisions, including protection against tiny overnight minorities changing server settings
 
 ## Clear Next Iterations
+
+- [ ] Resolve the diagnostics collection/display mismatch identified below
+- [ ] Validate the persistent multiplayer leave/return/stabilize loop through sustained play
 - [ ] Persistent named blocks that can be reused, renamed, and edited as first-class objects
 - [ ] Material-driven construction jobs that replace the current semantic facility-building PoC
-- [ ] Terrain effects wired into farming, forestry, moisture, movement, or other operational outcomes
+- [ ] Ecological terrain effects on farming/forestry/moisture outcomes; physical movement and excavation are already integrated
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
 - [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies
-- [ ] Multi-settlement world model, trade, remote sites, expeditions, and communications loss
-- [ ] Packaged/export server provisioning and distribution workflow; current local hosting supports a source checkout with Docker Compose, while native managed hosting remains pending
+- [ ] Logical-world isolation before multi-settlement trade, remote sites, expeditions, and communications loss
+- [ ] Real target-platform release validation and explicit installed-module upgrades; native provisioning and export staging are already implemented
+
+## Maintenance findings (2026-10-03)
+
+Scouted against production references, scenes, tests, and the current data flow.
+Checked entries have been addressed by the client cleanup; the other findings
+remain follow-up work.
+
+- [ ] Retire the orphaned Docker menu adapter in `client/godot/scripts/local_server_runner.gd` and its dedicated test/recipe if that retired UI path is no longer supported. Its only caller is `local_server_runner_test.gd`; Main uses `ContinuumNativeServerController`. The `just local-server` Docker CLI helper still has an explicit entry point
+- [ ] Remove or deliberately integrate `ContinuumServerManagement.set_world_catalog`, `_world_catalog`, `select_world`, and `world_selected`: the catalog is never read, the methods have no callers, and the signal has no listener. Keep the logical-world design above as the source of future scope
+- [x] Consolidated endpoint/database parsing in `scripts/server_endpoint.gd`, shared by the join form and history. Both reject malformed IPv6, overlong DNS names/labels, and invalid ports. The direct form retains its lowercase HTTP(S)/database policy; history retains canonical keys/display spelling, separately from raw profile credential keys
+- [ ] Resolve the dead-end TCP diagnostics presentation described above; all current `tcp_info` producers are synthetic test snapshots. A headless sampler-to-bar probe reproduced a successful 7 ms echo displaying `TCP RTT N/A`
+- [x] Removed uncalled `main.gd` helpers `attach_diagnostics_transport`, `_identity_token_path`, and `_compact_text`; `main_menu.gd`'s `_font_size` and `_font_size_changed`; `colony_map.gd`'s `_soil_colour` and `format_amount`; and `native_server_manager.gd`'s `_module_identity`
+- [x] Removed the unused controller `request_install` queue path, adapter `manifest_fields`, Linux adapter `windows_task_command` and its obsolete test, and uncalled Windows adapter `self_test`; production start/autostart installation and the real Windows supervisor/task path remain the active implementation
+- [x] Centralized need labels/inversions, optional satisfaction values, 35/15 need bands, and 24/2 resource ETA bands in `ui/components/models.gd`; observations, row adapters, and cards share them. Removed the test-only `SessionObservations.need_level` helper and redundant numeric predicate; cross-layer tests cover missing values and severity boundaries
+- [ ] Reconcile older supporting prose: `docs/ui-redesign.md` still calls main's integrated UI a pre-fast-forward candidate, and `justfile`/the old Docker adapter still refer to a future launch menu
+
+Flat-world simulation/rendering branches, golden legacy projections, v1/v2 layout
+migration, and old font-setting adoption still have explicit compatibility or
+regression uses. Their historical naming alone is not evidence of dead code.
 
 ## Project philosophy
-- [ ] Roughly **70% learning project**
-- [ ] Learn SpacetimeDB deeply
-- [ ] Learn persistent multiplayer backend architecture
-- [ ] Learn synchronization/subscriptions
-- [ ] Learn game simulation architecture
-- [ ] Learn API/client design
-- [ ] Roughly **30% building a game we genuinely want to play**
-- [ ] Keep graphics cheap enough that art does not dominate development
-- [ ] Systems depth over content breadth
-- [ ] Start narrow and make systems composable
-- [ ] Avoid trying to reproduce Dwarf Fortress breadth
-- [ ] Make it feel like a living, breathing system rather than a collection of disconnected mechanics
+
+- Roughly **70% learning project**: SpacetimeDB, persistent multiplayer backends, synchronization/subscriptions, simulation architecture, and API/client design
+- Roughly **30% building a game we genuinely want to play**
+- Keep graphics cheap enough that art does not dominate development
+- Systems depth over content breadth; start narrow and make systems composable
+- Avoid trying to reproduce Dwarf Fortress breadth
+- Make it feel like a living, breathing system rather than disconnected mechanics
 
 ## Possible long-term distribution
-- [ ] Dedicated/self-hosted servers
+
+- [x] Self-hosted prototype via managed native hosting or dedicated Docker/manual services
 - [ ] Consider source-visible / Aseprite-like commercial model
 - [ ] Paid official builds
 - [ ] Open API/protocol/SDK ecosystem
-- [ ] Encourage community clients and integrations
-- [ ] Avoid making hosted infrastructure mandatory
+- Encourage community clients and integrations
+- Avoid making hosted infrastructure mandatory

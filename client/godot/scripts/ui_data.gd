@@ -2,6 +2,8 @@
 class_name UiData
 extends RefCounted
 
+const Models = preload("res://ui/components/models.gd")
+
 static func duration(game_seconds: float) -> String:
 	var minutes := maxi(0, int(game_seconds / 60.0))
 	return "%d gameh %02dm" % [minutes / 60, minutes % 60]
@@ -14,8 +16,9 @@ static func colonist(row: ContinuumColonist, session: SessionObservations, selec
 		data.cargo = "%.1f %s" % [row.carried_amount, ContinuumResourceKind.parse_enum_name(row.carried_kind.value)]
 		data.cargo_amount = row.carried_amount
 		data.cargo_kind = ContinuumResourceKind.parse_enum_name(row.carried_kind.value)
-	for label: String in SessionObservations.NEED_FIELDS:
-		var field: String = SessionObservations.NEED_FIELDS[label]
+	for descriptor: Array in Models.NEEDS:
+		var label: String = descriptor[0]
+		var field: String = descriptor[1]
 		data[field] = row.get(field)
 		var trend := session.need_trend(row.id, label)
 		if trend.available:
