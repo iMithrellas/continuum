@@ -123,7 +123,11 @@ pub(super) fn step_work(world: &mut World, colonist_index: usize, tuning: &Tunin
         return;
     }
     let productivity = world.colonists[colonist_index].wellbeing.productivity / 100.0;
-    let produced = tuning.output_per_hour(definition.output) * productivity * dt_hours;
+    let ecology = super::ecology::production_multiplier(
+        world.colonists[colonist_index].assignment.work,
+        world.ecology.get(&tile.id),
+    );
+    let produced = tuning.output_per_hour(definition.output) * productivity * dt_hours * ecology;
     world.add_to_stack(&tile, definition.output, produced);
 }
 

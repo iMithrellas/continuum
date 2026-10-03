@@ -133,6 +133,21 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
     let geometry = geometry::load(ctx);
     let mut tiles: Vec<sim::Tile> = ctx.db.tile().iter().map(tile_state).collect();
     tiles.sort_by_key(|tile| tile.id);
+    let ecology = ctx
+        .db
+        .terrain()
+        .iter()
+        .map(|row| {
+            (
+                row.tile_id,
+                sim::terrain::TerrainFields {
+                    soil_fertility: row.soil_fertility,
+                    forest_density: row.forest_density,
+                    moisture: row.moisture,
+                },
+            )
+        })
+        .collect();
 
     let mut work_orders: Vec<sim::WorkOrder> = ctx
         .db
@@ -160,6 +175,7 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
     let mut world = World {
         navigation: Default::default(),
         geometry: Some(geometry),
+        ecology,
         tiles,
         work_orders,
         colonists,

@@ -83,6 +83,7 @@ pub fn new_world() -> World {
     World {
         navigation: Default::default(),
         geometry: None,
+        ecology: Default::default(),
         work_orders: default_work_orders(&tiles),
         tiles,
         colonists: default_colonists(),

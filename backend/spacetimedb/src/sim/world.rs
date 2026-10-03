@@ -84,6 +84,8 @@ pub struct World {
     pub navigation: std::cell::RefCell<super::navigation::Navigation>,
     /// None is reserved for historical flat simulation fixtures; live loads use Some.
     pub geometry: Option<super::geometry::Geometry>,
+    /// Persisted ecological fields keyed by durable tile ID; absent entries are neutral.
+    pub ecology: super::ecology::EcologicalData,
     pub tiles: Vec<Tile>,
     /// Standing production permissions; an empty list disables all production.
     pub work_orders: Vec<WorkOrder>,
