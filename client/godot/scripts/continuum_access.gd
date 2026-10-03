@@ -109,28 +109,55 @@ func stop() -> void:
 		_client = null
 
 func _release_subscription(use_network: bool = true) -> void:
-	if _subscription == null:
+	if not is_instance_valid(_subscription):
+		_subscription = null
+		_release_timer = null
 		return
 	var subscription := _subscription
-	if use_network and not subscription.ended and _client != null and _client.is_connected_db():
+	if use_network and not subscription.ended and _transport_open():
+		if _release_timer != null:
+			return
 		if subscription.unsubscribe() == OK:
+			_client.get_local_database().clear_role_view()
 			_release_timer = _client.get_tree().create_timer(1.0)
-			_release_timer.timeout.connect(_force_release.bind(subscription), CONNECT_ONE_SHOT)
+			_release_timer.timeout.connect(_force_release.bind(weakref(self), weakref(_client), weakref(subscription)), CONNECT_ONE_SHOT)
 			return
 	_subscription = null
-	if _client != null:
+	_release_timer = null
+	if subscription.applied.is_connected(_on_view_applied):
+		subscription.applied.disconnect(_on_view_applied)
+	if subscription.end.is_connected(_on_view_ended):
+		subscription.end.disconnect(_on_view_ended)
+	if is_instance_valid(_client):
+		_client.get_local_database().clear_role_view()
 		_client.discard_subscription(subscription)
 	else:
 		subscription.queue_free()
 
-func _force_release(subscription: SpacetimeDBSubscription) -> void:
-	if _subscription != subscription:
+func _transport_open() -> bool:
+	if not is_instance_valid(_client) or not _client.is_connected_db():
+		return false
+	var connection: Variant = _client._connection
+	var socket: Variant = connection._websocket if is_instance_valid(connection) else null
+	return socket != null and socket.get_ready_state() == WebSocketPeer.STATE_OPEN
+
+## Lost-ack deadline may outlive the access owner; all captured references are weak.
+static func _force_release(owner_reference: WeakRef, client_reference: WeakRef, reference: WeakRef) -> void:
+	var owner: Variant = owner_reference.get_ref()
+	var client: Variant = client_reference.get_ref()
+	var subscription: Variant = reference.get_ref()
+	if owner != null and (not is_instance_valid(owner._subscription) or owner._subscription == subscription):
+		owner._subscription = null
+		owner._release_timer = null
+		if owner._stopped:
+			owner._client = null
+	if not is_instance_valid(subscription) or subscription.ended:
 		return
-	_subscription = null
-	_release_timer = null
-	if _client != null:
-		_client.discard_subscription(subscription)
-		_client = null
+	if is_instance_valid(client) and (client.current_subscriptions.get(subscription.query_id) == subscription \
+			or client._pending_subscriptions.get(subscription.query_id) == subscription):
+		client.discard_subscription(subscription)
+	else:
+		subscription.queue_free()
 
 func _on_role_row_updated(_table_name: String, _old_row: Resource, _new_row: Resource) -> void:
 	if _table_name != "my_role":
