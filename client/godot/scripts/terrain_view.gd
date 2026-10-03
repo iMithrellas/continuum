@@ -167,6 +167,7 @@ func _valid_frame(model: LayeredTerrainModel, frame: Variant) -> bool:
 		if not xy is Vector2i or posmod(xy.x, stride) != 0 or posmod(xy.y, stride) != 0: return false
 		var sample: Variant = frame.samples[xy]
 		if not sample is Dictionary or not sample.get("known") is bool: return false
+		if not TerrainArt.valid_ecology(sample): return false
 		var has_values: bool = sample.has("surface_z") or sample.has("material")
 		if not sample.known and not has_values: continue
 		if not sample.has_all(["surface_z", "material"]): return false
@@ -193,6 +194,8 @@ func _frame_snapshot(frame: Dictionary) -> Dictionary:
 		if source.known:
 			sample["surface_z"] = source.surface_z
 			sample["material"] = source.material
+		for field in TerrainArt.ECOLOGY_FIELDS:
+			if source.has(field): sample[field] = source[field]
 		sample.make_read_only()
 		samples[xy] = sample
 	samples.make_read_only()
@@ -206,6 +209,8 @@ func _same_samples(incoming: Dictionary, accepted: Dictionary) -> bool:
 	for xy: Vector2i in incoming:
 		if not accepted.has(xy) or incoming[xy].known != accepted[xy].known: return false
 		if incoming[xy].known and (incoming[xy].surface_z != accepted[xy].surface_z or incoming[xy].material != accepted[xy].material): return false
+		for field in TerrainArt.ECOLOGY_FIELDS:
+			if incoming[xy].get(field) != accepted[xy].get(field): return false
 	return true
 
 func _model_context(model: LayeredTerrainModel) -> Array:

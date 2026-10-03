@@ -93,6 +93,22 @@ height in `[min_z, cut]`. Resolved-empty samples require registered nonopaque ai
 (`material=0`) and exactly `surface_z=min_z-1`. Pending samples may omit both value
 fields or supply that same empty sentinel, never an exposed-surface payload.
 
+Samples may independently carry optional normalized `soil_fertility`,
+`forest_density`, and `moisture`. Present values must be finite numbers in `[0,1]`
+(not booleans, strings, nulls or unnormalized bytes), including on pending samples
+and cache-key hits. Their presence and exact values survive the immutable frame
+snapshot and participate in cache equality. Change the revision when they change.
+
+These column measurements only modulate pigment inside known soil/turf floors in
+**detail**. They cannot supply an exposure mask, physical tree/resource or exact
+overview inspection. Missing fields leave their respective pigment effect absent;
+no neighbouring field is borrowed. Overview retains its representative material
+styling even if optional column ecology is present. The shader packs three
+presence-aware bytes into the existing RGBAF metadata's spare blue channel:
+`0` means absent; `1..255` encode normalized `0..1`. Shader-only quantization error
+is at most `1/508`; original tooltip/frame values remain exact. No extra texture,
+page, pass, halo or mask allocation is introduced.
+
 The renderer retains a primitive-only, recursively read-only snapshot. Mutating
 the caller's dictionaries cannot change an accepted frame. A reused key with
 different valid rendering samples is rejected; identical valid samples reuse

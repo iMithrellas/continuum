@@ -73,6 +73,8 @@ static func crate(canvas: CanvasItem, rect: Rect2) -> void:
 	canvas.draw_line(rect.position + Vector2(0, rect.size.y * 0.22), rect.position + Vector2(rect.size.x, rect.size.y * 0.22), Color("d0ad74"), maxf(0.5, rect.size.y * 0.1))
 
 static func hatch(canvas: CanvasItem, rect: Rect2, phase: Vector2, pitch: float, colour: Color, width: float, direction := 1.0) -> void:
+	if not rect.has_area() or minf(rect.size.x, rect.size.y) < 4.0 or not is_finite(pitch) or pitch < 3.0 or not is_finite(width) or width <= 0.0:
+		return
 	# Clip y = direction*x + c analytically to the rectangle.
 	var low := rect.position.y - (rect.end.x if direction > 0 else -rect.position.x)
 	var high := rect.end.y - (rect.position.x if direction > 0 else -rect.end.x)
@@ -85,6 +87,7 @@ static func hatch(canvas: CanvasItem, rect: Rect2, phase: Vector2, pitch: float,
 		var normal := Vector2(-direction, 1).normalized() * width * 0.5
 		var strip := PackedVector2Array([a + normal, b + normal, b - normal, a - normal])
 		for polygon in Geometry2D.intersect_polygons(strip, boundary):
+			if polygon.size() < 3 or Geometry2D.triangulate_polygon(polygon).is_empty(): continue
 			canvas.draw_colored_polygon(polygon, colour)
 		c += pitch
 

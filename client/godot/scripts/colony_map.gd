@@ -817,16 +817,25 @@ func action_hint(xy: Vector2i) -> String:
 	return "Click to inspect · drag to select area"
 
 
-## Read the current row by durable tile identity, including empty land. Sparse
-## terrain without an ecology row stays unknown; no neighbouring field is borrowed.
-func _ecology_fields(tile: ContinuumTile) -> Dictionary:
-	if tile == null:
+## Operational Tile ecology wins. Otherwise inspect only the exact acknowledged
+## compact column in detail; representatives/neighbours cannot supply potential.
+func _ecology_fields(tile: ContinuumTile, xy: Variant = null) -> Dictionary:
+	if layered and (terrain_model.presentation_mode != &"detail" or terrain_view.is_overview() or terrain_view.is_frame_suspended()):
 		return {}
-	var terrain: ContinuumTerrain = _source_db.terrain.tile_id.find(tile.id)
-	if terrain == null:
+	if tile != null and _source_db != null:
+		var terrain: ContinuumTerrain = _source_db.terrain.tile_id.find(tile.id)
+		if terrain != null:
+			return {"soil_fertility": terrain.soil_fertility, "moisture": terrain.moisture,
+				"forest_density": terrain.forest_density}
+	if not layered or not xy is Vector2i:
 		return {}
-	return {"soil_fertility": terrain.soil_fertility, "moisture": terrain.moisture,
-		"forest_density": terrain.forest_density}
+	var data := terrain_model.frame_samples(Rect2i(xy, Vector2i.ONE), 1, 1)
+	if data.mode != &"detail" or data.cut != terrain_model.cut or data.samples.size() != 1:
+		return {}
+	var sample: Dictionary = data.samples[0]
+	if sample.xy != xy or sample.state != &"surface" or not sample.has_all(TerrainArt.ECOLOGY_FIELDS) or not TerrainArt.valid_ecology(sample):
+		return {}
+	return {"soil_fertility": sample.soil_fertility, "forest_density": sample.forest_density, "moisture": sample.moisture}
 
 
 ## Placement previews describe the anchor's potential, never a footprint average
@@ -834,7 +843,9 @@ func _ecology_fields(tile: ContinuumTile) -> Dictionary:
 func _potential_yield(xy: Vector2i, kind: int) -> String:
 	if kind not in [ContinuumTileKind.Options.farm, ContinuumTileKind.Options.forest]:
 		return ""
-	var fields := _ecology_fields(tile_at(xy))
+	if layered and (terrain_model.presentation_mode != &"detail" or terrain_view.is_overview() or terrain_view.is_frame_suspended()):
+		return "potential unknown"
+	var fields := _ecology_fields(tile_at(xy), xy)
 	if fields.is_empty():
 		return "potential unknown"
 	var work := ContinuumWorkType.Options.farming if kind == ContinuumTileKind.Options.farm else ContinuumWorkType.Options.logging
@@ -1054,6 +1065,10 @@ func _get_tooltip(at_position: Vector2) -> String:
 	var grid_pos := Vector2i(floori(local.x), floori(local.y))
 	if not grid_bounds().has_point(grid_pos):
 		return ""
+	if layered and (terrain_model.presentation_mode != &"detail" or terrain_view.is_overview()):
+		return "Terrain overview · zoom in to inspect"
+	if layered and terrain_view.is_frame_suspended():
+		return terrain_view.presentation_status()
 	var lines := PackedStringArray()
 	lines.append(action_hint(grid_pos))
 	if layered:
@@ -1067,16 +1082,17 @@ func _get_tooltip(at_position: Vector2) -> String:
 			surface.x, surface.y, surface.z, terrain_model.depth_at(grid_pos), terrain_model.depth_at(grid_pos) * 0.5,
 			terrain_model.base_at(grid_pos)])
 	var tile := tile_at(grid_pos)
-	var fields := _ecology_fields(tile)
+	var fields := _ecology_fields(tile, grid_pos)
 	if tile != null:
 		lines.append("%s (%d, %d) / %s" % [
 			ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.x, tile.y,
 			"enabled" if tile.enabled else "disabled"])
-		if not fields.is_empty():
-			lines.append("Soil: %s  fertility %.2f  moisture %.2f" % [
-				_soil_name(fields.soil_fertility, fields.moisture), fields.soil_fertility, fields.moisture])
-			lines.append("Cover: %s  density %.2f" % [
-				_cover_name(fields.forest_density), fields.forest_density])
+	if not fields.is_empty():
+		lines.append("Soil: %s  fertility %.2f  moisture %.2f" % [
+			_soil_name(fields.soil_fertility, fields.moisture), fields.soil_fertility, fields.moisture])
+		lines.append("Cover potential: %s  density %.2f" % [
+			_cover_name(fields.forest_density), fields.forest_density])
+	if tile != null:
 		for work: int in compatible_work(tile.kind.value):
 			var description := "no order (no production)"
 			for order: ContinuumWorkOrder in db.work_order.iter():

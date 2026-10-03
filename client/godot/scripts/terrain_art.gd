@@ -4,7 +4,25 @@ class_name TerrainArt
 extends RefCounted
 
 const ATLAS = preload("res://assets/world/materials.png")
+const ECOLOGY_FIELDS := ["soil_fertility", "forest_density", "moisture"]
 static var _texture: ImageTexture
+
+static func valid_ecology(sample: Dictionary) -> bool:
+	for key in ECOLOGY_FIELDS:
+		if not sample.has(key): continue
+		var value: Variant = sample[key]
+		if not (value is float or value is int) or not is_finite(float(value)) or value < 0 or value > 1: return false
+	return true
+
+## Three presence-aware bytes fit exactly in the spare RGBAF blue channel's
+## 24-bit significand. Zero means absent; 1..255 maps to normalized 0..1.
+## Only pigment is quantized (max error 1/508); the accepted frame stays exact.
+static func ecology_code(sample: Dictionary) -> float:
+	var packed := 0
+	for index in ECOLOGY_FIELDS.size():
+		var key: String = ECOLOGY_FIELDS[index]
+		if sample.has(key): packed |= (1 + roundi(float(sample[key]) * 254.0)) << (index * 8)
+	return float(packed)
 
 static func material_texture() -> ImageTexture:
 	if _texture == null:
@@ -55,5 +73,5 @@ static func frame_data(frame: Dictionary, region: Rect2i, materials: Dictionary)
 			if not sample.get("known", false): continue
 			var material := int(sample.get("material", 0))
 			image.set_pixel(x + 1, y + 1, Color(styles.get(material, 4) if material != 0 else -1,
-				int(sample.surface_z), 0, 1))
+				int(sample.surface_z), ecology_code(sample), 1))
 	return image

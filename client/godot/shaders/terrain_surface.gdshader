@@ -37,6 +37,20 @@ vec3 pigment(float style, vec2 world, float lod) {
 	float mottling = field(world * 0.113) * 0.13 + field(world * 0.037 + 41.0) * 0.1 - 0.105;
 	return colour * (1.0 + mottling);
 }
+vec3 ecology_pigment(vec3 colour, float packed, vec2 world) {
+	vec3 code = mod(floor(vec3(packed, packed / 256.0, packed / 65536.0)), 256.0);
+	vec3 value = max(vec3(0.0), (code - 1.0) / 254.0);
+	if (code.x > 0.0) {
+		vec3 soil = mix(vec3(1.18, 0.99, 0.77), vec3(0.85, 1.09, 0.89), value.x);
+		colour *= soil;
+	}
+	if (code.y > 0.0) {
+		float patch = smoothstep(0.25, 0.75, field(world * 0.43 + 17.0));
+		colour = mix(colour, colour * vec3(0.48, 0.69, 0.65), value.y * (0.38 + patch * 0.55));
+	}
+	if (code.z > 0.0) colour *= mix(vec3(1.03, 1.01, 0.96), vec3(0.82, 0.91, 0.96), value.z);
+	return colour;
+}
 void fragment() {
 	float coverage = texture(visibility_mask, UV).a;
 	if (coverage < 0.5) {
@@ -61,6 +75,9 @@ void fragment() {
 		}
 		if (ny.a > 0.5 && ny.r >= 0.0 && ny.g == centre.g && ny.r != centre.r) {
 			colour = mix(colour, pigment(ny.r, world, lod), weights.y);
+		}
+		if (sample_stride == 1.0 && (centre.r == 0.0 || centre.r == 5.0)) {
+			colour = ecology_pigment(colour, centre.b, world);
 		}
 		float shade = 1.0;
 		if (sample_stride == 1.0 && nx.a > 0.5 && nx.r >= 0.0 && nx.g != centre.g) {
