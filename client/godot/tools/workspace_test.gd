@@ -258,6 +258,7 @@ func _test_manager() -> void:
 	await _test_viewport_input(deck, map)
 	await _test_resize_edges(deck)
 	await _test_direct_panel_interactions(deck)
+	await _test_collapsed_panel_interactions(deck)
 	await _test_floating_overlap(deck)
 	await _test_retained_body_focus_resize(deck)
 	await _test_navigation_focus(deck)
@@ -619,6 +620,165 @@ func _test_direct_panel_interactions(deck: WorkspaceDeck) -> void:
 	deck._apply_layout()
 	await _settle_layout()
 	print("WORKSPACE_DIRECT_INTERACTION_PASS Input.parse_input_event native-window-100-125-150 footprint offset corner-resize hidden-strip restore pin escape permission compact full-map map-exclusion")
+
+## Native input exercises GUI routing, deck snapping, rollback and disk persistence.
+## The saved rectangle is always expanded, even while only its header is visible.
+func _test_collapsed_panel_interactions(deck: WorkspaceDeck) -> void:
+	var host := get_tree().root
+	var old_size := host.size
+	var old_scale := host.content_scale_factor
+	var old_deck_size := deck.size
+	var old_headers := deck.model.show_panel_headers
+	var old_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
+	var builds := viewport_builds
+	var selections := viewport_selections
+	var window: WorkspaceWindow = deck.windows.people
+	for scale: float in [1.0, 1.25, 1.5]:
+		host.size = Vector2i(1920, 1080)
+		host.content_scale_factor = scale
+		await _settle_layout()
+		deck.size = host.get_visible_rect().size
+		deck.model.show_panel_headers = false
+		for key: String in deck.windows:
+			deck.state(key).open = key == "people"
+		deck.state("people").pinned = false
+		deck.state("people").minimized = false
+		deck.state("people").rect = [0.2, 0.2, 0.3, 0.45]
+		deck._apply_layout()
+		deck.toggle_panel_headers()
+		await _settle_layout()
+		var expanded := Rect2(window.position, window.size)
+		var dimensions: Array = deck.state("people").rect.slice(2)
+		var collapse_button: Button = window.titlebar.get_child(-2)
+		var pointer := collapse_button.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer))
+		_assert(window.collapsed and window.size.y == window.chrome_height(), "real collapse action keeps header at %s" % scale)
+		deck.toggle_panel_headers()
+		await _settle_layout()
+		_assert(not deck.model.show_panel_headers and window.header_visible, "collapsed panel retains its real header despite hidden-header preference")
+		_assert(window.titlebar.mouse_default_cursor_shape == Control.CURSOR_MOVE, "collapsed unpinned header advertises movement")
+		for handle: Control in window.resize_handles.values():
+			_assert(not handle.visible, "collapse disables every resize handle")
+		var start := Rect2(window.position, window.size)
+		pointer = window.grip.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(30, 20)))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(30, 20)))
+		_assert(window._gesture.is_empty() and Rect2(window.position, window.size) == start, "former collapsed corner cannot resize through actual input")
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		_assert(window._gesture == "move", "real collapsed header arms movement at %s" % scale)
+		await _parse(_mouse_motion(pointer + Vector2(50, 30)))
+		_assert(window.position.distance_to(start.position + Vector2(50, 30)) < 1 and window.size == start.size, "collapsed drag changes only position without growing to body minimum at %s" % scale)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(50, 30)))
+		var moved := Rect2(window.position, window.size)
+		_assert(deck.state("people").rect.slice(2) == dimensions and deck._drag_origins.is_empty(), "collapsed release preserves exact expanded dimensions")
+		var reloaded := WorkspaceLayout.new()
+		_assert(reloaded.load_from(deck._save_path), "collapsed release saves a readable layout")
+		var saved: Dictionary = reloaded.workspaces[reloaded.active].panels.people
+		var restored := WorkspaceLayout.to_pixels(saved.rect, deck.area.size)
+		_assert(saved.minimized and restored.position.distance_to(moved.position) < 1 and restored.size.distance_to(expanded.size) < 1, "disk stores collapsed position and expanded dimensions at %s" % scale)
+		deck.model.load_from(deck._save_path)
+		deck._apply_layout()
+		await _settle_layout()
+		_assert(Rect2(window.position, window.size) == moved, "reload/reapply retains dragged collapsed header geometry")
+		pointer = collapse_button.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer))
+		_assert(not window.collapsed and window.position == moved.position and window.size == expanded.size, "restore retains moved anchor when expanded panel fits")
+		deck.toggle_panel("people")
+		await _settle_layout()
+		for cancellation: String in ["escape", "right", "focus"]:
+			var before: Dictionary = deck.state("people").duplicate(true)
+			pointer = window.titlebar.global_position + Vector2(40, 12)
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+			var motion := _mouse_motion(pointer + Vector2(47, 25))
+			motion.alt_pressed = true
+			await _parse(motion)
+			_assert(window.position.distance_to(moved.position + Vector2(47, 25)) < 1 and window.size == moved.size, "Alt collapsed motion preserves header size before %s cancellation" % cancellation)
+			if cancellation == "escape":
+				var escape := InputEventKey.new()
+				escape.pressed = true
+				escape.keycode = KEY_ESCAPE
+				await _parse(escape)
+			elif cancellation == "right":
+				await _parse(_mouse_button(MOUSE_BUTTON_RIGHT, true, motion.position))
+				await _parse(_mouse_button(MOUSE_BUTTON_RIGHT, false, motion.position))
+			else:
+				window.notification(NOTIFICATION_WM_WINDOW_FOCUS_OUT)
+				await _settle_layout()
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+			_assert(window._gesture.is_empty() and deck._drag_origins.is_empty() and Rect2(window.position, window.size) == moved and deck.state("people").rect == before.rect, "%s rolls back collapsed visible and expanded rectangles at %s" % [cancellation, scale])
+			reloaded.load_from(deck._save_path)
+			_assert(reloaded.workspaces[reloaded.active].panels.people.rect == before.rect, "%s rollback persists intact expanded dimensions" % cancellation)
+		deck.state("alerts").open = true
+		deck.state("alerts").rect = [0.2, 0.45, 0.3, 0.25]
+		deck._apply_layout()
+		await _settle_layout()
+		var neighbor: WorkspaceWindow = deck.windows.alerts
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		var target := Vector2(neighbor.position.x, neighbor.position.y - window.size.y + 5)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		var destination := pointer + target - window.position
+		await _parse(_mouse_motion(destination))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, destination))
+		_assert(window.position.x == neighbor.position.x and window.position.y + window.size.y == neighbor.position.y, "collapsed snapping uses visible header edges at %s" % scale)
+		deck.state("alerts").open = false
+		deck._apply_layout()
+		await _settle_layout()
+		for unsnapped: bool in [true, false]:
+			pointer = window.titlebar.global_position + Vector2(40, 12)
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+			var motion := _mouse_motion(pointer + Vector2(5, 5) - window.position)
+			motion.alt_pressed = unsnapped
+			await _parse(motion)
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+			_assert(window.position == (Vector2(5, 5) if unsnapped else Vector2.ZERO), "collapsed viewport snapping obeys Alt bypass at %s" % scale)
+		for delta: Vector2 in [Vector2(-3000, -3000), Vector2(3000, 3000)]:
+			pointer = window.titlebar.global_position + Vector2(40, 12)
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+			var motion := _mouse_motion(pointer + delta)
+			motion.alt_pressed = true
+			await _parse(motion)
+			await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, motion.position))
+			var expected := Vector2.ZERO if delta.x < 0 else (deck.area.size - window.size).round()
+			_assert(window.position.distance_to(expected) < 1 and window.size.y == window.chrome_height(), "collapsed bounds use only the visible header at %s" % scale)
+		var before_restore := window.position
+		var expected_restore := WorkspaceLayout.clamp_rect(Rect2(before_restore, expanded.size), deck.area.size).position.round()
+		pointer = collapse_button.get_global_rect().get_center()
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer))
+		_assert(not window.collapsed and window.position == expected_restore and window.position.y < before_restore.y and window.size == expanded.size and not window.header_visible, "real restore clamps only when body no longer fits, retaining size and header preference at %s" % scale)
+		deck.toggle_panel("people")
+		deck.state("people").pinned = true
+		deck._apply_layout()
+		await _settle_layout()
+		var locked := Rect2(window.position, window.size)
+		var locked_saved: Array = deck.state("people").rect.duplicate()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer - Vector2(40, 20)))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer - Vector2(40, 20)))
+		_assert(window._gesture.is_empty() and Rect2(window.position, window.size) == locked and window.titlebar.mouse_default_cursor_shape == Control.CURSOR_ARROW and deck.state("people").rect == locked_saved, "collapsed pinned header remains locked at %s" % scale)
+		deck.state("people").pinned = false
+		deck.size = Vector2(600, 600)
+		deck._apply_layout()
+		await _settle_layout()
+		pointer = window.titlebar.global_position + Vector2(40, 12)
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, true, pointer))
+		await _parse(_mouse_motion(pointer + Vector2(40, 20)))
+		await _parse(_mouse_button(MOUSE_BUTTON_LEFT, false, pointer + Vector2(40, 20)))
+		_assert(deck.compact and window._gesture.is_empty() and window.position == Vector2.ZERO and window.titlebar.mouse_default_cursor_shape == Control.CURSOR_ARROW and deck.state("people").rect == locked_saved, "collapsed compact header never changes desktop geometry at %s" % scale)
+		_assert(viewport_builds == builds and viewport_selections == selections, "collapsed gestures never dispatch map actions at %s" % scale)
+	deck.model.workspaces[deck.model.active].panels = old_panels
+	deck.model.show_panel_headers = old_headers
+	host.content_scale_factor = old_scale
+	host.size = old_size
+	deck.size = old_deck_size
+	deck._apply_layout()
+	await _settle_layout()
+	print("WORKSPACE_COLLAPSED_INTERACTION_PASS native-window-100-125-150 actual-header-input cursor visible-snap bounds disk-reload restore-size escape right-click focus-out pin compact map-exclusion")
 
 func _parse(event: InputEvent) -> void:
 	event = event.duplicate()

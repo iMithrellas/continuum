@@ -17,13 +17,16 @@ parser.add_argument("--review-only", action="store_true", help="three focused re
 parser.add_argument("--floating-only", action="store_true", help="eight actual-main viewport/scale/status cases for floating integration")
 parser.add_argument("--header-only", action="store_true", help="focused two-strip header matrix plus a 4K window")
 parser.add_argument("--budget-only", action="store_true", help="five multi-warning status budgets, including 240 logical px")
+parser.add_argument("--collapsed-only", action="store_true", help="production resize/collapse/drag at 100/125/150 percent and the floating boundary")
 options = parser.parse_args()
 scene = "ui_composition_fixture" if options.live or options.floating_only or options.header_only else "ui_chrome_fixture"
 if options.review_only:
     scene = "ui_review_regression"
 if options.budget_only:
     scene = "ui_status_budget_test"
-marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only or options.floating_only or options.header_only or options.budget_only else "UI_INTEGRATION_FIXTURE_PASS"
+if options.collapsed_only:
+    scene = "workspace_collapsed_production_test"
+marker = "UI_LIVE_FIXTURE_PASS" if options.live or options.review_only or options.floating_only or options.header_only or options.budget_only or options.collapsed_only else "UI_INTEGRATION_FIXTURE_PASS"
 project = Path(__file__).resolve().parents[1]
 base = Path(os.environ.get("UI_RENDER_OUTPUT", "/tmp/opencode/continuum-ui-integration-state/matrix"))
 base.mkdir(parents=True, exist_ok=True)
@@ -68,6 +71,9 @@ with (base / "xvfb.log").open("w") as log:
         if options.budget_only:
             cases = [("960x640", scale, "problem", True, True, "") for scale in [100, 125, 150]]
             cases += [(screen, 150, "problem", True, True, "") for screen in ["600x640", "360x640"]]
+        if options.collapsed_only:
+            cases = [("1440x900", scale, "nominal", True, False, "") for scale in [100, 125, 150]]
+            cases += [("960x748", 150, "nominal", True, False, "")]
         for screen, scale, status, reduced, focus, extra in cases:
             name = f"{screen}-{scale}-{status}-motion{'reduced' if reduced else 'normal'}-focus{int(focus)}"
             if extra:

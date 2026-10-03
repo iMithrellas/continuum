@@ -219,11 +219,11 @@ func add_panel(key: String) -> VBoxContainer:
 	window.focused.connect(focus_panel.bind(key))
 	window.interaction_started.connect(func() -> void:
 		_drag_origins[key] = state(key).duplicate(true)
-		var remembered := WorkspaceLayout.to_pixels(state(key).rect, area.size, metrics)
+		var remembered := _floating_rect(key)
 		remembered.position = remembered.position.round()
 		remembered.size = remembered.size.round()
 		if window.position.distance_to(remembered.position) > 0.01 or window.size.distance_to(remembered.size) > 0.01:
-			_drag_origins[key].rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size))
+			_drag_origins[key].rect = _remembered_geometry(key))
 	window.headers_requested.connect(func() -> void:
 		if not model.show_panel_headers:
 			toggle_panel_headers())
@@ -234,7 +234,7 @@ func add_panel(key: String) -> VBoxContainer:
 			_apply_layout()
 		else:
 			if not compact:
-				state(key).rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
+				state(key).rect = _remembered_geometry(key)
 		save_layout())
 	window.geometry_requested.connect(func(rect: Rect2, resizing: bool, unsnapped: bool) -> void:
 		var others: Array[Rect2] = []
@@ -244,10 +244,11 @@ func add_panel(key: String) -> VBoxContainer:
 				if visible_rect.has_area():
 					others.append(Rect2(area.get_global_transform().affine_inverse() * visible_rect.position, visible_rect.size))
 		var snapped: Rect2
+		var minimum := Vector2(WorkspaceLayout.minimum_size(metrics).x, window.chrome_height()) if window.collapsed else Vector2.ZERO
 		if unsnapped:
-			snapped = WorkspaceLayout.clamp_resize_rect(rect, area.size, window._resize_edges, metrics) if resizing else WorkspaceLayout.clamp_rect(rect, area.size, metrics)
+			snapped = WorkspaceLayout.clamp_resize_rect(rect, area.size, window._resize_edges, metrics) if resizing else WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
 		else:
-			snapped = WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics, window._resize_edges)
+			snapped = WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics, window._resize_edges, minimum)
 		snapped.position = snapped.position.round()
 		snapped.size = snapped.size.round()
 		window.position = snapped.position
@@ -255,7 +256,7 @@ func add_panel(key: String) -> VBoxContainer:
 	window.interaction_finished.connect(func() -> void:
 		_drag_origins.erase(key)
 		if not compact:
-			state(key).rect = WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
+			state(key).rect = _remembered_geometry(key)
 		save_layout())
 	window.minimize_requested.connect(toggle_panel.bind(key))
 	window.close_requested.connect(func() -> void:
@@ -265,6 +266,30 @@ func add_panel(key: String) -> VBoxContainer:
 		state(key).pinned = not state(key).pinned
 		_changed())
 	return window.content
+
+
+## Collapsed gestures persist position only; the body dimensions remain intact.
+## Copy normalized dimensions verbatim to avoid rounding drift over collapse cycles.
+func _remembered_geometry(key: String) -> Array:
+	var window: WorkspaceWindow = windows[key]
+	var rect := WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
+	if window.collapsed:
+		rect[2] = state(key).rect[2]
+		rect[3] = state(key).rect[3]
+	return rect
+
+
+## Saved dimensions describe the body; collapsed bounds describe only the header.
+## Read the saved anchor before expanded clamping, including after viewport changes.
+func _floating_rect(key: String) -> Rect2:
+	var saved := state(key)
+	var rect := WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
+	if saved.minimized:
+		var minimum := Vector2(WorkspaceLayout.minimum_size(metrics).x, windows[key].chrome_height())
+		rect.position = Vector2(saved.rect[0], saved.rect[1]) * area.size
+		rect.size.y = minimum.y
+		rect = WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
+	return rect
 
 ## Alert ownership and aggregation belong to integration, not local preferences.
 func set_workspace_alert_summary(id: String, level: String, count: int) -> void:
@@ -387,6 +412,13 @@ func toggle_panel(key: String) -> void:
 		return
 	_cancel_gestures()
 	if map_only or not state(key).open or state(key).minimized or (compact and _compact_panel != key):
+		if state(key).minimized and not compact:
+			var restored := WorkspaceLayout.to_pixels(state(key).rect, area.size, metrics)
+			var saved_anchor := Vector2(state(key).rect[0], state(key).rect[1]) * area.size
+			if restored.position.distance_to(saved_anchor) > 0.01:
+				var anchor := WorkspaceLayout.to_normalized(restored, area.size)
+				state(key).rect[0] = anchor[0]
+				state(key).rect[1] = anchor[1]
 		state(key).open = true
 		state(key).minimized = false
 		map_only = false
@@ -464,7 +496,7 @@ func _apply_layout() -> void:
 		window.apply_state(saved.pinned, compact)
 		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
-		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
+		var rect := Rect2(Vector2.ZERO, area.size) if compact else _floating_rect(key)
 		if saved.minimized:
 			rect.size.y = window.chrome_height()
 		if not compact:

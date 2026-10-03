@@ -245,9 +245,11 @@ func apply_state(is_pinned: bool, is_compact: bool) -> void:
 	for handle: Control in resize_handles.values():
 		handle.visible = not pinned and not compact and not collapsed
 		handle.tooltip_text = "Drag to resize. Hold Alt to bypass snapping. Escape cancels."
-	titlebar.mouse_default_cursor_shape = Control.CURSOR_ARROW if pinned or compact or collapsed else Control.CURSOR_MOVE
+	titlebar.mouse_default_cursor_shape = Control.CURSOR_ARROW if pinned or compact else Control.CURSOR_MOVE
 	drag_strip.mouse_default_cursor_shape = titlebar.mouse_default_cursor_shape
 	titlebar.tooltip_text = "Unpin to move or resize (geometry only)" if pinned else "Drag to move. Drag edges to resize; Alt bypasses snapping. Escape cancels."
+	if collapsed and not pinned and not compact:
+		titlebar.tooltip_text = "Drag to move. Restore to resize; Alt bypasses snapping. Escape cancels."
 	drag_strip.tooltip_text = titlebar.tooltip_text + " Show controls with Headers or Ctrl+Shift+H."
 
 
@@ -262,13 +264,14 @@ func _resize_input(event: InputEvent, handle: Control, edges: Vector2i) -> void:
 func _begin(event: InputEvent, gesture: String, handle: Control, edges := Vector2i.ZERO) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 		focused.emit()
-		if not pinned and not compact and not collapsed:
+		if not pinned and not compact and (gesture == "move" or not collapsed):
 			_start_gesture(gesture, handle.get_global_transform_with_canvas() * event.position, edges)
 		accept_event()
 
 
+## Alternate deck drag entry point shares the header's position-only collapse policy.
 func begin_move_from_global(pointer: Vector2) -> void:
-	if not pinned and not compact and not collapsed:
+	if not pinned and not compact:
 		_start_gesture("move", pointer)
 
 

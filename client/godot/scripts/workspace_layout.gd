@@ -53,9 +53,11 @@ static func defaults() -> Dictionary:
 	return result
 
 
-static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
+## A collapsed frame supplies its header minimum without changing expanded limits.
+static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new(), minimum := Vector2.ZERO) -> Rect2:
 	var available := area.max(Vector2.ONE)
-	var extent := rect.size.clamp(minimum_size(metrics).min(available), available)
+	var floor_size := minimum_size(metrics) if minimum == Vector2.ZERO else minimum
+	var extent := rect.size.clamp(floor_size.min(available), available)
 	return Rect2(rect.position.clamp(Vector2.ZERO, available - extent), extent)
 
 
@@ -94,8 +96,8 @@ static func to_normalized(rect: Rect2, area: Vector2) -> Array:
 
 
 ## Align parallel edges and leave a small gutter between adjacent windows.
-static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new(), resize_edges := Vector2i.ONE) -> Rect2:
-	var result := clamp_resize_rect(rect, area, resize_edges, metrics) if resizing else clamp_rect(rect, area, metrics)
+static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new(), resize_edges := Vector2i.ONE, minimum := Vector2.ZERO) -> Rect2:
+	var result := clamp_resize_rect(rect, area, resize_edges, metrics) if resizing else clamp_rect(rect, area, metrics, minimum)
 	var distance := metrics.px(SNAP_DISTANCE)
 	var gap := metrics.px(GAP)
 	for axis in 2:
@@ -127,7 +129,7 @@ static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing
 					result.size[axis] += shift
 			else:
 				result.position[axis] += shift
-	return clamp_resize_rect(result, area, resize_edges, metrics) if resizing else clamp_rect(result, area, metrics)
+	return clamp_resize_rect(result, area, resize_edges, metrics) if resizing else clamp_rect(result, area, metrics, minimum)
 
 
 func create_workspace(title: String, selected: Array[String], copy_current := true) -> String:

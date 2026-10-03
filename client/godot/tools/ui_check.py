@@ -51,6 +51,7 @@ def main():
         return True
     for name in (["workspace_test", "map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test"]):
         run(name, PROJECT, "--scene", f"res://tools/{name}.tscn")
+    run("workspace_collapsed_production_test", PROJECT, "--scene", "res://tools/workspace_collapsed_production_test.tscn")
     run("role_panels_test", PROJECT, "--scene", "res://tools/role_panels_test.tscn", "--", "--profile=developer")
     for name in ([] if review_only else ["server_browser_test", "diagnostics_test", "diagnostics_bar_test", "history_test", "session_observations_test", "ui_data_test", "ui_theme_test", "map_regions_test", "ui_scale_test"]):
         run(name, PROJECT, "--script", f"res://tools/{name}.gd")
