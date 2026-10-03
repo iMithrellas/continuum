@@ -2,6 +2,7 @@
 //! Persistence and database scheduling are handled outside this module.
 
 mod definitions;
+mod production_policy;
 mod tuning;
 mod work_orders;
 pub use definitions::{
@@ -9,6 +10,7 @@ pub use definitions::{
     HaulRole, MealPolicy, ResourceKind, TileKind, WorkDefinition, WorkType,
     FACILITY_BUILD_WOOD_COST, RESOURCE_KINDS,
 };
+pub use production_policy::{ProductionPolicy, MAX_PRODUCTION_TARGET};
 pub use tuning::Tuning;
 pub use work_orders::{default_work_orders, WorkOrder};
 pub mod construction;

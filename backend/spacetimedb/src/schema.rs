@@ -224,6 +224,15 @@ pub struct WorkOrder {
     pub enabled: bool,
 }
 
+/// Public operator intent. Additive table: no row means historical unlimited
+/// production. Ticks never rewrite this row or work-order enablement.
+#[table(accessor = production_policy, public)]
+pub struct ProductionPolicy {
+    #[primary_key]
+    pub resource: ResourceKind,
+    pub target: f32,
+}
+
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Severity {
     Info,

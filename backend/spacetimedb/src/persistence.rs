@@ -19,6 +19,12 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         .map(|config| config.generation + 1)
         .unwrap_or(1);
     let seed = DEFAULT_WORLD_SEED.wrapping_add(generation as u64);
+    for policy in ctx.db.production_policy().iter() {
+        ctx.db
+            .production_policy()
+            .resource()
+            .delete(policy.resource);
+    }
     for order in ctx.db.work_order().iter() {
         ctx.db.work_order().id().delete(order.id);
     }
@@ -178,6 +184,15 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
         ecology,
         tiles,
         work_orders,
+        production_policies: ctx
+            .db
+            .production_policy()
+            .iter()
+            .map(|row| sim::ProductionPolicy {
+                resource: row.resource,
+                target: row.target,
+            })
+            .collect(),
         colonists,
         stacks,
         haul_policy: config
@@ -356,7 +371,7 @@ fn colony_row(world: &World) -> Colony {
     }
 }
 
-/// Save tick output, leaving tile settings and work-order intents unchanged.
+/// Save tick output, leaving tile settings, production policies and work-order intents unchanged.
 pub(crate) fn save_world(ctx: &ReducerContext, world: &World, config: Config) {
     save_geometry_and_tiles(ctx, world);
     for colonist in &world.colonists {

@@ -52,7 +52,10 @@ pub fn default_work_orders(tiles: &[Tile]) -> Vec<WorkOrder> {
 impl World {
     pub(super) fn active_work_order(&self, tile: &Tile, work: WorkType) -> Option<&WorkOrder> {
         let definition = work.definition()?;
-        if !tile.enabled || tile.kind != definition.facility {
+        if !tile.enabled
+            || tile.kind != definition.facility
+            || !self.production_allowed(definition.output)
+        {
             return None;
         }
         self.work_orders

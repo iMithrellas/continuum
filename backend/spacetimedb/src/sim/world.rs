@@ -89,6 +89,8 @@ pub struct World {
     pub tiles: Vec<Tile>,
     /// Standing production permissions; an empty list disables all production.
     pub work_orders: Vec<WorkOrder>,
+    /// Resource-wide standing targets; ticks never mutate this player intent.
+    pub production_policies: Vec<super::ProductionPolicy>,
     pub colonists: Vec<Colonist>,
     /// Goods produced but not yet delivered, sorted by id.
     pub stacks: Vec<ItemStack>,

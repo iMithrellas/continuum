@@ -162,6 +162,9 @@ impl World {
 
     /// Returns designation index, cell index, reachable supported work position.
     pub fn mining_job(&self, index: usize) -> Option<(usize, usize, Cell)> {
+        if !self.production_allowed(ResourceKind::Stone) {
+            return None;
+        }
         let g = self.geometry.as_ref()?;
         let body = self.colonists[index].spatial.body;
         let reachable = self.actor_reachability(index);

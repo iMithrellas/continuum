@@ -85,6 +85,7 @@ pub fn new_world() -> World {
         geometry: None,
         ecology: Default::default(),
         work_orders: default_work_orders(&tiles),
+        production_policies: Vec::new(),
         tiles,
         colonists: default_colonists(),
         stacks: Vec::new(),
