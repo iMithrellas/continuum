@@ -18,7 +18,14 @@ pub fn designate_excavation(
     priority: u8,
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
-    let world = persistence::load_world(ctx);
+    let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
+    let volume = (i64::from(rect.max_x) - i64::from(rect.min_x) + 1)
+        * (i64::from(rect.max_y) - i64::from(rect.min_y) + 1)
+        * i64::from(height);
+    if volume > 262_144 {
+        return Err("excavation volume exceeds 262144 cells".into());
+    }
+    let world = persistence::load_world_region(ctx, rect);
     let d = world
         .geometry
         .as_ref()
@@ -135,9 +142,19 @@ pub fn place_facility(
 ) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;
     let cost = FACILITY_BUILD_WOOD_COST * f32::from(width) * f32::from(depth);
+    if width == 0 || depth == 0 || u32::from(width) * u32::from(depth) > 4096 {
+        return Err("facility footprint must contain 1..=4096 cells".into());
+    }
+    let x1 = x
+        .checked_add(i32::from(width) - 1)
+        .ok_or("footprint overflow")?;
+    let y1 = y
+        .checked_add(i32::from(depth) - 1)
+        .ok_or("footprint overflow")?;
+    let rect = crate::blocks::reducer_rect(ctx, x, y, x1, y1)?;
     let wood = ctx.db.colony().id().find(0).ok_or("colony missing")?.wood;
     validate_cost(wood, cost)?;
-    let mut world = persistence::load_world(ctx);
+    let mut world = persistence::load_world_region(ctx, rect);
     let tile = planned_tile(&world, x, y, z, kind, width, depth, clearance_height)?;
     install_tile(&mut world, tile)?;
     commit_build(ctx, &world, cost)
@@ -162,7 +179,7 @@ pub fn build_tile_block_at(
     crate::blocks::validate_elevation(ctx, z)?;
     let mut colony = ctx.db.colony().id().find(0).ok_or("colony missing")?;
     construction::preflight_block(rect, kind, colony.wood)?;
-    let world = persistence::load_world(ctx);
+    let world = persistence::load_world_region(ctx, rect);
     let plan = construction::plan_block(
         world.geometry.as_ref().unwrap(),
         &world.tiles,

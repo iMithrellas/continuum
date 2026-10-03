@@ -15,12 +15,19 @@ fn install(ctx: &ReducerContext, g: &Geometry) {
             .terrain_chunk()
             .insert(chunk_row(Cell(x, y, z), chunk));
     }
+    install_materials(ctx);
+    for d in &g.designations {
+        write_designation(ctx, d);
+    }
+}
+
+pub(super) fn install_materials(ctx: &ReducerContext) {
     for (id, name, density, strength, conductivity, heat, opaque) in [
         (0, "air", 1.225, 0.0, 0.025, 1005.0, false),
         (1, "soil", 1600.0, 150_000.0, 1.5, 800.0, true),
         (2, "stone", 2700.0, 100_000_000.0, 2.5, 790.0, true),
     ] {
-        ctx.db.terrain_material().insert(TerrainMaterial {
+        let row = TerrainMaterial {
             id,
             name: name.into(),
             density,
@@ -28,10 +35,12 @@ fn install(ctx: &ReducerContext, g: &Geometry) {
             thermal_conductivity: conductivity,
             specific_heat_capacity: heat,
             opaque,
-        });
-    }
-    for d in &g.designations {
-        write_designation(ctx, d);
+        };
+        if ctx.db.terrain_material().id().find(id).is_some() {
+            ctx.db.terrain_material().id().update(row);
+        } else {
+            ctx.db.terrain_material().insert(row);
+        }
     }
 }
 
@@ -43,7 +52,8 @@ fn designation_write_plan(g: &Geometry) -> impl Iterator<Item = (&Designation, b
     })
 }
 
-pub(super) fn reset(ctx: &ReducerContext) {
+#[allow(dead_code)]
+pub(super) fn reset(ctx: &ReducerContext, _seed: u64) {
     for row in ctx.db.world_geometry().iter() {
         ctx.db.world_geometry().id().delete(row.id);
     }
@@ -65,23 +75,51 @@ pub(super) fn reset(ctx: &ReducerContext) {
 }
 
 pub(crate) fn load(ctx: &ReducerContext) -> Geometry {
-    load_with_jobs(ctx, true)
+    load_with_jobs(ctx, true, None)
 }
 
 /// Placement reads only material authority; do not deserialize unrelated job vectors.
-pub(crate) fn load_for_placement(ctx: &ReducerContext) -> Geometry {
-    load_with_jobs(ctx, false)
+pub(crate) fn load_for_placement(ctx: &ReducerContext, rect: crate::blocks::Rect) -> Geometry {
+    load_with_jobs(ctx, false, Some(rect))
 }
 
-fn load_with_jobs(ctx: &ReducerContext, include_jobs: bool) -> Geometry {
+pub(crate) fn load_region(ctx: &ReducerContext, rect: crate::blocks::Rect) -> Geometry {
+    load_with_jobs(ctx, true, Some(rect))
+}
+
+fn load_with_jobs(
+    ctx: &ReducerContext,
+    include_jobs: bool,
+    region: Option<crate::blocks::Rect>,
+) -> Geometry {
     if ctx.db.world_geometry().id().find(0).is_none() {
         install(ctx, &Geometry::flat());
     }
     let row = ctx.db.world_geometry().id().find(0).unwrap();
-    let chunks = ctx
-        .db
-        .terrain_chunk()
-        .iter()
+    let coverage = region.map(|r| {
+        (
+            r.min_x.div_euclid(16) * 16,
+            r.min_y.div_euclid(16) * 16,
+            ((r.max_x.div_euclid(16) + 1) * 16 - 1).min(row.width - 1),
+            ((r.max_y.div_euclid(16) + 1) * 16 - 1).min(row.height - 1),
+        )
+    });
+    let source: Vec<_> = if let Some((x0, y0, x1, y1)) = coverage {
+        let mut out = Vec::new();
+        for x in x0 / 16..=x1 / 16 {
+            out.extend(
+                ctx.db
+                    .terrain_chunk()
+                    .by_xyz()
+                    .filter((x, y0 / 16..=y1 / 16)),
+            );
+        }
+        out
+    } else {
+        ctx.db.terrain_chunk().iter().collect()
+    };
+    let chunks = source
+        .into_iter()
         .map(|c| {
             assert_eq!(
                 c.materials.len(),
@@ -116,7 +154,17 @@ fn load_with_jobs(ctx: &ReducerContext, include_jobs: bool) -> Geometry {
         min_z: row.min_z,
         max_z: row.max_z,
         chunks,
+        columns: crate::persistence::large_world::load_columns_region(ctx, coverage),
+        coverage,
+        next_chunk_id: ctx
+            .db
+            .terrain_override_allocator()
+            .id()
+            .find(0)
+            .map(|r| r.next_id)
+            .unwrap_or(1),
         changed: BTreeSet::new(),
+        changed_columns: BTreeSet::new(),
         designations,
         nav_epoch: 0,
         dirty_jobs: BTreeSet::new(),
@@ -169,7 +217,25 @@ pub(crate) fn write_designation(ctx: &ReducerContext, d: &Designation) -> u64 {
 pub(super) fn save(ctx: &ReducerContext, g: &Geometry) {
     for &key in &g.changed {
         let chunk = &g.chunks[&key];
-        ctx.db.terrain_chunk().id().update(chunk_row(key, chunk));
+        let row = chunk_row(key, chunk);
+        if ctx.db.terrain_chunk().id().find(chunk.id).is_some() {
+            ctx.db.terrain_chunk().id().update(row);
+        } else {
+            ctx.db.terrain_chunk().insert(row);
+        }
+    }
+    if g.columns.is_some() {
+        let mut allocator = ctx
+            .db
+            .terrain_override_allocator()
+            .id()
+            .find(0)
+            .expect("override allocator missing");
+        if allocator.next_id < g.next_chunk_id {
+            allocator.next_id = g.next_chunk_id;
+            ctx.db.terrain_override_allocator().id().update(allocator);
+        }
+        super::large_world::refresh_overviews(ctx, g);
     }
     for (d, public, private) in designation_write_plan(g) {
         if public {

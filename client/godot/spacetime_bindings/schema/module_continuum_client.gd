@@ -31,9 +31,13 @@ const ProductionPolicy = Types.ProductionPolicy
 const SpeedControl = Types.SpeedControl
 const Terrain = Types.Terrain
 const TerrainChunk = Types.TerrainChunk
+const TerrainColumnChunk = Types.TerrainColumnChunk
 const TerrainMaterial = Types.TerrainMaterial
+const TerrainOverviewChunk = Types.TerrainOverviewChunk
 const Tile = Types.Tile
 const WorkOrder = Types.WorkOrder
+const WorldGeneration = Types.WorldGeneration
+const GenerationPhase = Types.GenerationPhase
 const WorldGeometry = Types.WorldGeometry
 const WorldSeed = Types.WorldSeed
 

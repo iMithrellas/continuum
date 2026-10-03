@@ -26,6 +26,9 @@ pub(crate) fn authorize(ctx: &ReducerContext, required: RequiredRole) -> Result<
     let role = effective_role(role, ctx.sender(), ctx.database_identity());
 
     if role_allows(role, required) {
+        if matches!(required, RequiredRole::Operator) {
+            crate::persistence::large_world::require_ready(ctx)?;
+        }
         Ok(role)
     } else {
         Err("caller lacks the required colony role".to_string())

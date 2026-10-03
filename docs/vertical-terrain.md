@@ -12,13 +12,17 @@ the upper surface of a solid block beneath empty space, not a separate block
 type. Excavating a supporting block changes the geometry and therefore changes
 which surfaces exist.
 
-Fresh/reset worlds span 128 × 128 cells (64 × 64 m), with a 24 × 24 starter
-colony and the finite hillside fixture. Elevation remains `z = -16 .. 15`.
+Fresh worlds are fully generated on the server before play and span 2048 × 2048
+cells (1024 × 1024 m), with a centered 24 × 24 starter colony, protected 32 × 32
+apron and finite hillside fixture. Elevation remains `z = -16 .. 15`. Initial
+authority uses compact 32² column chunks; excavation uses full 16³ overrides.
+See [World Generation](world-generation.md) for phases, tables and scaling limits.
 Publishing an upgrade preserves initialized dimensions; old missing-geometry
 colonies initialize as flat 24 × 24 worlds. The admin-only `expand_world(width,
 height)` reducer explicitly grows the horizontal bounds up to 256 cells per
-axis, preserving all existing terrain and colony state. New land is flat soil
-over stone with air above, not a procedural landscape generator.
+axis in legacy worlds, preserving all existing terrain and colony state. Legacy
+new land is flat soil over stone with air above. Compact worlds require explicit
+regeneration and cannot use legacy expansion.
 
 Colonists default to a 1 × 1 cell footprint and four clear cells (2 m) of
 standing height. Facility footprints and clearance volumes are integer cell

@@ -14,6 +14,8 @@ log = "0.4"
 [features]
 # Only owned, pure goal proposals use threads; WASM always uses the serial executor.
 native-parallel-intents = []
+# Private fault-injection artifact only; never enabled for deployment/bindings.
+generation-test-probes = []
 
 [profile.release]
 opt-level = "z"

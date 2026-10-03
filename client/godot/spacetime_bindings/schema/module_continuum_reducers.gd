@@ -89,6 +89,11 @@ func diagnostic_echo(_nonce: int) -> SpacetimeDBReducerCall:
 func expand_world(width: int, height: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('expand_world', [width, height], [&'I32', &'I32'])
 
+## 0. width: int [br]
+## 1. height: int [br]
+func expand_world_varied(width: int, height: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('expand_world_varied', [width, height], [&'I32', &'I32'])
+
 ## 0. identity: PackedByteArray [br]
 func grant_admin(identity: PackedByteArray) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('grant_admin', [identity], [&'__identity__'])
@@ -114,6 +119,16 @@ func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 
 func reset_colony() -> SpacetimeDBReducerCall:
 	return _client.call_reducer('reset_colony', [], [])
+
+## 0. width: int [br]
+## 1. height: int [br]
+## 2. seed: int [br]
+func reset_world_large(width: int, height: int, seed: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('reset_world_large', [width, height, seed], [&'I32', &'I32', &'U64'])
+
+
+func retry_world_generation() -> SpacetimeDBReducerCall:
+	return _client.call_reducer('retry_world_generation', [], [])
 
 ## 0. start_x: int [br]
 ## 1. start_y: int [br]

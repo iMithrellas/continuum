@@ -5,6 +5,9 @@ use crate::sim::{
 };
 use crate::tick;
 use spacetimedb::{table, Identity};
+#[path = "schema/world_generation.rs"]
+mod generation;
+pub use generation::*;
 
 #[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Role {
@@ -197,7 +200,8 @@ pub struct WorldGeometry {
     pub max_z: i32,
 }
 
-#[table(accessor = terrain_chunk, public)]
+#[table(accessor = terrain_chunk, public,
+    index(accessor = by_xyz, btree(columns = [chunk_x, chunk_y, chunk_z])))]
 pub struct TerrainChunk {
     #[primary_key]
     pub id: u64,

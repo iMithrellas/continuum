@@ -20,7 +20,7 @@ pub fn designate_zone_at(
     let rect = crate::blocks::reducer_rect(ctx, x0, y0, x1, y1)?;
     crate::blocks::validate_elevation(ctx, z)?;
     preflight_zone(rect, kind)?;
-    let geometry = persistence::load_placement_geometry(ctx);
+    let geometry = persistence::load_placement_geometry(ctx, rect);
     let tiles: Vec<_> = ctx.db.tile().iter().map(persistence::tile_state).collect();
     let plan = plan_zone(&geometry, &tiles, rect, z, kind)?;
     persistence::save_tiles(ctx, &plan);

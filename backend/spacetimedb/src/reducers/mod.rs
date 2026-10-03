@@ -6,6 +6,8 @@ mod production_policy;
 mod tiles;
 pub(crate) mod vertical;
 mod work_orders;
+mod world_generation;
+mod world_growth;
 
 pub use admin::*;
 pub use buildings::*;
@@ -15,3 +17,5 @@ pub use production_policy::*;
 pub use tiles::*;
 pub use vertical::*;
 pub use work_orders::*;
+pub use world_generation::*;
+pub use world_growth::*;

@@ -20,7 +20,7 @@ pub fn construct_room(
     crate::blocks::validate_elevation(ctx, z)?;
     let mut colony = ctx.db.colony().id().find(0).ok_or("colony missing")?;
     preflight_room(rect, clearance_height, colony.wood)?;
-    let geometry = persistence::load_placement_geometry(ctx);
+    let geometry = persistence::load_placement_geometry(ctx, rect);
     let (room, cost) = plan_room(
         &geometry,
         &persistence::load_buildings(ctx),

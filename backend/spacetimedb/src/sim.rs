@@ -21,6 +21,7 @@ pub mod geometry;
 pub mod navigation;
 pub mod terrain;
 mod vertical;
+pub mod world_generation;
 
 /// Historical starter/flat fixture extent, not authoritative live world bounds.
 pub const GRID_W: i32 = 24;

@@ -1,5 +1,7 @@
 //! Authoritative half-metre material cells; navigation is a derived query.
+use super::world_generation::ColumnChunk;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::rc::Rc;
 
 pub const EDGE: i32 = 16;
 pub const CELL_EDGE_METERS: f32 = 0.5;
@@ -8,6 +10,7 @@ pub const DEFAULT_EXCAVATION_HEIGHT: u16 = 6;
 pub const AIR: u16 = 0;
 pub const SOIL: u16 = 1;
 pub const STONE: u16 = 2;
+/// Seed-fixture extent, not the compact production-world default.
 pub const DEFAULT_WORLD_WIDTH: i32 = 128;
 pub const DEFAULT_WORLD_HEIGHT: i32 = 128;
 pub const MAX_WORLD_EDGE: i32 = 256;
@@ -101,7 +104,13 @@ pub struct Geometry {
     pub min_z: i32,
     pub max_z: i32,
     pub chunks: BTreeMap<Cell, Chunk>,
+    /// Complete persisted compact baseline; None retains legacy unknown semantics.
+    pub columns: Option<Rc<BTreeMap<Cell, ColumnChunk>>>,
+    /// Exact overlay-loaded XY coverage for spatial reducers; ticks use None/full.
+    pub(crate) coverage: Option<(i32, i32, i32, i32)>,
+    pub(crate) next_chunk_id: u64,
     pub changed: BTreeSet<Cell>,
+    pub(crate) changed_columns: BTreeSet<(i32, i32)>,
     pub designations: Vec<Designation>,
     /// Transaction-local invalidation, NOT the once-per-chunk public revision.
     pub(crate) nav_epoch: u64,
@@ -118,6 +127,30 @@ pub fn chunk_address(c: Cell) -> (Cell, usize) {
 }
 
 impl Geometry {
+    pub fn compact(
+        width: i32,
+        height: i32,
+        columns: BTreeMap<Cell, ColumnChunk>,
+        next_chunk_id: u64,
+    ) -> Result<Self, String> {
+        super::world_generation::validate_large_dimensions(width, height)?;
+        Ok(Self {
+            width,
+            height,
+            min_z: -16,
+            max_z: 15,
+            chunks: BTreeMap::new(),
+            columns: Some(Rc::new(columns)),
+            coverage: None,
+            next_chunk_id,
+            changed: BTreeSet::new(),
+            changed_columns: BTreeSet::new(),
+            designations: Vec::new(),
+            nav_epoch: 0,
+            dirty_jobs: BTreeSet::new(),
+            dirty_designations: BTreeSet::new(),
+        })
+    }
     /// Historical 24x24 additive migration, deliberately NOT the fresh default.
     /// Every old z=0 position retains solid support; upgrades never enlarge land.
     pub fn flat() -> Self {
@@ -133,7 +166,11 @@ impl Geometry {
             min_z: -16,
             max_z: 15,
             chunks: BTreeMap::new(),
+            columns: None,
+            coverage: None,
+            next_chunk_id: 1,
             changed: BTreeSet::new(),
+            changed_columns: BTreeSet::new(),
             designations: Vec::new(),
             nav_epoch: 0,
             dirty_jobs: BTreeSet::new(),
@@ -159,7 +196,7 @@ impl Geometry {
         Ok(g)
     }
 
-    /// Fresh worlds get a finite six-cell hillside, away from seeded facilities.
+    /// Historical explicit fixture; production uses staged compact generation.
     pub fn seeded() -> Self {
         let mut g = Self::flat_with_dimensions(DEFAULT_WORLD_WIDTH, DEFAULT_WORLD_HEIGHT).unwrap();
         for z in 0..6 {
@@ -188,11 +225,23 @@ impl Geometry {
         if !self.contains(c) {
             return None;
         }
+        if self
+            .coverage
+            .is_some_and(|(x0, y0, x1, y1)| c.0 < x0 || c.0 > x1 || c.1 < y0 || c.1 > y1)
+        {
+            return None;
+        }
         let (key, i) = chunk_address(c);
         self.chunks
             .get(&key)
             .and_then(|chunk| chunk.materials.get(i))
             .copied()
+            .or_else(|| {
+                self.columns
+                    .as_ref()?
+                    .get(&Cell(c.0.div_euclid(32), c.1.div_euclid(32), 0))?
+                    .material(c)
+            })
     }
     pub fn solid(&self, c: Cell) -> bool {
         self.material(c).is_some_and(|m| m != AIR)
@@ -202,13 +251,42 @@ impl Geometry {
             return false;
         }
         let (key, i) = chunk_address(c);
-        let Some(chunk) = self.chunks.get_mut(&key) else {
-            return false;
-        };
+        if !self.chunks.contains_key(&key) {
+            if self.material(c).is_none_or(|m| m == material) || self.next_chunk_id == u64::MAX {
+                return false;
+            }
+            let mut materials = Vec::with_capacity(4096);
+            for z in 0..EDGE {
+                for y in 0..EDGE {
+                    for x in 0..EDGE {
+                        let p = Cell(key.0 * EDGE + x, key.1 * EDGE + y, key.2 * EDGE + z);
+                        materials.push(if self.contains(p) {
+                            let Some(m) = self.material(p) else {
+                                return false;
+                            };
+                            m
+                        } else {
+                            AIR
+                        });
+                    }
+                }
+            }
+            self.chunks.insert(
+                key,
+                Chunk {
+                    id: self.next_chunk_id,
+                    materials,
+                    revision: 0,
+                },
+            );
+            self.next_chunk_id += 1;
+        }
+        let chunk = self.chunks.get_mut(&key).unwrap();
         if chunk.materials[i] == material {
             return false;
         }
         chunk.materials[i] = material;
+        self.changed_columns.insert((c.0, c.1));
         self.nav_epoch = self
             .nav_epoch
             .checked_add(1)
@@ -326,6 +404,13 @@ impl Geometry {
         let top = bottom_z
             .checked_add(i32::from(height) - 1)
             .ok_or("height overflow")?;
+        let cells = (i64::from(x1) - i64::from(x0) + 1)
+            .checked_mul(i64::from(y1) - i64::from(y0) + 1)
+            .and_then(|area| area.checked_mul(i64::from(height)))
+            .ok_or("excavation volume overflow")?;
+        if cells > 262_144 {
+            return Err("excavation volume exceeds 262144 cells; designate smaller regions".into());
+        }
         if !self.contains(Cell(x0, y0, bottom_z)) || !self.contains(Cell(x1, y1, top)) {
             return Err("excavation outside world bounds".into());
         }

@@ -10,7 +10,8 @@ RUNTIME="${SPACETIME_RUNTIME:-$NATIVE/spacetimedb-standalone}"
     echo 'Set SPACETIME_CLI and SPACETIME_RUNTIME to the SpacetimeDB 2.10 executables.' >&2
     exit 1
 }
-TMP="$(mktemp -d /tmp/opencode/continuum-terrain-test.XXXXXX)"
+mkdir -p "$ROOT/backend/spacetimedb/target"
+TMP="$(mktemp -d "$ROOT/backend/spacetimedb/target/continuum-terrain-test.XXXXXX")"
 PID=""
 cleanup() {
     if [[ -n "$PID" ]]; then

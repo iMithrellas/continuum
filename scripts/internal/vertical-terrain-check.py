@@ -7,6 +7,7 @@ import math
 import subprocess
 import time
 import urllib.request
+from world_ready import wait_world_ready
 
 HOST = "http://127.0.0.1:" + os.environ["TERRAIN_TEST_PORT"]
 DB = "continuum-terrain-test"
@@ -77,9 +78,16 @@ if baseline:
             "SELECT food, wood, stone, meat FROM colony",
             "SELECT * FROM work_order",
             "SELECT * FROM world_seed",
+            "SELECT * FROM world_geometry",
         )
     }
     cli("publish", "--yes", "--delete-data=never", "-s", HOST, "-b", WASM, DB)
+
+wait_world_ready(lambda sql, budget: cli("sql", "--format", "json", "-s", HOST, DB, sql),
+                 timeout=300,report=lambda text: print("TERRAIN_WORLD_READY",text,flush=True))
+generation_rows=rows("SELECT * FROM world_generation")
+compact=bool(generation_rows)
+starter=(generation_rows[0]["starter_x"],generation_rows[0]["starter_y"]) if compact else (0,0)
 
 
 def initialized():
@@ -92,7 +100,8 @@ def initialized():
     )
     chunk_rows = rows("SELECT * FROM terrain_chunk")
     bodies = rows("SELECT * FROM colonist")
-    return (len(chunk_rows) == expected
+    column_count=len(rows("SELECT id FROM terrain_column_chunk")) if compact else 0
+    return ((column_count==math.ceil(bounds["width"]/32)*math.ceil(bounds["height"]/32) if compact else len(chunk_rows)==expected)
             and all(len(chunk["materials"]) == 4096 for chunk in chunk_rows)
             and {0, 1, 2} <= {material["id"] for material in rows("SELECT * FROM terrain_material")}
             and len(bodies) == 8
@@ -106,7 +115,8 @@ if baseline:
     print("TERRAIN_MIGRATION_PASS")
 
 geometry = rows("SELECT * FROM world_geometry")[0]
-assert geometry["width"] == geometry["height"] == (24 if baseline else 128)
+expected_bounds=snapshots["SELECT * FROM world_geometry"][0] if baseline else {"width":2048,"height":2048}
+assert geometry["width"]==expected_bounds["width"] and geometry["height"]==expected_bounds["height"]
 assert geometry["min_z"] == -16 and geometry["max_z"] >= 15
 materials = {row["id"]: row for row in rows("SELECT * FROM terrain_material")}
 assert {0, 1, 2} <= materials.keys()
@@ -127,7 +137,9 @@ def chunks():
 
 
 terrain = chunks()
-assert any(key[2] < 0 for key in terrain)
+if not compact:
+    assert any(key[2] < 0 for key in terrain)
+column_cache={}
 
 
 def material_at(position, source=None):
@@ -137,7 +149,18 @@ def material_at(position, source=None):
         return None
     chunk = (terrain if source is None else source).get((x // 16, y // 16, z // 16))
     if chunk is None:
-        return None
+        if not compact:
+            return None
+        key=(x//32,y//32)
+        if key not in column_cache:
+            row=rows(f"SELECT * FROM terrain_column_chunk WHERE id = {(key[1]<<32)|key[0]}")
+            assert len(row)==1,"authoritative compact column missing"
+            c=row[0]
+            c["soil_depth"]=list(bytes.fromhex(c["soil_depth"])) if isinstance(c["soil_depth"],str) else c["soil_depth"]
+            column_cache[key]=c
+        c=column_cache[key]
+        i=x%32+32*(y%32)
+        return 0 if z>=c["base_z"][i] else (1 if z>=c["base_z"][i]-c["soil_depth"][i] else 2)
     return chunk["materials"][(x % 16) + 16 * ((y % 16) + 16 * (z % 16))]
 
 
@@ -187,7 +210,7 @@ call("configure_colonist_body", body_id, 2, 1, 6, 1, viewer=True)
 configured = next(body for body in rows("SELECT * FROM colonist") if body["id"] == body_id)
 assert configured["body_width"] == 2 and configured["clearance_height"] == 6
 call("configure_colonist_body", body_id, 1, 1, 4, 1, viewer=True)
-call("designate_excavation", 0, 0, 0, 0, -1, 1, 1, viewer=True)
+call("designate_excavation", starter[0], starter[1], starter[0], starter[1], -1, 1, 1, viewer=True)
 operator_job = max(rows("SELECT * FROM excavation_designation"), key=lambda row: row["id"])
 call("set_excavation_enabled", operator_job["id"], False, viewer=True)
 call("set_excavation_enabled", operator_job["id"], True, viewer=True)
@@ -213,6 +236,10 @@ while queue:
     for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
         for dz in range(-max_step, max_step + 1):
             neighbour = (x + dx, y + dy, z + dz)
+            # A local reference path proves this fixture's accessibility; no
+            # claim of global unreachability is made outside the protected apron.
+            if compact and not (starter[0]-4<=neighbour[0]<=starter[0]+27 and starter[1]-4<=neighbour[1]<=starter[1]+27):
+                continue
             swept = can_stand(neighbour)
             if dz > 0:
                 swept = swept and all(material_at((x, y, z + layer)) == 0
@@ -300,8 +327,8 @@ def facility_site(px, py):
                    and body["z"] < 7 for body in placement_bodies)
 
 
-site = next((px, py) for px in range(geometry["width"] - 1)
-            for py in range(geometry["height"] - 1) if facility_site(px, py))
+site = next((px, py) for px in range(starter[0],starter[0]+23)
+            for py in range(starter[1],starter[1]+23) if facility_site(px, py))
 wood_before = rows("SELECT wood FROM colony")[0]["wood"]
 call("place_facility", *site, 0, '{"storage":{}}', 2, 2, 7, viewer=True)
 built = next(tile for tile in rows("SELECT * FROM tile")

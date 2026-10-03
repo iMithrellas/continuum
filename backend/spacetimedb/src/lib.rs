@@ -59,7 +59,7 @@ pub fn init(ctx: &ReducerContext) -> Result<(), String> {
         ctx,
         Severity::Info,
         format!(
-            "Colony founded by admin {}. Simulation running.",
+            "World generation started by admin {}. Gameplay waits for complete terrain.",
             identity_hex(owner)
         ),
     );
@@ -69,9 +69,15 @@ pub fn init(ctx: &ReducerContext) -> Result<(), String> {
 #[reducer]
 pub fn tick(ctx: &ReducerContext, _arg: TickSchedule) -> Result<(), String> {
     authorize(ctx, RequiredRole::Scheduler)?;
+    if !persistence::large_world::is_ready(ctx) {
+        return Ok(());
+    }
     let Some(config) = ctx.db.config().id().find(0) else {
         return Ok(());
     };
+    if config.time_scale == 0.0 {
+        return Ok(());
+    }
     let tuning = Tuning::default();
     let mut world = load_world(ctx);
     let dt_real_seconds = TICK_INTERVAL_MICROS as f64 / 1_000_000.0;

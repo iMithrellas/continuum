@@ -11,6 +11,17 @@ use spacetimedb::{reducer, Identity, ReducerContext, Table};
 pub fn set_time_scale(ctx: &ReducerContext, time_scale: f64) -> Result<(), String> {
     authorize(ctx, RequiredRole::Admin)?;
     speed_policy::validate_time_scale(time_scale)?;
+    if !crate::persistence::large_world::is_ready(ctx) {
+        let mut control = ctx
+            .db
+            .world_generation_control()
+            .id()
+            .find(0)
+            .ok_or("colony is not initialised")?;
+        control.requested_time_scale = time_scale;
+        ctx.db.world_generation_control().id().update(control);
+        return Ok(());
+    }
     let Some(config) = ctx.db.config().id().find(0) else {
         return Err("colony is not initialised".into());
     };
@@ -122,6 +133,7 @@ pub fn reset_colony(ctx: &ReducerContext) -> Result<(), String> {
 #[reducer]
 pub fn expand_world(ctx: &ReducerContext, width: i32, height: i32) -> Result<(), String> {
     authorize(ctx, RequiredRole::Admin)?;
+    crate::persistence::large_world::require_legacy_ready(ctx)?;
     crate::persistence::expand_world(ctx, width, height)
 }
 

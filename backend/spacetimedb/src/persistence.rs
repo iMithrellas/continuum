@@ -4,6 +4,7 @@ use crate::schema::*;
 use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
 mod geometry;
+pub(crate) mod large_world;
 pub(crate) use geometry::expand as expand_world;
 pub(crate) use geometry::load_for_placement as load_placement_geometry;
 pub(crate) use geometry::write_designation as insert_designation;
@@ -12,14 +13,25 @@ const DEFAULT_WORLD_SEED: u64 = 0x6c6f_6e67_7365_6564;
 
 /// Wipe colony state and recreate it from the default layout.
 pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
-    let generation = ctx
-        .db
-        .config()
-        .id()
-        .find(0)
-        .map(|config| config.generation + 1)
-        .unwrap_or(1);
-    let seed = DEFAULT_WORLD_SEED.wrapping_add(generation as u64);
+    large_world::begin(
+        ctx,
+        sim::world_generation::LARGE_WORLD_EDGE,
+        sim::world_generation::LARGE_WORLD_EDGE,
+        DEFAULT_WORLD_SEED.wrapping_add(
+            ctx.db
+                .config()
+                .id()
+                .find(0)
+                .map(|c| u64::from(c.generation) + 1)
+                .unwrap_or(1),
+        ),
+        time_scale,
+    )
+    .expect("valid default generation dimensions");
+}
+
+pub(super) fn clear_colony(ctx: &ReducerContext) {
+    ctx.db.colony().id().delete(0);
     for property in ctx.db.building_thermal_property().iter() {
         ctx.db
             .building_thermal_property()
@@ -56,9 +68,23 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
     for event in ctx.db.event_log().iter() {
         ctx.db.event_log().id().delete(event.id);
     }
+}
 
-    geometry::reset(ctx);
-    let world = sim::new_world();
+pub(super) fn found_colony(ctx: &ReducerContext, time_scale: f64, seed: u64, origin: (i32, i32)) {
+    let generation = ctx.db.config().id().find(0).unwrap().generation;
+    let mut world = sim::new_world();
+    for tile in &mut world.tiles {
+        tile.x += origin.0;
+        tile.y += origin.1;
+    }
+    for c in &mut world.colonists {
+        c.position.x += origin.0;
+        c.position.y += origin.1;
+        c.movement.target.x += origin.0;
+        c.movement.target.y += origin.1;
+        c.spatial.next.0 += origin.0;
+        c.spatial.next.1 += origin.1;
+    }
     for tile in &world.tiles {
         ctx.db.tile().insert(Tile {
             id: tile.id,
@@ -87,7 +113,8 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
 
     upsert_world_seed(ctx, seed);
     for tile in &world.tiles {
-        let fields = sim::terrain::sample(seed, tile.x, tile.y);
+        let fields =
+            large_world::ecology_at(ctx, tile.x, tile.y).expect("complete generated ecology");
         ctx.db.terrain().insert(Terrain {
             tile_id: tile.id,
             soil_fertility: fields.soil_fertility,
@@ -145,8 +172,18 @@ fn upsert_world_seed(ctx: &ReducerContext, seed: u64) {
 }
 
 pub(crate) fn load_world(ctx: &ReducerContext) -> World {
+    load_world_with_region(ctx, None)
+}
+pub(crate) fn load_world_region(ctx: &ReducerContext, rect: crate::blocks::Rect) -> World {
+    load_world_with_region(ctx, Some(rect))
+}
+/// Preserves empty operator-intent tables and publishes navigation repairs even
+/// while paused. A regional load leaves navigation repair to the full-world load.
+fn load_world_with_region(ctx: &ReducerContext, region: Option<crate::blocks::Rect>) -> World {
     ensure_terrain(ctx);
-    let geometry = geometry::load(ctx);
+    let geometry = region
+        .map(|r| geometry::load_region(ctx, r))
+        .unwrap_or_else(|| geometry::load(ctx));
     let mut tiles: Vec<sim::Tile> = ctx.db.tile().iter().map(tile_state).collect();
     tiles.sort_by_key(|tile| tile.id);
     let ecology = ctx
@@ -233,6 +270,9 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
             .map(|colony| colony.smoothed_productivity)
             .unwrap_or(90.0),
     };
+    if region.is_some() {
+        return world;
+    }
     let saved_hops: Vec<_> = world
         .colonists
         .iter()
@@ -295,7 +335,11 @@ fn ensure_terrain(ctx: &ReducerContext) -> u64 {
         });
     for tile in ctx.db.tile().iter() {
         if ctx.db.terrain().tile_id().find(tile.id).is_none() {
-            let fields = sim::terrain::sample(seed, tile.x, tile.y);
+            let fields = if ctx.db.world_generation().id().find(0).is_some() {
+                large_world::ecology_at(ctx, tile.x, tile.y).expect("authoritative ecology missing")
+            } else {
+                sim::terrain::sample(seed, tile.x, tile.y)
+            };
             ctx.db.terrain().insert(Terrain {
                 tile_id: tile.id,
                 soil_fertility: fields.soil_fertility,
