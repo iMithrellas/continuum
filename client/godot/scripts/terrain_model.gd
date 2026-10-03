@@ -6,6 +6,8 @@ const EDGE := 16
 const METRES_PER_LAYER := 0.5
 var width := 24
 var height := 24
+var min_x := 0
+var min_y := 0
 var min_z := -16
 var max_z := 15
 var cut := 0
@@ -41,7 +43,7 @@ func selection_valid(selection: Dictionary) -> bool:
 	if selection.is_empty():
 		return false
 	for xy in selection.cells:
-		if surface_at(xy) != selection.cells[xy]:
+		if not bounds().has_point(xy) or surface_at(xy) != selection.cells[xy]:
 			return false
 	return true
 
@@ -79,10 +81,12 @@ static func movement_position(row: Variant) -> Vector3:
 func sync(geometry: Variant, chunk_rows: Array, material_rows: Array) -> bool:
 	width = int(field(geometry, "width", 24))
 	height = int(field(geometry, "height", 24))
+	min_x = int(field(geometry, "min_x", 0))
+	min_y = int(field(geometry, "min_y", 0))
 	min_z = int(field(geometry, "min_z", -16))
 	max_z = int(field(geometry, "max_z", 15))
 	cut = clampi(cut, min_z, max_z)
-	var parts: Array[String] = [str(width), str(height), str(min_z), str(max_z)]
+	var parts: Array[String] = [str(width), str(height), str(min_x), str(min_y), str(min_z), str(max_z)]
 	chunks.clear()
 	for row in chunk_rows:
 		var coordinate := Vector3i(field(row, "chunk_x", 0), field(row, "chunk_y", 0), field(row, "chunk_z", 0))
@@ -111,8 +115,11 @@ func set_cut(layer: int) -> bool:
 	rebuild()
 	return true
 
+func bounds() -> Rect2i:
+	return Rect2i(min_x, min_y, width, height)
+
 func material_at(cell: Vector3i) -> int:
-	if cell.x < 0 or cell.y < 0 or cell.x >= width or cell.y >= height or cell.z < min_z or cell.z > max_z:
+	if not bounds().has_point(Vector2i(cell.x, cell.y)) or cell.z < min_z or cell.z > max_z:
 		return -1
 	var chunk := Vector3i(floori(cell.x / float(EDGE)), floori(cell.y / float(EDGE)), floori(cell.z / float(EDGE)))
 	var local := cell - chunk * EDGE
@@ -131,11 +138,11 @@ func rebuild() -> void:
 	surfaces.clear()
 	_exposed_bottom.clear()
 	revision += 1
-	for y in height:
-		for x in width:
+	for y in range(min_y, min_y + height):
+		for x in range(min_x, min_x + width):
 			var xy := Vector2i(x, y)
-			var column_chunk := Vector3i(x / EDGE, y / EDGE, 0)
-			var column_index := x % EDGE + EDGE * (y % EDGE)
+			var column_chunk := Vector3i(floori(x / float(EDGE)), floori(y / float(EDGE)), 0)
+			var column_index := posmod(x, EDGE) + EDGE * posmod(y, EDGE)
 			var chunk_z := 2147483647
 			var values: Variant = []
 			var bottom := min_z
@@ -178,7 +185,7 @@ func entity_visible(row: Variant) -> bool:
 	var d := maxi(1, int(field(row, "depth", field(row, "body_depth", 1))))
 	for yy in range(y, y + d):
 		for xx in range(x, x + w):
-			if xx < 0 or yy < 0 or xx >= width or yy >= height:
+			if not bounds().has_point(Vector2i(xx, yy)):
 				return false
 			if base < int(_exposed_bottom.get(Vector2i(xx, yy), cut + 1)):
 				return false
@@ -189,7 +196,7 @@ func position_visible(position: Vector3, body_width := 1, body_depth := 1) -> bo
 		return false
 	for y in range(floori(position.y), ceili(position.y + body_depth)):
 		for x in range(floori(position.x), ceili(position.x + body_width)):
-			if x < 0 or y < 0 or x >= width or y >= height or floori(position.z) < int(_exposed_bottom.get(Vector2i(x, y), cut + 1)):
+			if not bounds().has_point(Vector2i(x, y)) or floori(position.z) < int(_exposed_bottom.get(Vector2i(x, y), cut + 1)):
 				return false
 	return true
 

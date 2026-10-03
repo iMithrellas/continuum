@@ -268,6 +268,9 @@ func _ready() -> void:
 	map.excavation_requested.connect(_on_excavation_requested)
 	map.facility_requested.connect(_on_facility_requested)
 	map.cell_selected.connect(func(cell: Vector3i) -> void:
+		if map.layered and map.terrain_model.surface_at(Vector2i(cell.x, cell.y)) == null:
+			_cell_label.text = "No known surface at (%d,%d); cut z=%d" % [cell.x, cell.y, map.terrain_model.cut]
+			return
 		var material_id := map.terrain_model.material_at(cell)
 		_cell_label.text = "%s (%d,%d,%d); base z=%d" % [
 			LayeredTerrainModel.field(map.terrain_model.materials.get(material_id), "name", "Surface"),
@@ -284,6 +287,7 @@ func _ready() -> void:
 		_selected_rect = Rect2i()
 		_selected_tile_id = -1
 		_selected_surface = {}
+		_cell_label.text = "Select a visible surface"
 		_dirty = true)
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
@@ -1023,11 +1027,12 @@ func _on_tile_selected(tile_id: int) -> void:
 
 
 func _on_rectangle_selected(rect: Rect2i) -> void:
-	_selected_rect = rect
 	map.set_selected_rect(rect)
-	_selected_surface = map.terrain_model.capture_selection(rect) if map.layered else {}
-	var tile: ContinuumTile = _tile_at(rect.position)
+	_selected_rect = map.selected_rect()
+	_selected_surface = map.terrain_model.capture_selection(_selected_rect) if map.layered else {}
+	var tile: ContinuumTile = _tile_at(_selected_rect.position) if _selected_rect.has_area() else null
 	_selected_tile_id = tile.id if tile != null else -1
+	map.selected_tile_id = _selected_tile_id
 	_refresh_controls()
 	_dirty = true
 	if not workspace.map_only and not workspace.windows["inspector"].visible:
@@ -2553,7 +2558,8 @@ func _refresh_controls() -> void:
 	if map.layered and (not map.terrain_model.selection_valid(_selected_surface) or _selected_surface.get("base") == null):
 		block_busy = true
 	for key: String in ["enabled_true", "enabled_false"]:
-		_block_controls[key].disabled = block_busy
+		_block_controls[key].disabled = block_busy or occupied == 0
+		_block_controls[key].tooltip_text = "No facilities in selection" if occupied == 0 else ""
 	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
 			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
 		var controls: Dictionary = _block_controls[work]
@@ -2637,8 +2643,9 @@ func _refresh_controls() -> void:
 	_order_summary.text = "Orders: %s%s" % [", ".join(counts), " | stale" if not _state_ready else ""]
 	_order_summary.tooltip_text = "Enabled standing orders by work type. Values come from subscribed server rows."
 	if tile == null:
-		_tile_info.text = "Click a tile on the map to select it."
-		_tile_info.tooltip_text = "Select a tile or drag a rectangle on the map."
+		var surface_details := _selected_terrain_details()
+		_tile_info.text = surface_details if not surface_details.is_empty() else "Click a tile on the map to select it."
+		_tile_info.tooltip_text = _tile_info.text
 		return
 
 	var tile_details := "Selected: %s tile #%d at (%d, %d) - %s" % [
@@ -2649,6 +2656,7 @@ func _refresh_controls() -> void:
 		tile_details += " | z=%d footprint %dx%d clearance %d" % [LayeredTerrainModel.field(tile, "z", 0),
 			LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1),
 			LayeredTerrainModel.field(tile, "clearance_height", 6)]
+		tile_details += "\n" + _selected_terrain_details(false)
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
 		if map.row_visible(stack) and stack.x == tile.x and stack.y == tile.y:
 			tile_details += "\nGround: %.1f %s" % [stack.amount,
@@ -2666,6 +2674,28 @@ func _refresh_controls() -> void:
 			terrain.moisture * 100.0, _map_cover_name(terrain.forest_density), terrain.forest_density * 100.0]
 	_tile_info.text = tile_details
 	_tile_info.tooltip_text = tile_details
+
+
+func _selected_terrain_details(include_identity := true) -> String:
+	if not map.layered or not map.has_world_snapshot() or not _selected_rect.has_area():
+		return ""
+	var xy := _selected_rect.position
+	if not map.grid_bounds().has_point(xy):
+		return ""
+	var surface: Variant = map.terrain_model.surface_at(xy)
+	if surface == null:
+		return "No known surface at (%d, %d), cut z=%d\nTerrain unavailable or unsupported; no floor or tile inferred." % [xy.x, xy.y, map.terrain_model.cut]
+	var material_id := map.terrain_model.material_at(surface)
+	var material: Variant = map.terrain_model.materials.get(material_id)
+	var details := "%s material #%d at (%d, %d, %d)\nElevation z=%d (%.1fm); base z=%d; depth %d" % [
+		LayeredTerrainModel.field(material, "name", "Unknown"), material_id, surface.x, surface.y, surface.z,
+		surface.z, surface.z * LayeredTerrainModel.METRES_PER_LAYER, map.terrain_model.base_at(xy), map.terrain_model.depth_at(xy)]
+	if include_identity:
+		details = "Selected terrain at (%d, %d)\nNo replicated facility/tile row.\n" % [xy.x, xy.y] + details
+		details += "\nEcology: no replicated tile-linked data available."
+	if not _state_ready:
+		details += "\nState: stale"
+	return details
 
 
 func _refresh_alerts() -> void:

@@ -313,8 +313,13 @@ func test_unresolved_rays() -> void:
 	map._grid = Vector2i.ONE
 	var hits: Array = []
 	map.cell_selected.connect(func(cell: Vector3i) -> void: hits.append(cell))
+	map.set_interaction_mode(&"excavate")
 	press(map, Vector2(50, 50))
 	check(hits.is_empty() and not map._dragging, "unresolved surface cannot emit a hit or begin map paint")
+	map.set_interaction_mode(&"select")
+	press(map, Vector2(50, 50))
+	check(map.selected_tile_id == -1 and map.selected_rect() == Rect2i(0, 0, 1, 1) and terrain.base_at(Vector2i.ZERO) == null,
+		"read-only unresolved inspection selects coordinates without inventing a durable tile or supported floor")
 	map.free()
 	check(not terrain.placement_clear(Rect2i(0, 0, 1, 1), 0, 4), "missing required clearance never invents air for placement")
 	var upper := PackedInt32Array()

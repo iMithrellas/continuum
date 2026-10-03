@@ -55,6 +55,7 @@ for name, scene, marker in [
     ("terrain", "terrain_test", "TERRAIN_TEST_PASS"),
     ("terrain-ui", "terrain_ui_test", "TERRAIN_UI_PASS"),
     ("map-client", "map_client_test", "MAP_CLIENT_TEST_PASS"),
+    ("map-inspector", "map_inspector_test", "MAP_INSPECTOR_TEST_PASS"),
     ("workspace", "workspace_test", "WORKSPACE_PASS"),
     ("menu", "main_menu_test", "MAIN_MENU_PASS"),
     ("diagnostics-ui", "diagnostics_integration_test", "DIAGNOSTICS_INTEGRATION_PASS"),

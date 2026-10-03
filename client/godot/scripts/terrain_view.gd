@@ -84,7 +84,7 @@ func _sync_region() -> void:
 	if _model == null:
 		return
 	_ensure_bands(_model.max_z - _model.min_z + 1)
-	var bounds := Rect2i(0, 0, _model.width, _model.height)
+	var bounds := _model.bounds()
 	var region := bounds
 	if _extent.x > 0 and _extent.y > 0:
 		var cell := _extent / Vector2(_model.width, _model.height)

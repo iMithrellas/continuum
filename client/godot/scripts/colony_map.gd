@@ -3,6 +3,7 @@
 class_name ColonyMap
 extends Control
 
+## Sparse terrain selects coordinates without a durable row (tile_id = -1).
 signal tile_selected(tile_id: int)
 signal rectangle_selected(rect: Rect2i)
 signal build_rectangle_requested(rect: Rect2i)
@@ -159,7 +160,7 @@ func zoom_at(factor: float, point: Vector2) -> void:
 	var minimum := minf(0.25, ThemeTokens.number("tile") / _fit_cell_size())
 	_zoom = clampf(_zoom * factor, minimum, maxf(1.0, ThemeTokens.number("tile") * 4.0 / _fit_cell_size()))
 	var centred := ((size - Vector2(_grid) * _cell_size()) * 0.5).floor()
-	_pan = point - world * _cell_size() - centred
+	_pan = point - (world - Vector2(grid_bounds().position)) * _cell_size() - centred
 	_layout_terrain()
 	if layered:
 		terrain_view.update_entities(entity_descriptors())
@@ -211,7 +212,11 @@ func visible_grid_rect(padding := 0) -> Rect2i:
 	var start := screen_to_world(Vector2.ZERO).floor()
 	var end := screen_to_world(size).ceil()
 	return Rect2i(Vector2i(start) - Vector2i.ONE * padding,
-		Vector2i(end - start) + Vector2i.ONE * padding * 2).intersection(Rect2i(Vector2i.ZERO, _grid))
+		Vector2i(end - start) + Vector2i.ONE * padding * 2).intersection(grid_bounds())
+
+
+func grid_bounds() -> Rect2i:
+	return terrain_model.bounds() if layered else Rect2i(Vector2i.ZERO, _grid)
 
 
 func set_cut(layer: int) -> void:
@@ -301,6 +306,7 @@ func has_world_snapshot() -> bool:
 
 
 func clear_selection() -> void:
+	cancel_gestures()
 	selected_tile_id = -1
 	_selection_rect = Rect2i()
 	_frozen_selection = {}
@@ -343,7 +349,7 @@ func tiles_in_rect(rect: Rect2i) -> Array[ContinuumTile]:
 	_rectangle_tiles_key = key
 	_rectangle_tiles.clear()
 	var seen := {}
-	var area := rect.intersection(Rect2i(Vector2i.ZERO, _grid))
+	var area := rect.intersection(grid_bounds())
 	for y in range(area.position.y, area.end.y):
 		for x in range(area.position.x, area.end.x):
 			for tile: ContinuumTile in _tile_index.get(Vector2i(x, y), []):
@@ -389,8 +395,11 @@ func set_build_kind(kind: int) -> void:
 func set_selected_rect(rect: Rect2i) -> void:
 	if not has_world_snapshot():
 		return
-	_selection_rect = rect
-	_frozen_selection = terrain_model.capture_selection(rect) if layered else {}
+	_selection_rect = rect.intersection(grid_bounds())
+	if not _selection_rect.has_area():
+		clear_selection()
+		return
+	_frozen_selection = terrain_model.capture_selection(_selection_rect) if layered else {}
 	queue_redraw()
 
 
@@ -404,6 +413,8 @@ func selected_rect() -> Rect2i:
 		return Rect2i()
 	if _dragging:
 		return MapUiModel.normalize_rect(_drag_start, _drag_current)
+	if _selection_rect.size != Vector2i.ZERO:
+		return _selection_rect
 	if selected_tile_id < 0:
 		return Rect2i()
 	var db: ContinuumModuleDb = _source_db
@@ -586,7 +597,7 @@ func _cell_size() -> float:
 func _origin() -> Vector2:
 	var cell := _cell_size()
 	var used := Vector2(cell * _grid.x, cell * _grid.y)
-	return ((size - used) * 0.5).floor() + _pan
+	return ((size - used) * 0.5).floor() + _pan - Vector2(grid_bounds().position) * cell
 
 
 func _draw() -> void:
@@ -958,7 +969,7 @@ func _get_tooltip(at_position: Vector2) -> String:
 	var local := screen_to_world(at_position)
 	var db: ContinuumModuleDb = _source_db
 	var grid_pos := Vector2i(floori(local.x), floori(local.y))
-	if not Rect2i(Vector2i.ZERO, _grid).has_point(grid_pos):
+	if not grid_bounds().has_point(grid_pos):
 		return ""
 	var lines := PackedStringArray()
 	lines.append(action_hint(grid_pos))
@@ -1051,12 +1062,12 @@ func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
 	var cell := _cell_size()
 	if cell <= 0.0 or not Rect2(Vector2.ZERO, size).has_point(position):
 		return null
-	var grid_rect := Rect2(_origin(), Vector2(cell * _grid.x, cell * _grid.y))
+	var grid_rect := Rect2(world_to_screen(Vector2(grid_bounds().position)), Vector2(cell * _grid.x, cell * _grid.y))
 	if not grid_rect.has_point(position):
 		return null
 	var local := screen_to_world(position)
 	var grid_pos := Vector2i(floori(local.x), floori(local.y))
-	if grid_pos.x < 0 or grid_pos.y < 0 or grid_pos.x >= _grid.x or grid_pos.y >= _grid.y:
+	if not grid_bounds().has_point(grid_pos):
 		return null
 	return grid_pos
 
@@ -1162,15 +1173,17 @@ func _gui_input(event: InputEvent) -> void:
 		var point := (event as InputEventMouseButton).position
 		var grid_pos: Variant = _cell_at(point)
 		if grid_pos == null:
+			clear_selection()
 			return
 		grab_focus()
 		var base: Variant = terrain_model.base_at(grid_pos) if layered else 0
-		if base == null:
+		if base == null and interaction_mode != &"select":
 			return
-		selected_base = int(base)
+		selected_base = int(base) if base != null else terrain_model.cut
 		_drag_layer = terrain_model.cut
 		var source := _source_db
-		cell_selected.emit(terrain_model.surface_at(grid_pos) if layered else Vector3i(grid_pos.x, grid_pos.y, 0))
+		var surface: Variant = terrain_model.surface_at(grid_pos) if layered else null
+		cell_selected.emit(surface if surface != null else Vector3i(grid_pos.x, grid_pos.y, selected_base))
 		if not has_world_snapshot() or _source_db != source:
 			return
 		_dragging = true
@@ -1182,12 +1195,11 @@ func _gui_input(event: InputEvent) -> void:
 			queue_redraw()
 			return
 		var tile: ContinuumTile = tile_at(grid_pos)
-		selected_tile_id = -1
-		if tile != null:
-			selected_tile_id = tile.id
-			tile_selected.emit(tile.id)
-			has_world_snapshot()
-			queue_redraw()
+		selected_tile_id = tile.id if tile != null else -1
+		set_selected_rect(tile_footprint(tile) if tile != null else Rect2i(grid_pos, Vector2i.ONE))
+		tile_selected.emit(selected_tile_id)
+		has_world_snapshot()
+		queue_redraw()
 
 
 func layer_shortcuts_allowed() -> bool:
@@ -1308,7 +1320,7 @@ func _cache_excavations() -> void:
 	for designation in table_rows(_source_db, "excavation_designation"):
 		var bottom := int(LayeredTerrainModel.field(designation, "bottom_z", 0))
 		var height := int(LayeredTerrainModel.field(designation, "height", 6))
-		var area := designation_rect(designation).intersection(Rect2i(Vector2i.ZERO, _grid))
+		var area := designation_rect(designation).intersection(grid_bounds())
 		var footprints: Array = []
 		for y in range(area.position.y, area.end.y):
 			for x in range(area.position.x, area.end.x):
