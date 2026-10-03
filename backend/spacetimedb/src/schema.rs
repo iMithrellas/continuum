@@ -90,6 +90,36 @@ pub struct Tile {
     pub clearance_height: u16,
 }
 
+/// Construction recipes, independent of operational TileKind usage.
+#[derive(spacetimedb::SpacetimeType, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BuildingKind {
+    InsulatedRoom,
+}
+
+/// Constructed traversable envelope, NOT voxel walls or a thermal simulation.
+#[table(accessor = building, public)]
+pub struct Building {
+    #[primary_key]
+    #[auto_inc]
+    pub id: u64,
+    pub kind: BuildingKind,
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+    pub width: u16,
+    pub depth: u16,
+    pub clearance_height: u16,
+    pub wood_cost: f32,
+}
+
+/// Optional construction capability; authored resistance, not measured temperature.
+#[table(accessor = building_thermal_property, public)]
+pub struct BuildingThermalProperty {
+    #[primary_key]
+    pub building_id: u64,
+    pub thermal_resistance_m2_k_per_w: f32,
+}
+
 /// Continuous environmental values for a tile. These are independent of the
 /// facility in [`Tile::kind`] and may overlap when interpreted by clients.
 #[table(accessor = terrain, public)]

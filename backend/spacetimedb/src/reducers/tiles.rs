@@ -38,6 +38,8 @@ pub fn set_tile_enabled(ctx: &ReducerContext, tile_id: u32, enabled: bool) -> Re
 }
 
 /// Instantly turn an empty grid tile into a needs facility.
+/// Deprecated compatibility placement: charges for usage, not physical construction.
+/// New clients should call construct_room and designate_zone_at independently.
 #[reducer]
 pub fn build_facility(ctx: &ReducerContext, tile_id: u32, kind: TileKind) -> Result<(), String> {
     authorize(ctx, RequiredRole::Operator)?;

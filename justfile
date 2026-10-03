@@ -112,6 +112,10 @@ test-map-ui:
 test-vertical-terrain:
     scripts/internal/test-vertical-terrain
 
+# Own disposable native resources; optional baseline upgrade and private binding generation.
+test-building-properties *args: wasm
+    python3 scripts/internal/test-building-properties.py "$@"
+
 # Backend-free cut-height, surface picking and excavation interaction coverage.
 test-terrain-view:
     {{ quote(godot) }} --headless --path client/godot --editor --quit
@@ -202,6 +206,7 @@ test-gameplay-client:
     {{ quote(godot) }} --headless --path client/godot --script res://tools/enum_key_cache_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/unit_enum_key_contract_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/production_policy_bindings_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/building_properties_bindings_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/operator_access_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/colony_operations_model_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/production_suitability_test.gd

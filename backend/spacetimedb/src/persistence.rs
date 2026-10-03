@@ -5,6 +5,7 @@ use crate::sim::{self, HaulPolicy, MealPolicy, Resources, World};
 use spacetimedb::{ReducerContext, Table};
 mod geometry;
 pub(crate) use geometry::expand as expand_world;
+pub(crate) use geometry::load_for_placement as load_placement_geometry;
 pub(crate) use geometry::write_designation as insert_designation;
 
 const DEFAULT_WORLD_SEED: u64 = 0x6c6f_6e67_7365_6564;
@@ -19,6 +20,15 @@ pub(crate) fn seed_colony(ctx: &ReducerContext, time_scale: f64) {
         .map(|config| config.generation + 1)
         .unwrap_or(1);
     let seed = DEFAULT_WORLD_SEED.wrapping_add(generation as u64);
+    for property in ctx.db.building_thermal_property().iter() {
+        ctx.db
+            .building_thermal_property()
+            .building_id()
+            .delete(property.building_id);
+    }
+    for building in ctx.db.building().iter() {
+        ctx.db.building().id().delete(building.id);
+    }
     for policy in ctx.db.production_policy().iter() {
         ctx.db
             .production_policy()
@@ -183,6 +193,7 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
         geometry: Some(geometry),
         ecology,
         tiles,
+        buildings: load_buildings(ctx),
         work_orders,
         production_policies: ctx
             .db
@@ -234,6 +245,31 @@ pub(crate) fn load_world(ctx: &ReducerContext) -> World {
         }
     }
     world
+}
+
+/// Narrow construction capability load: no ecology, actors or navigation repair.
+pub(crate) fn load_buildings(ctx: &ReducerContext) -> Vec<sim::buildings::RoomEnvelope> {
+    let properties: std::collections::BTreeMap<_, _> = ctx
+        .db
+        .building_thermal_property()
+        .iter()
+        .map(|p| (p.building_id, p.thermal_resistance_m2_k_per_w))
+        .collect();
+    let mut buildings: Vec<_> = ctx
+        .db
+        .building()
+        .iter()
+        .map(|b| sim::buildings::RoomEnvelope {
+            id: b.id,
+            base: sim::geometry::Cell(b.x, b.y, b.z),
+            width: b.width,
+            depth: b.depth,
+            height: b.clearance_height,
+            thermal_resistance: properties.get(&b.id).copied(),
+        })
+        .collect();
+    buildings.sort_by_key(|b| b.id);
+    buildings
 }
 
 /// Additive migrations do not rewrite existing terrain or any other colony rows.
@@ -439,7 +475,7 @@ pub(crate) fn save_tiles(ctx: &ReducerContext, tiles: &[sim::Tile]) {
     }
 }
 
-fn tile_state(t: Tile) -> sim::Tile {
+pub(crate) fn tile_state(t: Tile) -> sim::Tile {
     sim::Tile {
         id: t.id,
         x: t.x,

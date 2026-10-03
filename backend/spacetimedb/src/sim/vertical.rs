@@ -94,6 +94,7 @@ impl World {
         self.tiles
             .iter()
             .any(|t| t.protects_support(c) || t.occupies(c))
+            || self.buildings.iter().any(|b| b.protects_support(c))
             || self.colonists.iter().enumerate().any(|(index, actor)| {
                 if except == Some(index) {
                     return false;

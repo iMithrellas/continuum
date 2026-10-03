@@ -87,6 +87,8 @@ pub struct World {
     /// Persisted ecological fields keyed by durable tile ID; absent entries are neutral.
     pub ecology: super::ecology::EcologicalData,
     pub tiles: Vec<Tile>,
+    /// Independent constructed envelopes; no zone, collision or terrain ownership.
+    pub buildings: Vec<super::buildings::RoomEnvelope>,
     /// Standing production permissions; an empty list disables all production.
     pub work_orders: Vec<WorkOrder>,
     /// Resource-wide standing targets; ticks never mutate this player intent.

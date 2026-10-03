@@ -64,7 +64,16 @@ pub(super) fn reset(ctx: &ReducerContext) {
     install(ctx, &g);
 }
 
-pub(super) fn load(ctx: &ReducerContext) -> Geometry {
+pub(crate) fn load(ctx: &ReducerContext) -> Geometry {
+    load_with_jobs(ctx, true)
+}
+
+/// Placement reads only material authority; do not deserialize unrelated job vectors.
+pub(crate) fn load_for_placement(ctx: &ReducerContext) -> Geometry {
+    load_with_jobs(ctx, false)
+}
+
+fn load_with_jobs(ctx: &ReducerContext, include_jobs: bool) -> Geometry {
     if ctx.db.world_geometry().id().find(0).is_none() {
         install(ctx, &Geometry::flat());
     }
@@ -82,21 +91,24 @@ pub(super) fn load(ctx: &ReducerContext) -> Geometry {
             chunk_state(c)
         })
         .collect();
-    let mut designations: Vec<_> = ctx
-        .db
-        .excavation_designation()
-        .iter()
-        .map(|d| {
-            let cells = ctx
-                .db
-                .excavation_jobs()
-                .id()
-                .find(d.id)
-                .expect("designation jobs missing")
-                .cells;
-            designation_state(d, cells)
-        })
-        .collect();
+    let mut designations: Vec<_> = if include_jobs {
+        ctx.db
+            .excavation_designation()
+            .iter()
+            .map(|d| {
+                let cells = ctx
+                    .db
+                    .excavation_jobs()
+                    .id()
+                    .find(d.id)
+                    .expect("designation jobs missing")
+                    .cells;
+                designation_state(d, cells)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     designations.sort_by_key(|d| d.id);
     Geometry {
         width: row.width,

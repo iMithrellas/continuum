@@ -1,5 +1,6 @@
 //! Bounded, atomic facility-block planning from narrow geometry/tile inputs.
 //! No database writes, world cloning, navigation or growing-row rescans.
+//! Legacy charged usage placement, NOT the independent room construction model.
 use super::geometry::{Body, Cell, Geometry};
 use super::{Tile, TileKind, FACILITY_BUILD_WOOD_COST};
 

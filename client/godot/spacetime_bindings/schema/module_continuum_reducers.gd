@@ -36,6 +36,10 @@ func build_tile_block_at(x0: int, y0: int, x1: int, y1: int, z: int, kind: Conti
 func cancel_excavation(id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('cancel_excavation', [id], [&'U64'])
 
+## 0. tile_id: int [br]
+func clear_zone(tile_id: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('clear_zone', [tile_id], [&'U32'])
+
 ## 0. id: int [br]
 ## 1. width: int [br]
 ## 2. depth: int [br]
@@ -48,11 +52,33 @@ func configure_colonist_body(id: int, width: int, depth: int, clearance_height: 
 ## 1. y0: int [br]
 ## 2. x1: int [br]
 ## 3. y1: int [br]
+## 4. z: int [br]
+## 5. clearance_height: int [br]
+func construct_room(x0: int, y0: int, x1: int, y1: int, z: int, clearance_height: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('construct_room', [x0, y0, x1, y1, z, clearance_height], [&'I32', &'I32', &'I32', &'I32', &'I32', &'U16'])
+
+## 0. building_id: int [br]
+func demolish_building(building_id: int) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('demolish_building', [building_id], [&'U64'])
+
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
 ## 4. bottom_z: int [br]
 ## 5. height: int [br]
 ## 6. priority: int [br]
 func designate_excavation(x0: int, y0: int, x1: int, y1: int, bottom_z: int, height: int, priority: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('designate_excavation', [x0, y0, x1, y1, bottom_z, height, priority], [&'I32', &'I32', &'I32', &'I32', &'I32', &'U16', &'U8'])
+
+## 0. x0: int [br]
+## 1. y0: int [br]
+## 2. x1: int [br]
+## 3. y1: int [br]
+## 4. z: int [br]
+## 5. kind: ContinuumTileKind [br]
+func designate_zone_at(x0: int, y0: int, x1: int, y1: int, z: int, kind: ContinuumTileKind) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('designate_zone_at', [x0, y0, x1, y1, z, kind], [&'I32', &'I32', &'I32', &'I32', &'I32', &'ContinuumTileKind'])
 
 ## 0. _nonce: int [br]
 func diagnostic_echo(_nonce: int) -> SpacetimeDBReducerCall:

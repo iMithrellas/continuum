@@ -140,6 +140,14 @@ they must not rewrite authoritative material geometry. See
 Operational kinds remain a prototype limitation, not a taxonomy of materials
 or a substitute for geometry suitability queries.
 
+Construction envelopes and thermal properties are independent of operational
+Tile usage. Pure `sim/buildings.rs` capabilities/query and `sim/designations.rs`
+bounded usage planning preserve that separation; persisted recipe/property rows
+are mapped explicitly and never inferred from Tile kinds. Envelopes protect
+their support without changing navigation or claiming voxel walls/temperature
+simulation. See [Building Properties](building-properties.md) for the public API,
+prototype limitations, performance costs and explicit additive migration policy.
+
 ## Walking units
 
 Cells have a `CELL_EDGE_METERS` edge of 0.5 metres. The default is ordinary

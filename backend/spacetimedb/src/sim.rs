@@ -13,7 +13,9 @@ pub use definitions::{
 pub use production_policy::{ProductionPolicy, MAX_PRODUCTION_TARGET};
 pub use tuning::Tuning;
 pub use work_orders::{default_work_orders, WorkOrder};
+pub mod buildings;
 pub mod construction;
+pub mod designations;
 pub mod ecology;
 pub mod geometry;
 pub mod navigation;
