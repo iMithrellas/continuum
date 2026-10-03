@@ -44,8 +44,8 @@ func _ready() -> void:
 	legacy_file.store_string(JSON.stringify(legacy_data))
 	legacy_file.close()
 	var migrated := WorkspaceLayout.new()
-	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.size() == 10,
-		"version-one layouts migrate optional admin and developer panel keys")
+	_assert(migrated.load_from(path) and migrated.workspaces[id].panels.size() == WorkspaceLayout.PANEL_NAMES.size(),
+		"version-one layouts migrate optional admin, developer and construction panel keys")
 	var migrated_people: Dictionary = migrated.workspaces[id].panels.people.duplicate(true)
 	_assert(migrated_people == restored.workspaces[id].panels.people and
 		not migrated.show_panel_headers and migrated.active == id,
@@ -169,9 +169,9 @@ func _test_manager() -> void:
 	deck.apply_metrics(UiMetrics.new(13))
 	_assert(is_equal_approx(deck._rows[0].custom_minimum_size.y, 40), "header row returns without compounding")
 	map.input_blocked = deck.blocks_map_input
-	_assert(deck.windows.size() == 10 and deck.authorized.size() == 10, "manager creates all actual game panels")
-	_assert(deck.windows.keys() == ["overview", "people", "inspector", "operations", "policies", "alerts", "activity", "trends", "admin", "developer"], "F1-F8 keep existing order with Admin F9 and Developer F10")
-	for index in 10:
+	_assert(deck.windows.size() == 11 and deck.authorized.size() == 11, "manager creates all actual game panels")
+	_assert(deck.windows.keys() == ["overview", "people", "inspector", "operations", "policies", "alerts", "activity", "trends", "admin", "developer", "construction"], "existing shortcuts stay stable; Construction is appended at F11")
+	for index in 11:
 		var panel_key: String = deck.windows.keys()[index]
 		deck.state(panel_key).open = true
 		deck.state(panel_key).minimized = false

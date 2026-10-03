@@ -234,7 +234,7 @@ func test_hud(local: LocalDatabase) -> void:
 	main._refresh()
 	await get_tree().process_frame
 	await get_tree().process_frame
-	check(not main._state_ready and main._build_menu.disabled and main._full_ui_refresh, "actual Main nil-provider refresh/history/control paths remain safe and require a fresh UI snapshot")
+	check(not main._state_ready and main._construction_panel.activate.disabled and main._zones_panel.activate.disabled and main._full_ui_refresh, "actual Main nil-provider refresh/history/control paths remain safe and require a fresh UI snapshot")
 	SpacetimeDB.Continuum.db = source
 	main._state_ready = true
 	main.map.refresh({"config": true})
@@ -428,6 +428,7 @@ func test_sparse_cells() -> void:
 	await get_tree().process_frame
 	main.set_process(false)
 	main._state_ready = true
+	main._session_requested = true
 	main._menu.visible = false
 	main.workspace.toggle_map_only()
 	main.map.refresh()
@@ -452,19 +453,16 @@ func test_sparse_cells() -> void:
 	check(calls.size() == 2 and calls.back()[0] == "set_block_work_order_at" and calls.back()[1].slice(0, 5) == [96, 90, 97, 92, -8], "actual sparse work button dispatches the whole footprint, not row indices")
 	check(facility.enabled, "fixture intents do not optimistically mutate authoritative facility rows")
 	check(map.tile_at(Vector2i(103, 96)) == null and map.terrain_model.base_at(Vector2i(103, 96)) == -8, "known empty physical terrain is buildable without an empty Tile row")
-	main._set_mode(&"build")
+	main._activate_planning(&"construction")
 	point = map.world_to_screen(Vector2(105.5, 97.5))
 	map._gui_input(button(MOUSE_BUTTON_LEFT, true, point))
 	map._input(global_button(map, MOUSE_BUTTON_LEFT, false, map.world_to_screen(Vector2(103.5, 96.5))))
-	check(calls.size() == 3 and calls.back()[0] == "build_tile_block_at" and calls.back()[1].slice(0, 5) == [103, 96, 105, 97, -8], "actual Main build path accepts sparse physical cells with exact reverse-drag xyz outside 24x24")
-	main._set_mode(&"facility")
-	map.facility_width = 3
-	map.facility_depth = 2
-	map.facility_height = 6
+	check(calls.size() == 3 and calls.back() == ["construct_room", [103, 96, 105, 97, -8, 4]], "actual Construction path accepts sparse physical cells with exact reverse-drag xyz outside 24x24")
+	main._activate_planning(&"zones")
 	point = map.world_to_screen(Vector2(108.5, 94.5))
 	map._gui_input(button(MOUSE_BUTTON_LEFT, true, point))
-	map._input(global_button(map, MOUSE_BUTTON_LEFT, false, point))
-	check(calls.size() == 4 and calls.back()[0] == "place_facility" and calls.back()[1].slice(0, 3) == [108, 94, -8] and calls.back()[1].slice(4) == [3, 2, 6], "actual Main facility path accepts supported sparse cells and whole dimensions")
+	map._input(global_button(map, MOUSE_BUTTON_LEFT, false, map.world_to_screen(Vector2(110.5, 95.5))))
+	check(calls.size() == 4 and calls.back()[0] == "designate_zone_at" and calls.back()[1].slice(0, 5) == [108, 94, 110, 95, -8], "actual Zones path accepts supported sparse cells with inclusive bounds")
 	main._set_mode(&"excavate")
 	point = map.world_to_screen(Vector2(111.5, 96.5))
 	map._gui_input(button(MOUSE_BUTTON_LEFT, true, point))

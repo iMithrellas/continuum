@@ -35,12 +35,12 @@ func _test_operator_lifecycle() -> void:
 		var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 		return config != null and config.meal_policy.value == ContinuumMealPolicy.Options.rationed)
 	_assert(not failed and main._meal_request == null, "operator meal control changed authoritative config")
-	main._set_mode(&"build")
+	main._activate_planning(&"construction")
 	_write_marker(_option("--revoke-request-file", ""))
 	await _wait_file(_option("--operator-revoked-file", ""))
 	await _wait_role("Viewer")
 	_assert(not main.workspace.authorized["policies"] and
-			not main._build_menu.visible and main.map.interaction_mode == &"select",
+			not main.workspace.authorized["construction"] and not main.workspace.authorized["operations"] and main.map.interaction_mode == &"select",
 		"revocation hides workspace controls and keeps map out of Build mode")
 	SpacetimeDB.Continuum.disconnect_db()
 	await _wait_role("Unknown")

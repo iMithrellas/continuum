@@ -61,6 +61,7 @@ func run() -> void:
 	await get_tree().process_frame
 	main.set_process(false)
 	main._state_ready = true
+	main._session_requested = true
 	main._menu.visible = false
 	main.workspace.toggle_map_only()
 	main.map.refresh()
@@ -78,17 +79,17 @@ func run() -> void:
 		check(main._block_controls["enabled_true"].disabled and main._block_controls["enabled_false"].disabled
 			and main._block_controls["enabled_true"].tooltip_text == "No facilities in selection"
 			and main._block_controls["enabled_false"].tooltip_text == "No facilities in selection", "operator cannot toggle facilities on sparse terrain without facility rows")
-		check(not main._mode_buttons[&"build"].disabled and not main._mode_buttons[&"excavate"].disabled, "zero facilities does not disable operator building or excavation")
+		check(not main._construction_panel.activate.disabled and not main._zones_panel.activate.disabled and not main._mode_buttons[&"excavate"].disabled, "zero facilities does not disable operator planning or excavation")
 	check(main._tile_info.text.contains("stone material #2 at (127, 127, -9)") and main._tile_info.text.contains("base z=-8"), "far corner uses replicated elevation and material")
 	pick(main, Vector2i(35, 36))
 	check(main._selected_tile_id == empty.id and main._tile_info.text.contains("Fertility: 73%") and main._tile_info.text.contains("Moisture: 42%"), "actual durable empty row retains its real replicated ecology")
 	check(main._block_controls["enabled_true"].disabled and main._block_controls["enabled_false"].disabled
 		and main._block_controls["enabled_false"].tooltip_text == "No facilities in selection", "placeholder Empty tile row is not a facility to enable or disable")
-	check(not main._mode_buttons[&"build"].disabled and not main._mode_buttons[&"excavate"].disabled, "placeholder Empty row retains operator terrain-edit modes")
+	check(not main._construction_panel.activate.disabled and not main._mode_buttons[&"excavate"].disabled, "placeholder Empty row retains operator terrain-edit modes")
 	main._set_permissions("viewer", false, false)
 	main._refresh_controls()
 	check(main._block_controls["enabled_true"].disabled and main._block_controls["enabled_false"].disabled
-		and main._mode_buttons[&"build"].disabled and main._mode_buttons[&"excavate"].disabled
+		and main._construction_panel.activate.disabled and main._zones_panel.activate.disabled and main._mode_buttons[&"excavate"].disabled
 		and main._tile_info.text.contains("Fertility: 73%"), "viewer retains read-only terrain inspection without facility or terrain-edit controls")
 	main._set_permissions("operator", true, false)
 	pick(main, Vector2i(97, 91))

@@ -685,7 +685,7 @@ func _build_dialog() -> void:
 		body.add_child(check)
 		_checks[key] = check
 	var note := Label.new()
-	note.text = "Panels overlay the full map; pin locks position and size only.\nCollapse keeps the header; F1–F10 restores panels. Map gives immediate map access.\nDrag unpinned headers to move and edges or corners to resize.\nAlt bypasses snapping. Escape cancels and restores starting geometry.\nHidden headers keep a drag strip with Headers access. Layout / Ctrl+Shift+H toggles headers. Changes save on this device."
+	note.text = "Panels overlay the full map; pin locks position and size only.\nCollapse keeps the header; F1–F11 restores panels. Map gives immediate map access.\nDrag unpinned headers to move and edges or corners to resize.\nAlt bypasses snapping. Escape cancels and restores starting geometry.\nHidden headers keep a drag strip with Headers access. Layout / Ctrl+Shift+H toggles headers. Changes save on this device."
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ThemeTokens.apply_label(note, "small")
 	body.add_child(note)
@@ -780,7 +780,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		toggle_panel_headers()
 	elif event.ctrl_pressed and event.keycode == KEY_BACKSLASH:
 		toggle_map_only()
-	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F10:
+	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F11:
 		var index: int = event.keycode - KEY_F1
 		if index >= windows.size():
 			return

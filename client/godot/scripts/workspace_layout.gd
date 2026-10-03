@@ -5,10 +5,10 @@ extends RefCounted
 const SAVE_PATH := "user://workspaces.json"
 const PANEL_NAMES := {
 	"overview": "Colony overview", "people": "Colonist roster",
-	"inspector": "Tile inspector", "operations": "Build & work orders",
+	"inspector": "Tile inspector", "operations": "Zones",
 	"policies": "Colony policies", "alerts": "Alerts",
 	"activity": "Activity feed", "trends": "Session trends",
-	"admin": "Admin", "developer": "Developer",
+	"admin": "Admin", "developer": "Developer", "construction": "Construction",
 }
 const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
@@ -33,9 +33,9 @@ static func defaults() -> Dictionary:
 		"daily": ["Daily operations", {
 			"people": [0.01, 0.02, 0.235, 0.65], "overview": [0.755, 0.02, 0.235, 0.44],
 			"alerts": [0.755, 0.65, 0.235, 0.33], "activity": [0.01, 0.69, 0.235, 0.29]}],
-		"build": ["Logistics & build", {
-			"operations": [0.01, 0.02, 0.255, 0.76], "inspector": [0.755, 0.02, 0.235, 0.52],
-			"policies": [0.755, 0.56, 0.235, 0.42]}],
+		"build": ["Construction & zones", {
+			"construction": [0.01, 0.02, 0.265, 0.96],
+			"operations": [0.725, 0.02, 0.265, 0.96]}],
 		"welfare": ["Colonist welfare", {
 			"people": [0.01, 0.02, 0.255, 0.96], "policies": [0.755, 0.02, 0.235, 0.47],
 			"trends": [0.705, 0.54, 0.285, 0.44]}],
@@ -47,6 +47,7 @@ static func defaults() -> Dictionary:
 		var panels := {}
 		for key: String in PANEL_NAMES:
 			panels[key] = panel(presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key))
+		if id != "build": panels.construction = panel([0.01, 0.02, 0.265, 0.96], false)
 		panels.admin = panel([0.30, 0.04, 0.40, 0.28])
 		panels.developer = panel([0.30, 0.34, 0.40, 0.62])
 		result[id] = {"name": presets[id][0], "panels": panels}
@@ -202,6 +203,7 @@ func load_from(path := SAVE_PATH) -> bool:
 		if entry.name.strip_edges().is_empty():
 			continue
 		var panels: Dictionary = loaded.get(id, defaults().daily).panels.duplicate(true)
+		if not entry.panels.has("construction"): panels.construction.open = false
 		for key: String in PANEL_NAMES:
 			var saved: Variant = entry.panels.get(key)
 			if not saved is Dictionary or not saved.get("rect") is Array or saved.rect.size() != 4:

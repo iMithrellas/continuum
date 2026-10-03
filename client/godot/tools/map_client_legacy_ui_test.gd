@@ -22,6 +22,7 @@ func _set_role(main: Control, role: String, can_operate: bool, admin: bool) -> v
 	main.fixture_access.set_role(role, can_operate, admin)
 
 func _refresh_real_tiles(main: Control) -> void:
+	main._session_requested = true
 	main._state_ready = true
 	await super._refresh_real_tiles(main)
 	map.refresh()

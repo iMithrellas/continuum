@@ -13,6 +13,9 @@ signal cut_changed(layer: int)
 signal cell_selected(cell: Vector3i)
 signal selection_invalidated
 signal camera_changed
+## Main owns the exclusive planning system; this view owns only the gesture.
+signal tool_cancelled
+var planning_preview: Callable
 
 var terrain_model := LayeredTerrainModel.new()
 var terrain_view := LayeredTerrainView.new()
@@ -682,7 +685,9 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		if rect.intersects(tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
 			occupied += 1
 	var text := "%d×%d · %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
-	if interaction_mode == &"build":
+	if interaction_mode == &"build" and planning_preview.is_valid():
+		text = planning_preview.call(rect)
+	elif interaction_mode == &"build":
 		text += "  %.0f wood" % (rect.size.x * rect.size.y * 20.0)
 		if occupied > 0:
 			text += "  OCCUPIED"
@@ -701,7 +706,7 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		var tile := tile_at(_drag_start)
 		var kind := build_kind if interaction_mode in [&"build", &"facility"] else (tile.kind.value if tile != null else ContinuumTileKind.Options.empty)
 		var potential := _potential_yield(_drag_start, kind)
-		if not potential.is_empty() and interaction_mode != &"excavate":
+		if not potential.is_empty() and interaction_mode != &"excavate" and not (interaction_mode == &"build" and planning_preview.is_valid()):
 			text = potential + " · " + text
 	text = "Release to %s · " % ("select" if interaction_mode == &"select" else "request") + text
 	MapPaint.plate(self, preview.position + Vector2(4, 4) * metrics.scale, "", text, metrics.scale, false, _preview_plate_cache, Rect2(Vector2.ZERO, size))
@@ -744,6 +749,7 @@ func action_hint(xy: Vector2i) -> String:
 		&"excavate":
 			return "Excavate · drag area · z=%d..%d" % [base, base + excavation_height - 1]
 		&"build":
+			if planning_preview.is_valid(): return planning_preview.call(Rect2i(xy, Vector2i.ONE))
 			var hint := ContinuumTileKind.parse_enum_name(build_kind).capitalize()
 			var potential := _potential_yield(xy, build_kind)
 			if not potential.is_empty():
@@ -1092,9 +1098,11 @@ func _input(event: InputEvent) -> void:
 		return
 	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
 		cancel_gestures()
+		tool_cancelled.emit()
 		return
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
 		cancel_gestures()
+		tool_cancelled.emit()
 		return
 	if event is InputEventMouseMotion and _panning:
 		var point: Vector2 = get_global_transform().affine_inverse() * event.position

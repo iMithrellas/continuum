@@ -32,6 +32,8 @@ const OperationsPanel = preload("res://ui/panels/colony_operations_panel.gd")
 const OperationsModel = preload("res://scripts/colony_operations_model.gd")
 const ProductionTargets = preload("res://ui/panels/production_targets.gd")
 const InterfaceIcons = preload("res://ui/theme/icons.gd")
+const PlanningPanelControl = preload("res://ui/panels/planning_panel.gd")
+const RoomOverlayControl = preload("res://ui/components/room_overlay.gd")
 const ALERT_PANEL_OWNERS := {"low_food": "overview", "low_mood": "people", "low_productivity": "overview", "recreation_unavailable": "policies"}
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
@@ -92,7 +94,15 @@ var _selected_tile_id: int = -1
 var _selected_rect := Rect2i()
 var _selected_surface: Dictionary = {}
 var _mode_buttons: Dictionary = {}
-var _build_menu: OptionButton
+var _planning_system: StringName = &""
+var _zone_kind := ContinuumTileKind.Options.storage
+var _room_clearance := PlanningModel.MIN_CLEARANCE
+var _construction_panel: PlanningPanel
+var _zones_panel: PlanningPanel
+var _room_overlay: Control
+var _room_selection: Label
+## Optional fixture seam; production reads generated building/property tables.
+var planning_rows_override: Callable
 var _block_box: VBoxContainer
 var _block_info: Label
 var _block_controls: Dictionary = {}
@@ -110,7 +120,6 @@ var _reconnect_timer: SceneTreeTimer
 var _closing := false
 var _history: SessionHistory
 var _history_chart: HistoryChart
-var _build_help: Label
 var _orders_help: Label
 var _role_name := "Unknown"
 var _can_operate := false
@@ -271,6 +280,8 @@ func _ready() -> void:
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
 	map.build_rectangle_requested.connect(_on_build_rectangle_requested)
+	map.planning_preview = _planning_preview
+	map.tool_cancelled.connect(func() -> void: _set_mode(&"select"))
 	map.excavation_requested.connect(_on_excavation_requested)
 	map.facility_requested.connect(_on_facility_requested)
 	map.cell_selected.connect(func(cell: Vector3i) -> void:
@@ -710,14 +721,16 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	if permissions_changed:
 		_permission_revision += 1
 		_cancel_production_requests()
+		if old_can_operate:
+			_intent_request = null
 	var lost_operator := old_can_operate and not _can_operate
 	if lost_operator:
 		for id: int in _ack_requests:
 			_alert_box.set_acknowledgement_state(id, false)
 		_ack_requests.clear()
 	if lost_operator and map.interaction_mode != &"select":
-		map.set_interaction_mode(&"select")
-		_set_feedback(_intent_feedback, "Build cancelled", "Build cancelled: operator permission was lost.")
+		_set_mode(&"select")
+		_set_feedback(_intent_feedback, "Tool cancelled", "Operator permission was lost. Any already sent request has an unknown outcome; inspect server state.")
 		_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_refresh_permissions()
 	_refresh_controls()
@@ -825,7 +838,11 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_set_connection_text("Connected · %s · waiting for colony state" % identity.hex_encode().substr(0, 12),
 			ThemeTokens.color("ink-muted"))
 	_release_main_subscription()
-	_subscription = SpacetimeDB.Continuum.subscribe(SUBSCRIPTION_QUERIES)
+	var queries := SUBSCRIPTION_QUERIES.duplicate()
+	for table: String in ["building", "building_thermal_property"]:
+		if LayeredTerrainModel.field(SpacetimeDB.Continuum.db, table) != null:
+			queries.append("SELECT * FROM " + table)
+	_subscription = SpacetimeDB.Continuum.subscribe(queries)
 	if _subscription.error != OK:
 		_set_connection_text("Subscription failed · %d" % _subscription.error, ThemeTokens.color("critical"))
 		if not _direct_launch:
@@ -1041,7 +1058,7 @@ func _on_table_changed(table_name: String) -> void:
 	_dirty = true
 	_ui_tables_changed[table_name] = true
 	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config",
-		"world_geometry", "terrain_chunk", "terrain_material", "excavation_designation"]:
+		"world_geometry", "terrain_chunk", "terrain_material", "excavation_designation", "building", "building_thermal_property"]:
 		_map_dirty = true
 		_map_tables_changed[table_name] = true
 
@@ -1073,56 +1090,142 @@ func _tile_at(pos: Vector2i) -> ContinuumTile:
 
 
 func _on_build_rectangle_requested(rect: Rect2i) -> void:
+	if _planning_system not in [&"construction", &"zones"]: return
 	_selected_rect = rect
 	map.set_selected_rect(rect)
 	_selected_surface = map.terrain_model.capture_selection(rect) if map.layered else {}
 	_refresh_controls()
-	if not _can_operate:
-		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: operator permission is not available.")
+	if not _planning_allowed():
+		_set_feedback(_intent_feedback, "Request blocked", "Operator access, live world state and no pending request are required.")
 		return
-	if not can_send_map_intent(_state_ready, _intent_request != null):
-		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: waiting for subscription or another request.")
+	var error := _planning_error(rect)
+	if not error.is_empty():
+		_set_feedback(_intent_feedback, "Cannot place here", error)
 		return
-	if map.layered and (map.terrain_model.uniform_base(rect) == null or map.terrain_model.uniform_base(rect) != map.selected_base):
-		_set_feedback(_intent_feedback, "Build rejected", "Mixed elevations or unknown floors: select a single exposed elevation.")
-		return
-	if map.layered and not map.terrain_model.placement_clear(rect, map.selected_base, 1):
-		_set_feedback(_intent_feedback, "Build rejected", "Solid cut rock must be excavated first; building needs supported air cells.")
-		return
-	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
-	var occupied := 0
-	for tile: ContinuumTile in map.facility_tiles():
-		if rect.intersects(ColonyMap.tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
-			occupied += 1
-	var cost := rect.size.x * rect.size.y * 20.0
-	if occupied > 0:
-		_set_feedback(_intent_feedback, "Build rejected", "Build rejected locally: %d cell(s) already occupied." % occupied)
-		return
-	if colony == null or colony.wood < cost:
-		_set_feedback(_intent_feedback, "Build unavailable", "Build unavailable: needs %.0f wood (stored %.1f)." % [cost, 0.0 if colony == null else colony.wood])
-		return
-	_dispatch_build_block(rect, ContinuumTileKind.create(_build_menu.get_selected_id()))
+	var z: int = map.terrain_model.uniform_base(rect) if map.layered else 0
+	var payload: Array = [rect.position.x, rect.position.y, rect.end.x - 1, rect.end.y - 1, z]
+	if _planning_system == &"construction":
+		payload.append(_room_clearance)
+		_dispatch_vertical("construct_room", payload, "Construct insulated room")
+	else:
+		payload.append(ContinuumTileKind.create(_zone_kind))
+		_dispatch_vertical("designate_zone_at", payload, "Designate " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower())
 
 
-func _dispatch_build_block(rect: Rect2i, kind: ContinuumTileKind) -> void:
-	if not _can_operate:
-		_set_feedback(_intent_feedback, "Build blocked", "Build blocked: operator permission is not available.")
+## Every public handler rechecks permission and attached, current world provenance.
+func _planning_allowed() -> bool:
+	return is_inside_tree() and _can_operate and _state_ready and _session_requested \
+		and _intent_request == null and SpacetimeDB.Continuum.db != null and map.has_world_snapshot()
+
+func _planning_error(rect: Rect2i) -> String:
+	var error := PlanningModel.rectangle_error(rect, map.grid_bounds())
+	if not error.is_empty(): return error
+	var height := _room_clearance if _planning_system == &"construction" else PlanningModel.MIN_CLEARANCE
+	var z: Variant = map.terrain_model.uniform_base(rect) if map.layered else 0
+	if z == null: return "Mixed elevations or unknown floors. Choose one exposed floor."
+	if map.layered and not map.terrain_model.placement_clear(rect, z, height):
+		return "Requires supported air through %d clearance layers. Excavate solid terrain first." % height
+	if _planning_system == &"construction":
+		var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+		var cost := rect.size.x * rect.size.y * PlanningModel.WOOD_PER_CELL
+		if colony == null or colony.wood < cost: return "Needs %.0f wood; stored %.0f." % [cost, 0 if colony == null else colony.wood]
+	else:
+		return PlanningModel.zone_conflict(rect, z, _zone_kind, map.facility_tiles())
+	return ""
+
+func _planning_preview(rect: Rect2i) -> String:
+	if _planning_system not in [&"construction", &"zones"]: return ""
+	if _intent_request != null: return "Request pending · wait for server response"
+	if not _can_operate or not _state_ready: return "Planning unavailable · Operator access and live state required"
+	var copy := PlanningModel.preview(_planning_system, rect, _zone_kind)
+	var error := _planning_error(rect) if SpacetimeDB.Continuum.db != null else "Waiting for colony state"
+	return copy + (" · " + error if not error.is_empty() else ("" if map._dragging else " · drag to request"))
+
+func _activate_planning(system: StringName) -> void:
+	if system == &"":
+		_set_mode(&"select")
 		return
-	if map.layered:
-		var z: Variant = map.terrain_model.uniform_base(rect)
-		if z == null:
-			_set_feedback(_intent_feedback, "Build rejected", "Mixed elevations or unknown floors.")
-			return
-		_dispatch_vertical("build_tile_block_at", [rect.position.x, rect.position.y,
-			rect.end.x - 1, rect.end.y - 1, int(z), kind], "Build visible floor")
-		return
-	if map_intent_override.is_valid():
-		map_intent_override.call("build_tile_block", [rect.position.x, rect.position.y,
-			rect.end.x - 1, rect.end.y - 1, kind])
-		return
-	_track_intent(SpacetimeDB.Continuum.reducers.build_tile_block(
-			rect.position.x, rect.position.y, rect.end.x - 1, rect.end.y - 1, kind),
-			"Build %dx%d block" % [rect.size.x, rect.size.y])
+	if system not in [&"construction", &"zones"] or not _planning_allowed(): return
+	_planning_system = system
+	map.set_build_kind(_zone_kind if system == &"zones" else ContinuumTileKind.Options.empty)
+	_set_mode(&"build")
+	_reveal_planning_map("construction" if system == &"construction" else "operations")
+
+func _reveal_planning_map(key: String) -> void:
+	if workspace.compact and workspace.windows[key].is_visible_in_tree() and not workspace.state(key).minimized:
+		workspace.toggle_panel(key)
+
+func _input(event: InputEvent) -> void:
+	if _planning_system == &"" or not is_instance_valid(_menu) or _menu.visible or _server_management.visible: return
+	var cancel: bool = event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE
+	cancel = cancel or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT)
+	if not cancel: return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus is LineEdit or focus is TextEdit: return
+	_set_mode(&"select")
+	get_viewport().set_input_as_handled()
+
+func _choose_zone(kind: int) -> void:
+	if not PlanningModel.ZONES.has(kind) or not _planning_allowed(): return
+	_zone_kind = kind
+	if _planning_system == &"zones": map.set_build_kind(kind)
+	map.cancel_gestures()
+	if _planning_system == &"zones": _set_mode(&"build")
+	else: _refresh_planning()
+
+func _planning_rows(table: String) -> Array:
+	if planning_rows_override.is_valid(): return planning_rows_override.call(table)
+	return ColonyMap.table_rows(SpacetimeDB.Continuum.db, table)
+
+func _selected_rooms() -> Array:
+	var result: Array = []
+	if not map.has_world_snapshot() or not _selected_rect.has_area(): return result
+	for room in _planning_rows("building"):
+		if not _selected_rect.intersects(PlanningModel.footprint(room)): continue
+		if map.layered and (map.terrain_model.base_at(_selected_rect.position) != int(room.z) or not map.terrain_model.entity_visible(room)): continue
+		result.append(room)
+	return result
+
+func _selected_usage() -> ContinuumTile:
+	if not _selected_rect.has_area(): return null
+	var tile := map.tile_at(_selected_rect.position)
+	if tile == null or tile.kind.value == ContinuumTileKind.Options.empty: return null
+	return tile if ColonyMap.tile_footprint(tile).encloses(_selected_rect) else null
+
+func _remove_planning_selection(system: StringName) -> void:
+	if not _planning_allowed(): return
+	if map.layered and not map.terrain_model.selection_valid(_selected_surface): return
+	if system == &"construction":
+		var rooms := _selected_rooms()
+		if rooms.size() == 1: _dispatch_vertical("demolish_building", [int(rooms[0].id)], "Demolish room · no refund")
+	elif system == &"zones":
+		var tile := _selected_usage()
+		if tile != null: _dispatch_vertical("clear_zone", [tile.id], "Clear usage · room retained")
+
+func _refresh_planning() -> void:
+	if _construction_panel == null: return
+	var ready := _state_ready and _session_requested and SpacetimeDB.Continuum.db != null and map.has_world_snapshot()
+	var rooms := _selected_rooms() if ready else []
+	var tile := _selected_usage() if ready else null
+	var room_copy := "No room selected."
+	if rooms.size() == 1:
+		var room: Variant = rooms[0]
+		var resistance := "Insulation: awaiting property"
+		for property: ContinuumBuildingThermalProperty in _planning_rows("building_thermal_property"):
+			if property.building_id == int(room.id): resistance = "Insulation R %.1f m²·K/W" % property.thermal_resistance_m_2_k_per_w
+		room_copy = "Room #%d · %d×%d · z=%d\n%s\nClearance %.1fm · traversable\nBuilt for %.0f wood" % [room.id, room.width, room.depth, room.z, resistance, room.clearance_height * 0.5, room.wood_cost]
+	elif rooms.size() > 1: room_copy = "%d rooms selected. Select one to demolish." % rooms.size()
+	var usage_copy := "No single usage selected."
+	if tile != null:
+		usage_copy = "%s · cell #%d · %s" % [PlanningModel.ZONES.get(tile.kind.value, ["Unknown"])[0], tile.id, "enabled" if tile.enabled else "disabled"]
+		if tile.kind.value == ContinuumTileKind.Options.storage: usage_copy += "\nShared stock destination; no spoilage simulation."
+	var estimate := "%d×%d selection · %.0f wood" % [_selected_rect.size.x, _selected_rect.size.y, _selected_rect.get_area() * PlanningModel.WOOD_PER_CELL] if _selected_rect.has_area() else "5 wood / cell · drag to estimate"
+	_construction_panel.present(_planning_system, _zone_kind, _can_operate, ready, _intent_request != null, room_copy, rooms.size() == 1, estimate)
+	_zones_panel.present(_planning_system, _zone_kind, _can_operate, ready, _intent_request != null, usage_copy, tile != null, "%s · Free · clearance 2m" % PlanningModel.ZONES[_zone_kind][0])
+	_room_selection.text = room_copy + "\nUsage: " + usage_copy
+	_room_overlay.rooms = _planning_rows("building") if ready else []
+	_room_overlay.selected_id = int(rooms[0].id) if rooms.size() == 1 else -1
+	_room_overlay.queue_redraw()
 
 
 static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
@@ -1133,21 +1236,23 @@ func _set_mode(mode: StringName) -> void:
 	if mode != &"select" and not _can_operate:
 		_set_feedback(_intent_feedback, "Operator permission required", "Build mode requires operator permission.")
 		return
+	if mode != &"build": _planning_system = &"excavate" if mode == &"excavate" else &""
 	map.set_interaction_mode(mode)
 	for key: StringName in _mode_buttons:
 		_mode_buttons[key].set_pressed_no_signal(key == mode)
 	if mode == &"build":
-		_set_feedback(_intent_feedback, "Build: drag rectangle", "Choose a type, then drag a rectangle on empty ground. Esc/right-click cancels.")
+		_set_feedback(_intent_feedback, "Construction · draw room" if _planning_system == &"construction" else "Zones · draw " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower(), "Drag on one exposed floor. Release to request; Esc/right-click cancels.")
 	else:
 		_set_feedback(_intent_feedback, "Select: drag rectangle", "Drag a rectangle to control the whole block.")
 	if mode == &"excavate":
 		_set_feedback(_intent_feedback, "Excavate: drag solids", "Bottom is the clicked visible/base z; height extends upward in 0.5m cells. Cut changes cancel drags.")
 	elif mode == &"facility":
 		_set_feedback(_intent_feedback, "Place complete facility", "Click an exposed floor; width/depth/clearance are reserved in full.")
+	_refresh_planning()
 
 
 func _dispatch_vertical(reducer: String, payload: Array, description: String) -> void:
-	if not _can_operate or not can_send_map_intent(_state_ready, _intent_request != null):
+	if not _planning_allowed():
 		_set_feedback(_intent_feedback, "Request blocked", "Operator permission, ready subscription, and no pending request are required.")
 		return
 	if map_intent_override.is_valid():
@@ -1161,6 +1266,7 @@ func _dispatch_vertical(reducer: String, payload: Array, description: String) ->
 
 
 func _on_excavation_requested(rect: Rect2i, bottom: int, height: int) -> void:
+	if _planning_system != &"excavate" or not _planning_allowed(): return
 	if not map.layered:
 		_set_feedback(_intent_feedback, "Terrain unavailable", "Excavation needs authoritative voxel terrain.")
 		return
@@ -1172,19 +1278,7 @@ func _on_excavation_requested(rect: Rect2i, bottom: int, height: int) -> void:
 
 
 func _on_facility_requested(cell: Vector3i) -> void:
-	var footprint := Rect2i(Vector2i(cell.x, cell.y), Vector2i(map.facility_width, map.facility_depth))
-	if not map.layered or map.terrain_model.uniform_base(footprint) != cell.z:
-		_set_feedback(_intent_feedback, "Invalid facility", "Entire footprint must have the same exposed floor elevation.")
-		return
-	if cell.z + map.facility_height - 1 > map.terrain_model.max_z:
-		_set_feedback(_intent_feedback, "Invalid facility", "Clearance extends beyond world bounds.")
-		return
-	if not map.terrain_model.placement_clear(footprint, cell.z, map.facility_height):
-		_set_feedback(_intent_feedback, "Invalid facility", "Needs real supporting floors and known empty space throughout the full clearance.")
-		return
-	_dispatch_vertical("place_facility", [cell.x, cell.y, cell.z,
-		ContinuumTileKind.create(_build_menu.get_selected_id()), map.facility_width,
-		map.facility_depth, map.facility_height], "Place complete facility")
+	_set_feedback(_intent_feedback, "Choose a planning tool", "Open Construction for rooms or Zones for usage.")
 
 
 func _recreation_tiles() -> Array[ContinuumTile]:
@@ -1242,6 +1336,7 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 		else:
 			_set_feedback(_intent_feedback, "Accepted", "%s accepted. Values follow server state." % description)
 			_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+		_refresh_controls()
 	, CONNECT_ONE_SHOT)
 	_refresh_controls()
 
@@ -1546,35 +1641,43 @@ func _build_panels() -> void:
 	side.add_child(_speed_strip)
 	_build_developer_panel()
 
-	section = _sections["operations"]
-	side = section
-	side.add_child(_heading("Map tools"))
-	var modes := HFlowContainer.new()
-	for mode: StringName in [&"select", &"build", &"excavate", &"facility"]:
-		var button := Button.new()
-		button.text = String(mode).capitalize()
-		button.toggle_mode = true
-		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		button.pressed.connect(_set_mode.bind(mode))
-		modes.add_child(button)
-		_mode_buttons[mode] = button
-	side.add_child(modes)
-	_build_menu = OptionButton.new()
-	for kind: int in [ContinuumTileKind.Options.farm, ContinuumTileKind.Options.forest,
-			ContinuumTileKind.Options.mine, ContinuumTileKind.Options.storage,
-			ContinuumTileKind.Options.dining, ContinuumTileKind.Options.sleep,
-			ContinuumTileKind.Options.recreation]:
-		_build_menu.add_item(ContinuumTileKind.parse_enum_name(kind).capitalize(), kind)
-	_build_menu.item_selected.connect(func(index: int) -> void:
-		map.set_build_kind(_build_menu.get_item_id(index)))
-	side.add_child(_build_menu)
+	_construction_panel = PlanningPanelControl.new()
+	_sections["construction"].add_child(_construction_panel)
+	_construction_panel.setup(&"construction")
+	_construction_panel.tool_requested.connect(_activate_planning)
+	_construction_panel.remove_requested.connect(_remove_planning_selection.bind(&"construction"))
+	_construction_panel.clearance_changed.connect(func(value: int) -> void:
+		_room_clearance = value
+		map.cancel_gestures()
+		_refresh_planning())
+	_zones_panel = PlanningPanelControl.new()
+	_sections["operations"].add_child(_zones_panel)
+	_zones_panel.setup(&"zones")
+	_zones_panel.tool_requested.connect(_activate_planning)
+	_zones_panel.zone_chosen.connect(_choose_zone)
+	_zones_panel.remove_requested.connect(_remove_planning_selection.bind(&"zones"))
+	_room_overlay = RoomOverlayControl.new()
+	_room_overlay.map = map
+	map.add_child(_room_overlay)
+	map.draw.connect(func() -> void: _room_overlay.queue_redraw())
+	map.camera_changed.connect(func() -> void: _room_overlay.queue_redraw())
+	side = _sections["construction"]
+	side.add_child(HSeparator.new())
+	side.add_child(_heading("Terrain work"))
+	var excavate := Button.new()
+	excavate.text = "Excavate terrain"
+	excavate.toggle_mode = true
+	excavate.custom_minimum_size.y = 32
+	excavate.pressed.connect(func() -> void:
+		if _planning_allowed():
+			_set_mode(&"excavate")
+			_reveal_planning_map("construction"))
+	side.add_child(excavate)
+	_mode_buttons[&"excavate"] = excavate
 	_build_vertical_controls(side)
-	_build_help = Label.new()
-	_build_help.text = "7 types | 20 wood/cell"
-	_build_help.tooltip_text = "Farm, Forestry, Mine, Storage, Dining, Sleep, Recreation. Forestry creates a Forest work zone; natural forest cover is separate terrain."
-	_build_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ThemeTokens.apply_label(_build_help, "small")
-	side.add_child(_build_help)
+	side = _sections["operations"]
+	side.add_child(HSeparator.new())
+	side.add_child(_heading("Selected zone work orders"))
 	_block_box = VBoxContainer.new()
 	_block_info = Label.new()
 	ThemeTokens.apply_label(_block_info, "readout")
@@ -1620,7 +1723,12 @@ func _build_panels() -> void:
 	side.add_child(_block_box)
 
 	side = _sections["inspector"]
-	side.add_child(_heading("Selected terrain & facilities"))
+	side.add_child(_heading("Room & usage · independent layers"))
+	_room_selection = Label.new()
+	_room_selection.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ThemeTokens.apply_label(_room_selection, "body")
+	side.add_child(_room_selection)
+	side.add_child(_heading("Selected terrain"))
 	_tile_action_box = VBoxContainer.new()
 	side.add_child(_tile_action_box)
 	_tile_info = Label.new()
@@ -1638,11 +1746,12 @@ func _build_panels() -> void:
 	side.add_child(_orders_help)
 	_intent_feedback = Label.new()
 	_intent_feedback.custom_minimum_size.x = _metrics.px(160)
+	_intent_feedback.custom_minimum_size.y = 28
+	_intent_feedback.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_intent_feedback.clip_text = true
 	ThemeTokens.apply_label(_intent_feedback, "small")
 	var intent_row := HBoxContainer.new()
-	intent_row.position = Vector2(16, 64)
-	workspace.area.add_child(intent_row)
+	workspace.status_content.add_child(intent_row)
 	intent_row.add_child(_intent_feedback)
 	var cancel := Button.new()
 	cancel.text = "Cancel · Esc"
@@ -1988,6 +2097,7 @@ func _refresh_permissions() -> void:
 	_refresh_production_targets()
 	workspace.set_panel_authorized("policies", _can_operate)
 	workspace.set_panel_authorized("operations", _can_operate)
+	workspace.set_panel_authorized("construction", _can_operate)
 	workspace.set_panel_authorized("admin", _is_admin)
 	workspace.set_panel_authorized("developer", _profile == ContinuumClientProfile.DEVELOPER)
 	for button: Button in _speed_buttons.values():
@@ -1998,8 +2108,6 @@ func _refresh_permissions() -> void:
 	for mode: StringName in [&"build", &"excavate", &"facility"]:
 		if is_instance_valid(_mode_buttons.get(mode)):
 			_mode_buttons[mode].visible = _can_operate
-	if is_instance_valid(_build_menu):
-		_build_menu.visible = _can_operate
 	if is_instance_valid(_block_box):
 		_block_box.visible = _can_operate
 	if is_instance_valid(_recreation_button):
@@ -2029,7 +2137,11 @@ func _set_connection_text(text: String, colour: Color) -> void:
 
 func _set_feedback(label: Label, compact: String, details: String) -> void:
 	if label == _intent_feedback:
-		label.visible = compact != "Select: drag rectangle"
+		if _construction_panel != null:
+			var is_instruction := compact == "Select: drag rectangle" or compact.begins_with("Construction ·") or compact.begins_with("Zones ·") or compact.begins_with("Excavate:")
+			_construction_panel.show_feedback("" if is_instruction else details)
+			_zones_panel.show_feedback("" if is_instruction else details)
+		label.visible = _planning_system != &""
 		if label.get_parent() is HBoxContainer:
 			label.get_parent().visible = label.visible
 	label.text = compact
@@ -2348,12 +2460,6 @@ func _build_vertical_controls(side: Control) -> void:
 	side.add_child(_cell_label)
 	_dimension_inputs["excavation"] = _dimension_control(side, "Excavation height (0.5m layers)", 6, 1, 256,
 		func(value: float) -> void: map.excavation_height = int(value))
-	_dimension_inputs["width"] = _dimension_control(side, "Facility width (cells)", 1, 1, 24,
-		func(value: float) -> void: map.facility_width = int(value))
-	_dimension_inputs["depth"] = _dimension_control(side, "Facility depth (cells)", 1, 1, 24,
-		func(value: float) -> void: map.facility_depth = int(value))
-	_dimension_inputs["clearance"] = _dimension_control(side, "Facility clearance (0.5m layers)", 6, 1, 256,
-		func(value: float) -> void: map.facility_height = int(value))
 	_excavation_list = VBoxContainer.new()
 	side.add_child(_excavation_list)
 
@@ -2550,19 +2656,19 @@ func _refresh_controls() -> void:
 	if SpacetimeDB.Continuum.db == null:
 		map.bind_world_source(null)
 		_state_ready = false
-		_build_menu.disabled = true
+		_refresh_planning()
+		for button: Button in _mode_buttons.values(): button.disabled = true
+		for number: SpinBox in _dimension_inputs.values(): number.editable = false
 		_sync_map_toolbar()
 		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var busy := not _state_ready or _intent_request != null
-	_build_menu.disabled = busy or not _can_operate
+	_refresh_planning()
 	_layer_label.text = "Cut z=%d / %.1fm (inclusive)" % [map.terrain_model.cut, map.terrain_model.cut * 0.5]
 	_sync_map_toolbar()
 	if map.layered:
 		_dimension_inputs["excavation"].max_value = map.terrain_model.max_z - map.terrain_model.min_z + 1
-		_dimension_inputs["clearance"].max_value = map.terrain_model.max_z - map.terrain_model.min_z + 1
-		_dimension_inputs["width"].max_value = map.terrain_model.width
-		_dimension_inputs["depth"].max_value = map.terrain_model.height
+		_construction_panel.clearance.max_value = maxi(4, map.terrain_model.max_z - map.terrain_model.min_z + 1)
 	for number: SpinBox in _dimension_inputs.values():
 		number.editable = _can_operate and not busy
 	for mode: StringName in _mode_buttons:
@@ -2590,10 +2696,7 @@ func _refresh_controls() -> void:
 	if _selected_rect.size != Vector2i.ZERO:
 		rect_text = "%dx%d block: %d cells, %d occupied, %d enabled" % [
 			_selected_rect.size.x, _selected_rect.size.y, block_tiles, occupied, enabled_count]
-		if map.interaction_mode == &"build":
-			rect_text += "\nPreview cost: %.0f wood" % (_selected_rect.size.x * _selected_rect.size.y * 20.0)
-		else:
-			rect_text += "\nControls skip empty cells; work controls skip incompatible tiles."
+		rect_text += "\nControls skip empty cells; work controls skip incompatible zones."
 		var terrain_count := 0
 		var fertility := 0.0
 		var moisture := 0.0

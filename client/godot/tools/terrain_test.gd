@@ -108,23 +108,19 @@ func run() -> void:
 	controller._can_operate = true
 	controller._state_ready = true
 	controller._intent_feedback = Label.new()
-	controller._build_menu = OptionButton.new()
-	controller._build_menu.add_item("Dining", ContinuumTileKind.Options.dining)
 	controller.map_intent_override = func(name: String, payload: Array) -> void: requests.append([name, payload])
-	controller._dispatch_build_block(Rect2i(0, 0, 1, 2), ContinuumTileKind.create_dining())
-	check(requests.back()[0] == "build_tile_block_at" and requests.back()[1][4] == 0, "build calls layer-aware reducer at actual base")
+	controller._dispatch_vertical("construct_room", [0, 0, 0, 1, 0, 4], "Room")
+	check(requests.is_empty(), "detached controller cannot construct despite cached permission flags")
 	controller._selected_rect = Rect2i(1, 0, 1, 1)
 	controller._selected_surface = model.capture_selection(controller._selected_rect)
 	controller._set_block_enabled(false)
-	check(requests.back() == ["set_tile_block_enabled_at", [1, 0, 1, 0, -7, false]], "enable payload resolves actual deep floor")
+	check(requests.is_empty(), "detached block enable is denied")
 	controller._set_block_work(ContinuumWorkType.Options.mining, 1, true)
-	check(requests.back()[0] == "set_block_work_order_at" and requests.back()[1][4] == -7, "work order payload resolves actual deep floor")
+	check(requests.is_empty(), "detached work-order mutation is denied")
 	controller._on_excavation_requested(Rect2i(1, 0, 1, 1), -7, 6)
-	check(requests.back() == ["designate_excavation", [1, 0, 1, 0, -7, 6, 2]], "excavation controller preserves arbitrary chosen elevation")
-	map.facility_depth = 2
-	map.facility_height = 10
+	check(requests.is_empty(), "detached excavation is denied")
 	controller._on_facility_requested(Vector3i(0, 0, 0))
-	check(requests.back()[0] == "place_facility" and requests.back()[1].slice(4) == [1, 2, 10], "facility payload carries full configurable footprint and tall clearance")
+	check(requests.is_empty(), "retired facility gesture cannot invoke charged placement")
 	var before := requests.size()
 	map.facility_width = 2
 	controller._on_facility_requested(Vector3i(0, 0, 0))
@@ -247,7 +243,6 @@ func run() -> void:
 	model.set_cut(-1000)
 	check(model.cut == -16, "lower cut clamped to inclusive world bounds")
 	controller._intent_feedback.free()
-	controller._build_menu.free()
 	controller.free()
 	map.free()
 	SpacetimeDB.Continuum.db = previous_db

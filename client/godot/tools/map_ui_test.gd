@@ -1,5 +1,5 @@
 ## Input and controller contract for the user-facing map UI.
-##   godot --headless --path client/godot --scene res://tools/map_ui_test.tscn -- --stdb-host=http://127.0.0.1:3300 --stdb-db=continuum-map-ui
+## Live: scripts/internal/test-map-ui supplies queried starter XY and owns its server.
 extends Node
 
 const TestMainScene = preload("res://tools/ui_fixture_main.tscn")
@@ -122,7 +122,7 @@ func _test_controller_surface() -> void:
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
 	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and main.get_window().content_scale_factor == 1.0 and
-			main._haul_button.get_theme_font_size("font_size") == 13 and main._build_menu.get_theme_font_size("font_size") == 13,
+			main._haul_button.get_theme_font_size("font_size") == 13 and main._construction_panel.activate.get_theme_font_size("font_size") == 13,
 		"legacy lower font bound migrates to 100% without shrinking canonical typography")
 	await _test_header_geometry(main)
 	var clock_baseline: float = _label_baseline(main._clock) - main._clock_group.global_position.y
@@ -140,12 +140,9 @@ func _test_controller_surface() -> void:
 	_assert(main._metrics.base_font_size == 13 and main._feed.custom_minimum_size.y == 70 and main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0,
 		"runtime scaling returns to 100% without compounding or shrinking typography")
 	main.apply_font_size(13, false)
-	_assert(main._mode_buttons.size() == 4, "select, build, excavate, and facility mode buttons are reachable")
+	_assert(main._construction_panel != null and main._zones_panel != null and main._mode_buttons.has(&"excavate"), "separate planning panels and terrain work are reachable")
 	_set_role(main, "operator", true, false)
-	_assert(main._build_menu.item_count == 7, "all seven non-empty build types are reachable")
-	main._build_menu.select(1)
-	main._build_menu.item_selected.emit(1)
-	_assert(main.map.build_kind == ContinuumTileKind.Options.forest, "type picker arms forestry")
+	_assert(main._zones_panel.choices.size() == 7 and main._zones_panel.choices.has(ContinuumTileKind.Options.forest), "all seven non-empty usage types are reachable only in Zones")
 	main._set_mode(&"build")
 	_assert(main.map.interaction_mode == &"build", "build button changes map mode")
 	main._set_mode(&"select")
@@ -209,14 +206,12 @@ func _label_baseline(label: Label) -> float:
 
 
 func _test_workspace_surface(main: Control) -> void:
-	_assert(main._sections.size() == 10 and main.workspace.windows.size() == 10,
-		"workspace manager exposes ten extensible panels")
+	_assert(main._sections.size() == 11 and main.workspace.windows.size() == 11,
+		"workspace manager exposes eleven extensible panels")
 	_assert(main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
 		"workspace manager starts on the daily built-in layout")
-	_assert(not main._build_help.text.contains("\n") and not main._orders_help.text.contains("\n"),
-		"help surfaces use compact labels rather than text blocks")
-	_assert(not main._build_help.tooltip_text.is_empty() and not main._orders_help.tooltip_text.is_empty(),
-		"compact help labels retain hover details")
+	_assert(not main._orders_help.text.contains("\n") and not main._orders_help.tooltip_text.is_empty(),
+		"compact order help retains hover details")
 	main._set_feedback(main._intent_feedback, "Failed", "Full reducer error detail")
 	_assert(main._intent_feedback.text == "Failed" and
 			main._intent_feedback.tooltip_text == "Full reducer error detail",
@@ -224,12 +219,11 @@ func _test_workspace_surface(main: Control) -> void:
 	_set_role(main, "viewer", false, false)
 	_assert(not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"],
 		"viewer workspace authorization fails closed")
-	_assert(not main._mode_buttons[&"build"].visible and not main._mode_buttons[&"excavate"].visible and not main._mode_buttons[&"facility"].visible and
-			not main._build_menu.visible and not main._block_box.visible,
+	_assert(not main.workspace.authorized["construction"] and not main._mode_buttons[&"excavate"].visible and not main._block_box.visible,
 		"viewer cannot see mutation controls")
 	main.map_intent_override = _record_reducer_call
 	var before := reducer_calls.size()
-	main._dispatch_build_block(Rect2i(1, 1, 1, 1), ContinuumTileKind.create_farm())
+	main._on_build_rectangle_requested(Rect2i(1, 1, 1, 1))
 	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
 	_set_role(main, "operator", true, false)
 	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"],
@@ -259,7 +253,7 @@ func _test_workspace_surface(main: Control) -> void:
 	_assert(main._speed_label.get_parent() == main._sections["admin"] and
 		main._speed_strip.get_parent() == main._sections["admin"], "speed controls belong to admin content, not telemetry")
 	_assert(not main.workspace.authorized["developer"], "normal profile has no developer utilities")
-	_assert(main._build_menu.disabled, "disconnected or pending state disables build picker")
+	_assert(main._construction_panel.activate.disabled and main._zones_panel.activate.disabled, "disconnected or pending state disables planning")
 	var desktop_size := main.size
 	main.size = Vector2(390, 844)
 	await get_tree().process_frame
@@ -274,6 +268,7 @@ func _test_workspace_surface(main: Control) -> void:
 		"narrow header has a bounded padded utility row, two status rows and view tabs (actual %.1f)" % main.workspace.header.size.y)
 	_assert(utilities.end.y + 8 <= status.position.y and status.end.y + 8 <= views.position.y and views.end.y <= main.workspace.area.global_position.y,
 		"stacked utilities, status and view tabs have real gutters and cannot overlap the map")
+	await _test_planning_header_geometry(main)
 	main.size = desktop_size
 	await get_tree().process_frame
 	await get_tree().process_frame
@@ -285,6 +280,49 @@ func _test_workspace_surface(main: Control) -> void:
 		_assert(window.content.get_combined_minimum_size().x <= window.scroll.size.x,
 			"panel contents fit minimum width: %s" % window.name)
 	main.workspace._apply_layout()
+
+
+## Preserve the idle 202px budget. An armed tool adds exactly its measured row,
+## with real padding and usable map space; transient idle notices add no rows.
+func _test_planning_header_geometry(main: Control) -> void:
+	var quiet_height: float = main.workspace.header.size.y
+	var row: HBoxContainer = main._intent_feedback.get_parent()
+	_assert(not row.visible, "Inspect mode has no empty or cancelled-tool status row")
+	main._set_mode(&"excavate")
+	for frame in 8: await get_tree().process_frame
+	var expected_extra: float = row.size.y + main.workspace.status_content.get_theme_constant("separation")
+	_assert(row.visible and is_equal_approx(main.workspace.header.size.y, quiet_height + expected_extra),
+		"active tool reserves exactly one measured status row, without inflating resource typography or padding")
+	var bounds := row.get_global_rect()
+	var telemetry: Rect2 = main.workspace.telemetry.get_global_rect()
+	var status: Rect2 = main.workspace._rows[0].get_global_rect()
+	var views: Rect2 = main.workspace._rows[1].get_global_rect()
+	_assert(status.encloses(bounds) and telemetry.end.y + 8 <= bounds.position.y and bounds.end.y + 8 <= views.position.y,
+		"active-tool status has distinct eight-pixel gutters below telemetry and above view navigation")
+	for child: Control in row.get_children():
+		_assert(bounds.encloses(child.get_global_rect()), "active-tool label and Cancel button fit the narrow status row")
+	_assert(main.workspace.area.position.y == main.workspace.header.size.y and main.workspace.area.size.y >= main.size.y * 0.7,
+		"armed narrow header preserves at least seventy percent of the tall viewport for map/panels")
+	await _test_header_geometry(main)
+	var menu_was_visible: bool = main._menu.visible
+	main._menu.hide()
+	row.get_child(1).grab_focus()
+	var escape := InputEventKey.new()
+	escape.keycode = KEY_ESCAPE
+	escape.pressed = true
+	Input.parse_input_event(escape)
+	for frame in 3: await get_tree().process_frame
+	_assert(main._planning_system == &"", "native Escape from the focused header Cancel action disarms the map tool")
+	escape = escape.duplicate()
+	escape.pressed = false
+	Input.parse_input_event(escape)
+	main._menu.visible = menu_was_visible
+	main._set_feedback(main._intent_feedback, "Failed", "Outcome detail remains available in the planning panels.")
+	for frame in 8: await get_tree().process_frame
+	_assert(not row.visible and main.map.interaction_mode == &"select" and is_equal_approx(main.workspace.header.size.y, quiet_height),
+		"cancel and subsequent idle outcome feedback restore the original header budget exactly")
+	_assert(main._construction_panel.feedback.visible and "Outcome detail" in main._construction_panel.feedback.text,
+		"hiding idle header status preserves visible outcome details in the planning panel")
 
 
 func _refresh_real_tiles(main: Control) -> void:
@@ -323,12 +361,15 @@ func _refresh_real_tiles(main: Control) -> void:
 	if not compatible.is_empty():
 		_assert(main._block_controls[compatible[0]].set.disabled,
 			"empty refresh disables incompatible block work control")
-	main._dispatch_build_block(Rect2i(7, 4, 2, 3), ContinuumTileKind.create_farm())
+	var area := Rect2i(empty.x, empty.y, 1, 1)
+	main._activate_planning(&"zones")
+	main._choose_zone(ContinuumTileKind.Options.farm)
+	main._on_build_rectangle_requested(area)
 	_assert(reducer_calls.size() == 1, "controller dispatches one reducer invocation")
-	_assert(reducer_calls[0][0] == "build_tile_block_at" and
-			reducer_calls[0][1].slice(0, 4) == [7, 4, 8, 6] and reducer_calls[0][1][4] == main.map.terrain_model.uniform_base(Rect2i(7, 4, 2, 3)),
+	_assert(reducer_calls[0][0] == "designate_zone_at" and
+			reducer_calls[0][1].slice(0, 4) == [empty.x, empty.y, empty.x, empty.y] and reducer_calls[0][1][4] == main.map.terrain_model.uniform_base(area),
 		"reducer receives normalized inclusive rectangle and actual visible floor z")
-	main._dispatch_build_block(Rect2i(3, 3, 1, 1), ContinuumTileKind.create_mine())
+	main._on_build_rectangle_requested(area)
 	_assert(reducer_calls.size() == 2, "each completed block maps to one reducer invocation")
 
 
