@@ -25,7 +25,9 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	var content = UI.column()
 	var head = UI.column()
 	head.add_child(UI.wrapped(model.name, "body-strong", "ink"))
-	head.add_child(UI.tag(model.state, model.state_level))
+	var state_tag = UI.tag(model.state, model.state_level)
+	state_tag.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	head.add_child(state_tag)
 	content.add_child(head)
 	content.add_child(UI.wrapped(model.job))
 	var cargo = UI.flow()
@@ -36,10 +38,14 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	else:
 		cargo.add_child(UI.wrapped(model.cargo, "small"))
 	content.add_child(cargo)
+	content.add_child(UI.label("Needs · higher is better", "section", "ink-subtle"))
+	var needs = UI.column()
+	needs.add_theme_constant_override("separation", 0)
 	for need in model.needs:
 		var meter = Meter.new()
 		meter.set_presentation_model(need)
-		content.add_child(meter)
+		needs.add_child(meter)
+	content.add_child(needs)
 	if model.get("automation_rules") is Array:
 		for rule in model.automation_rules:
 			if rule is Dictionary and rule.get("label") is String:

@@ -16,6 +16,7 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	_config = config.duplicate(true)
 	model = Models.resource(data, config)
 	UI.clear(self)
+	queue_redraw()
 	if config.get("compact", false):
 		_build_compact(data, config)
 		return
@@ -89,6 +90,8 @@ func _build_compact(data: Dictionary, config: Dictionary) -> void:
 		observed.add_child(UI.label(Models.signed(rate), "readout", "ink-muted"))
 		observed.add_child(UI.label("/game h observed", "small", "ink-muted"))
 		content.add_child(observed)
+	elif rate == null and config.get("show_rate", true) and not config.get("narrow", false):
+		content.add_child(UI.label(model.rate_copy, "small", "ink-subtle"))
 	tooltip_text = "%s stored: %s\n%s" % [model.name, str(model.value) if model.value != null else "Unavailable", model.rate_copy]
 	if config.get("abbreviate_stock", false): tooltip_text += "\n~ quantities are abbreviated approximations; full stored value is above."
 	if rate != null:
@@ -96,6 +99,10 @@ func _build_compact(data: Dictionary, config: Dictionary) -> void:
 	if horizon != null:
 		tooltip_text += "\nEstimate %.1f game hours · as observed" % horizon
 	add_child(content)
+
+func _draw() -> void:
+	if _config.get("compact", false) and model.get("level") in ["warn", "critical"]:
+		draw_line(Vector2(0, size.y - 1), Vector2(size.x, size.y - 1), ThemeTokens.color(model.level), 2)
 
 static func _horizon_copy(value: float) -> String:
 	return "<0.1 game h" if value > 0.0 and value < 0.1 else "%.1f game h" % value

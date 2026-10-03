@@ -55,7 +55,9 @@ func _render() -> void:
 		if owned_focus and focused is Button:
 			focus_copy = focused.text.split(" · ")[0]
 	UI.clear(self)
-	_border = UI.surface("critical-soft" if model.level == "critical" else "bg-100", "critical" if model.level == "critical" else "line-100")
+	_border = UI.surface("critical-soft" if model.level == "critical" else "bg-100", UI.status_color(model.level, "line-100"))
+	if model.level in ["warn", "critical"]:
+		_border.border_width_left = 3
 	add_theme_stylebox_override("panel", _border)
 	var content = UI.column()
 	var head = UI.row()
@@ -94,7 +96,10 @@ func _render() -> void:
 	foot.add_child(actions)
 	content.add_child(foot)
 	if not error_copy.is_empty():
-		content.add_child(UI.wrapped(error_copy))
+		var feedback = UI.row()
+		feedback.add_child(UI.glyph("notice"))
+		feedback.add_child(UI.wrapped(error_copy, "small", "ink"))
+		content.add_child(feedback)
 	add_child(content)
 	if owned_focus:
 		var restored := false
@@ -118,7 +123,15 @@ func _request_goto() -> void:
 func _refresh_motion() -> void:
 	set_process(not model.is_empty() and model.level == "critical" and model.acknowledged == false and not reduced_motion)
 	if _border != null:
-		_border.border_color = ThemeTokens.color("critical" if model.get("level") == "critical" else "line-100")
+		_border.border_color = ThemeTokens.color(UI.status_color(model.get("level", "notice"), "line-100"))
+
+func _notification(what: int) -> void:
+	if what in [NOTIFICATION_FOCUS_ENTER, NOTIFICATION_FOCUS_EXIT]:
+		queue_redraw()
+
+func _draw() -> void:
+	if has_focus():
+		draw_style_box(get_theme_stylebox("focus", "Button"), Rect2(Vector2.ZERO, size))
 
 func _process(_delta: float) -> void:
 	if _border == null:

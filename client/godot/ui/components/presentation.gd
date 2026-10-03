@@ -68,6 +68,7 @@ static func button(copy: String, callback: Callable, variant: String = "ButtonQu
 	node.custom_minimum_size.x = minf(text_width + 2 * padding, ThemeTokens.number("panel-min") - 4 * padding)
 	node.theme_type_variation = variant
 	node.custom_minimum_size.y = ThemeTokens.number("control-md")
+	node.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	node.pressed.connect(callback)
 	return node
 

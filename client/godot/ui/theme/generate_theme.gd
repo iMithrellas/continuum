@@ -85,9 +85,9 @@ static func build() -> Theme:
 				ink = "critical"
 				border = "critical"
 			elif type in ["ButtonQuiet", "ButtonIcon"] and state != "disabled":
-				bg = "" if state == "normal" else "bg-200"
-				ink = "accent" if state == "pressed" else "ink-muted"
-				border = ""
+				bg = "" if state == "normal" else "bg-300" if state == "hover" else "bg-200"
+				ink = "accent" if state == "pressed" else "ink" if state == "hover" else "ink-muted"
+				border = "" if state == "normal" else "accent" if state == "pressed" else "line-200"
 			th.set_stylebox(state, type, box(bg, border, "radius-sm", Tokens.number("space-1" if type == "ButtonIcon" else "space-3")))
 			th.set_color({"normal": "font_color", "hover": "font_hover_color", "pressed": "font_pressed_color", "disabled": "font_disabled_color"}[state], type, Tokens.color(ink))
 		th.set_color("font_focus_color", type, th.get_color("font_color", type))
