@@ -1310,6 +1310,14 @@ func _dispatch_vertical(reducer: String, payload: Array, description: String) ->
 	if not _planning_allowed():
 		_set_feedback(_intent_feedback, "Request blocked", "Operator permission, ready subscription, and no pending request are required.")
 		return
+	if map.layered and reducer in ["construct_room", "designate_zone_at", "designate_excavation"]:
+		if payload.size() < 4 or not payload[0] is int or not payload[1] is int or not payload[2] is int or not payload[3] is int:
+			_set_feedback(_intent_feedback, "Invalid terrain request", "An exact integer terrain rectangle is required.")
+			return
+		var rect := MapUiModel.normalize_rect(Vector2i(payload[0], payload[1]), Vector2i(payload[2], payload[3]))
+		if not map.terrain_model.coverage_ready(rect):
+			_set_feedback(_intent_feedback, "Terrain pending", "Waiting for authoritative terrain and edit snapshots.")
+			return
 	if map_intent_override.is_valid():
 		map_intent_override.call(reducer, payload)
 		return

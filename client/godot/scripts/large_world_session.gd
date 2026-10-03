@@ -44,7 +44,7 @@ static func bootstrap_queries(db: Variant, legacy_queries: PackedStringArray) ->
 		return legacy_queries
 	var queries := PackedStringArray()
 	for query in legacy_queries:
-		if query not in ["SELECT * FROM terrain_chunk", "SELECT * FROM terrain"]:
+		if query != "SELECT * FROM terrain_chunk":
 			queries.append(query)
 	queries.append("SELECT * FROM world_generation")
 	return queries
@@ -70,12 +70,12 @@ func start(owner: Variant, session_epoch: int) -> bool:
 		map.bind_world_source(owner.db)
 		loading.begin(owner, epoch, generation)
 		loading.bootstrap_applied(owner, epoch, generation, false)
-		_legacy_handle = owner.subscribe(PackedStringArray(["SELECT * FROM terrain_chunk", "SELECT * FROM terrain"]))
+		_legacy_handle = owner.subscribe(PackedStringArray(["SELECT * FROM terrain_chunk"]))
 		if _legacy_handle.error != OK:
 			_fail("Legacy terrain subscription failed.")
 			return true
-		_legacy_handle.applied.connect(_legacy_applied.bind(owner, epoch))
-		_legacy_handle.end.connect(_legacy_ended.bind(owner, epoch))
+		_legacy_handle.applied.connect(_legacy_applied.bind(owner, epoch, _legacy_handle))
+		_legacy_handle.end.connect(_legacy_ended.bind(owner, epoch, _legacy_handle))
 		return true
 	_install_world(rows[0])
 	return true
@@ -110,15 +110,15 @@ func _install_world(row: Variant) -> void:
 	_camera_dirty = true
 	_update_generation(row)
 
-func _legacy_applied(owner: Variant, session_epoch: int) -> void:
-	if client != owner or epoch != session_epoch or not _active:
+func _legacy_applied(owner: Variant, session_epoch: int, handle: Variant) -> void:
+	if _legacy_handle != handle or client != owner or epoch != session_epoch or not _active:
 		return
 	map.refresh()
 	loading.terrain_applied(client, epoch, generation, true)
 	_announce()
 
-func _legacy_ended(owner: Variant, session_epoch: int) -> void:
-	if client == owner and epoch == session_epoch and _active:
+func _legacy_ended(owner: Variant, session_epoch: int, handle: Variant) -> void:
+	if _legacy_handle == handle and client == owner and epoch == session_epoch and _active:
 		_fail("Legacy terrain subscription ended unexpectedly.")
 
 func mark_changed(_table: String) -> void:

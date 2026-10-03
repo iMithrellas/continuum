@@ -39,6 +39,17 @@ func _initialize() -> void:
 	call_deferred("run")
 
 func run() -> void:
+	var legacy := LayeredTerrainModel.new()
+	var lower := PackedInt32Array()
+	lower.resize(4096)
+	lower.fill(1)
+	var upper := PackedInt32Array()
+	upper.resize(4096)
+	legacy.sync({"width": 2048, "height": 2048, "min_z": -16, "max_z": 15}, [
+		{"chunk_x": 0, "chunk_y": 0, "chunk_z": -1, "materials": lower, "revision": 1},
+		{"chunk_x": 0, "chunk_y": 0, "chunk_z": 0, "materials": upper, "revision": 1}], [{"id": 1, "opaque": true}])
+	check(legacy.surfaces.size() == 256 and legacy.query_count == 256,
+		"legacy sync prepares immediate renderer surfaces from resident columns only, not 2048 squared bounds")
 	var model := LayeredTerrainModel.new()
 	model.set_geometry({"width": 2048, "height": 2048, "min_z": -16, "max_z": 15})
 	model.set_materials([{"id": 1, "name": "soil", "opaque": true}])

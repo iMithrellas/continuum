@@ -23,6 +23,9 @@ var signature := ""
 ## A solid or unknown voxel terminates exposure; neither is inferred as air.
 var _exposed_bottom: Dictionary = {}
 var revision := 0
+## Derived-cache growth is not a terrain/cut/provenance change. Legacy renderers
+## use this separately; physical selections depend only on authoritative revision.
+var exposure_revision := 0
 ## Source encoding is supplied by a backend adapter, never generated here.
 var source_edge := 64
 var source_chunks: Dictionary = {}
@@ -45,6 +48,7 @@ func reset() -> void:
 	presentation_mode = &"detail"
 	overview_frame_provider = Callable()
 	revision += 1
+	exposure_revision += 1
 	materials = {0: {"name": "air", "opaque": false}}
 	_opaque_materials = {0: false}
 	signature = ""
@@ -139,6 +143,7 @@ func sync(geometry: Variant, chunk_rows: Array, material_rows: Array) -> bool:
 		return false
 	signature = next
 	rebuild()
+	warm_region(bounds())
 	return true
 
 func set_geometry(geometry: Variant) -> void:
@@ -196,10 +201,14 @@ func surface_at(xy: Vector2i) -> Variant:
 	return surfaces.get(xy)
 
 func rebuild() -> void:
+	clear_exposure_cache()
+	revision += 1
+
+func clear_exposure_cache() -> void:
 	surfaces.clear()
 	_exposed_bottom.clear()
 	_resolved_columns.clear()
-	revision += 1
+	exposure_revision += 1
 
 func _resolve_column(xy: Vector2i) -> void:
 	if _resolved_columns.has(xy) or not bounds().has_point(xy):
@@ -211,9 +220,7 @@ func _resolve_column(xy: Vector2i) -> void:
 		query_count += 1
 		return
 	if _resolved_columns.size() >= MAX_CACHED_COLUMNS:
-		surfaces.clear()
-		_exposed_bottom.clear()
-		_resolved_columns.clear()
+		clear_exposure_cache()
 	query_count += 1
 	var bottom := min_z
 	var known := true
@@ -229,6 +236,7 @@ func _resolve_column(xy: Vector2i) -> void:
 			break
 	_exposed_bottom[xy] = bottom
 	_resolved_columns[xy] = known
+	exposure_revision += 1
 
 func column_state(xy: Vector2i) -> StringName:
 	_resolve_column(xy)
@@ -334,10 +342,9 @@ func render_frame(rect: Rect2i, budget := MAX_FRAME_SAMPLES) -> Dictionary:
 	return {"region": Rect2i(start, finish - start), "stride": stride, "cut": cut,
 		"revision": data.revision, "mode": String(data.mode), "samples": samples}
 
-## Legacy renderers enumerate exposed cells. Warm only a bounded camera crop,
-## never the world's logical dimensions, and publish one cache revision.
+## Legacy renderers enumerate exposed cells. Warm only replicated columns in a
+## bounded crop. Exposure changes never advance the authoritative revision.
 func warm_region(rect: Rect2i) -> void:
-	var before := query_count
 	var horizontal := {}
 	var queried := 0
 	for chunk: Vector3i in chunks:
@@ -349,12 +356,9 @@ func warm_region(rect: Rect2i) -> void:
 		for y in range(area.position.y, area.end.y):
 			for x in range(area.position.x, area.end.x):
 				if queried >= MAX_FRAME_SAMPLES:
-					if query_count != before: revision += 1
 					return
 				_resolve_column(Vector2i(x, y))
 				queried += 1
-	if query_count != before:
-		revision += 1
 
 func base_at(xy: Vector2i) -> Variant:
 	var surface: Variant = surface_at(xy)

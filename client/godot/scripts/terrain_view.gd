@@ -42,6 +42,8 @@ var _frame_suspended := false
 var _suspended_overview := false
 var _stride := 1
 var pending_samples := 0
+var _legacy_cache_model_id := 0
+var _legacy_cache_revision := -1
 var _entities: Array = []
 var _entity_regions: Array[Rect2i] = []
 ## Counters for backend-free cache regressions/profiling, not frame polling.
@@ -261,6 +263,8 @@ func _sync_region() -> void:
 		var aligned_start := Vector2i((Vector2(region.position) / _stride).floor()) * _stride
 		var aligned_end := Vector2i((Vector2(region.end) / _stride).ceil()) * _stride
 		region = Rect2i(aligned_start, aligned_end - aligned_start).intersection(_frame.region)
+	else:
+		_prepare_legacy_cache(region)
 	if region == _region and _render_revision == _model.revision:
 		return
 	_region = region
@@ -271,6 +275,16 @@ func _sync_region() -> void:
 	_entity_masks.clear()
 	_build_terrain()
 	_apply_entities(true)
+
+## Legacy-only bridge for lazy physical models. The explicit frame adapter and
+## its validation never enter this path or resolve physical overview samples.
+func _prepare_legacy_cache(region: Rect2i) -> void:
+	_model.warm_region(region.grow(1))
+	if _legacy_cache_model_id != _model.get_instance_id() or _legacy_cache_revision != _model.exposure_revision:
+		_legacy_cache_model_id = _model.get_instance_id()
+		_legacy_cache_revision = _model.exposure_revision
+		_render_revision = -1
+		_surface_index_revision = -1
 
 func _build_terrain() -> void:
 	terrain_build_count += 1

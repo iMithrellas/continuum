@@ -58,6 +58,13 @@ already exist. They request and acknowledge dense terrain separately. Missing
 status on an uninitialized database is an actionable error. Already-ready worlds
 skip generation presentation and wait only for real nearby snapshots.
 
+Bootstrap retains `SELECT * FROM terrain`: this is authoritative per-operational-
+Tile ecology (not four million physical columns), used by suitability, block
+averages and the Inspector. Only the unrestricted `terrain_chunk` query is
+removed. Legacy fixture mode adds dense chunks without duplicating the ecology
+subscription. Missing tile-linked ecology stays unknown; compact column ecology
+is not substituted into those operational consumers.
+
 ## Bounds and cache semantics
 
 - Exact source subscription residency: 64 chunks; pending snapshots: 4.
@@ -73,22 +80,57 @@ skip generation presentation and wait only for real nearby snapshots.
   have the same session/client/world-generation and request-serial guards.
 - Initial camera focuses `starter + (12,12)` at the existing native tile token.
   Zero-sized initial viewports defer camera initialization and streaming.
+- Small dense fixtures retain the standalone `terrain_view.rebuild(model)` API.
+  `sync()` primes at most 65536 replicated columns, not logical bounds. The
+  legacy-only `_prepare_legacy_cache(region)` seam warms resident crop/halo cells
+  before indexing. `exposure_revision` tracks derived cache growth separately
+  from authoritative `revision`; cache warming/eviction does not invalidate
+  exact or pending selections. Compact authored-frame rendering skips this seam.
 
 ## Verification
 
 ```
 godot --headless --path client/godot --script res://tools/large_map_foundations_test.gd
 godot --headless --path client/godot --scene res://tools/large_map_wire_test.tscn
+godot --headless --path client/godot --scene res://tools/legacy_surface_stream_test.tscn
 ```
 
 The wire fixture extends the old generated DB with normalized new table rows,
 so it exercises the locked adapters and actual Main/menu join without guessing
-unfinished generated class names. Final combined binding generation and a real
-server wire/GPU composition gate remain parent integration work.
+unfinished generated class names. Final combined binding generation and real
+server wire validation remain parent integration work. Release targets fresh
+2048 compact worlds; old-save migration is not a release gate.
 
-Current branch evidence: foundations 30 assertions; locked-wire/actual-menu/art
-integration 36 assertions; terrain 126; inspector 43; world-art 2075 headless.
-Terrain UI, Main menu, session handoff/switch, subscription lifecycle and operator
-access also pass. A fresh isolated GPU rerun was attempted but blocked because
-neither PATH nor the worktree's unpacked dependency contains Xvfb; no shared
-desktop was used, and no new GPU-performance claim is made.
+Follow-up evidence on the combined parent base: foundations 31 assertions;
+locked-wire/actual-Main/menu/ecology/planning integration 53; standalone legacy
+surface tests 26 headless / 34 GPU (16/128/256 and sparse logical-2048 bounds);
+world-art 2075 headless / 2086 GPU. Actual composed near-floor occlusion passes.
+GPU gates use private Xvfb and Mesa llvmpipe, never the shared desktop:
+
+```
+PATH=/tmp/opencode/ux-panels-evidence/usr/bin:$PATH \
+  python3 client/godot/tools/map_client_x11.py --scene res://tools/legacy_surface_stream_test.tscn
+```
+
+These are software-GL correctness gates, not hardware performance evidence.
+
+### Combined follow-up handoff
+
+Own code/test commit: `08d3412` (based on parent `28df909`). Art dependency
+`27dd6ed4f17cc194368cb077970cf1fa45def55b` was cherry-picked locally as
+`9a42b60`; parent must not duplicate that dependency. The automatic merge kept
+strict cached-frame validation and rejected/stale-cut suspension unchanged.
+The only legacy renderer seam is `_prepare_legacy_cache()` before the region
+cache check in `_sync_region()`; it is skipped for authored frames.
+
+After integrating art, private-Xvfb reruns all pass: actual Main/wire 53,
+legacy surfaces 34, world-art 2086, art-review 164 (overview room pixels zero
+at 1280x720 and 1920x1080), composed occlusion, terrain depth rendering, and
+map-client rendering (near-floor difference zero, provider detachment/source
+restoration, resize/shrink and idle draw-call gates). Headless reruns pass:
+foundations 31, Main/wire 53, legacy 26, planning 96, inspector 43, terrain 126,
+map-client 1249, world-art 2075, art-review 129, and production wiring.
+
+No shared desktop, backend, live reset, schema generation, or parent worktree
+edits were performed. New-world durability and final generated-table/live-wire
+validation remain parent integration gates; old-save migration is not required.
