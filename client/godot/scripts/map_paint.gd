@@ -3,6 +3,7 @@ class_name MapPaint
 extends RefCounted
 
 static var _silhouettes: Dictionary = {}
+const OBJECTS = preload("res://assets/world/colony_objects.png")
 
 static func sprite(canvas: CanvasItem, texture: Texture2D, rect: Rect2, source: Rect2, width: float) -> void:
 	var key := "%s:%s" % [texture.get_instance_id(), source]
@@ -43,47 +44,33 @@ static func plan_edge(canvas: CanvasItem, a: Vector2, b: Vector2, scale := 1.0) 
 	canvas.draw_dashed_line(a, b, ThemeTokens.color("map-plan"), 2.0 * scale, 6.0 * scale)
 
 static func zone(canvas: CanvasItem, rect: Rect2, kind: int, world_origin: Vector2, pixels: float) -> void:
-	var token := zone_token(kind)
-	canvas.draw_rect(rect, ThemeTokens.color(token))
-	if token == "zone-sleep":
+	var row := -1
+	match kind:
+		ContinuumTileKind.Options.farm: row = 0
+		ContinuumTileKind.Options.forest: row = 1
+		ContinuumTileKind.Options.dining: row = 2
+		ContinuumTileKind.Options.sleep: row = 3
+		ContinuumTileKind.Options.recreation: row = 4
+		ContinuumTileKind.Options.mine: row = 5
+		ContinuumTileKind.Options.storage: row = 6
+	if row < 0 or pixels <= 0:
 		return
-	var light := token in ["zone-farm", "zone-storage"]
-	var ink := translucent("map-ink" if light else "map-paper", 0.24 if light else 0.3)
-	# A cell is 16 logical design pixels; the source pass may rasterize at 32.
-	var unit := pixels / ThemeTokens.number("tile")
-	var pitch := (8.0 if token == "zone-storage" else 6.0) * unit
 	var phase := world_origin * pixels
-	var width := maxf(0.5, unit)
-	if token == "zone-forest":
-		var y := ceilf((rect.position.y + phase.y - unit) / pitch) * pitch - phase.y
-		while y <= rect.end.y + unit:
-			var x := ceilf((rect.position.x + phase.x - unit) / pitch) * pitch - phase.x
-			while x <= rect.end.x + unit:
-				# Clip dot geometry, rather than dropping boundary dots: neighbouring
-				# facility footprints reconstruct the same world-anchored stipple.
-				var dot := PackedVector2Array()
-				for index in 8:
-					dot.append(Vector2(x, y) + Vector2.from_angle(index * TAU / 8.0) * unit)
-				var boundary := PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y), rect.end, Vector2(rect.position.x, rect.end.y)])
-				for polygon in Geometry2D.intersect_polygons(dot, boundary):
-					canvas.draw_colored_polygon(polygon, ink)
-				x += pitch
-			y += pitch
-		return
-	if token in ["zone-farm", "zone-storage"]:
-		var y := ceilf((rect.position.y + phase.y - width * 0.5) / pitch) * pitch - phase.y
-		while y <= rect.end.y + width * 0.5:
-			canvas.draw_rect(Rect2(Vector2(rect.position.x, y - width * 0.5), Vector2(rect.size.x, width)).intersection(rect), ink)
-			y += pitch
-	if token in ["zone-rec", "zone-storage"]:
-		var x := ceilf((rect.position.x + phase.x - width * 0.5) / pitch) * pitch - phase.x
-		while x <= rect.end.x + width * 0.5:
-			canvas.draw_rect(Rect2(Vector2(x - width * 0.5, rect.position.y), Vector2(width, rect.size.y)).intersection(rect), ink)
-			x += pitch
-	if token in ["zone-dining", "zone-mine"]:
-		hatch(canvas, rect, phase, pitch, ink, width)
-		if token == "zone-mine":
-			hatch(canvas, rect, phase, pitch, ink, width, -1.0)
+	var start := Vector2i(((rect.position + phase) / pixels).floor())
+	var end := Vector2i(((rect.end + phase) / pixels).ceil())
+	for y in range(start.y, end.y):
+		for x in range(start.x, end.x):
+			var whole := Rect2(Vector2(x, y) * pixels - phase, Vector2.ONE * pixels)
+			var clipped := whole.intersection(rect)
+			var variant := posmod(x * 73856093 ^ y * 19349663, 4)
+			var source := Rect2(Vector2(variant, row) * 64 + (clipped.position - whole.position) * 64 / pixels, clipped.size * 64 / pixels)
+			canvas.draw_texture_rect_region(OBJECTS, clipped, source)
+
+static func crate(canvas: CanvasItem, rect: Rect2) -> void:
+	canvas.draw_rect(rect, Color("a87c4c"))
+	canvas.draw_rect(rect, Color("23362f"), false, maxf(0.75, rect.size.x * 0.10))
+	canvas.draw_line(rect.position + rect.size * 0.18, rect.end - rect.size * 0.18, Color("e3c990"), maxf(0.75, rect.size.x * 0.13))
+	canvas.draw_line(rect.position + Vector2(0, rect.size.y * 0.22), rect.position + Vector2(rect.size.x, rect.size.y * 0.22), Color("d0ad74"), maxf(0.5, rect.size.y * 0.1))
 
 static func hatch(canvas: CanvasItem, rect: Rect2, phase: Vector2, pitch: float, colour: Color, width: float, direction := 1.0) -> void:
 	# Clip y = direction*x + c analytically to the rectangle.

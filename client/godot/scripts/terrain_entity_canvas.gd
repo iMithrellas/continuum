@@ -21,12 +21,9 @@ func _draw() -> void:
 					draw_line(other, rect.position + Vector2(4 * unit, rect.size.y - 4 * unit), ThemeTokens.color("map-paper"), 4 * unit)
 					draw_line(other, rect.position + Vector2(4 * unit, rect.size.y - 4 * unit), ThemeTokens.color("map-ink"), 2 * unit)
 			"stack":
-				draw_rect(rect, ThemeTokens.color("map-paper"))
-				draw_rect(rect, ThemeTokens.color("map-ink"), false, 2 * unit)
-				draw_line(rect.position, rect.end, ThemeTokens.color("map-ink"), unit)
+				MapPaint.crate(self, rect)
 			"colonist":
 				MapPaint.sprite(self, entity.texture, rect, entity.source, float(entity.get("outline", 1.0 / 16.0)) * pixels)
 				if entity.get("cargo", false):
 					var cargo := Rect2(rect.end - Vector2(8, 8) * unit, Vector2(8, 8) * unit)
-					draw_rect(cargo, ThemeTokens.color("map-paper"))
-					draw_rect(cargo, ThemeTokens.color("map-ink"), false, unit)
+					MapPaint.crate(self, cargo)

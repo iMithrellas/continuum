@@ -56,7 +56,7 @@ static var RESOURCE_COLORS: Dictionary[int, Color] = {
 	ContinuumResourceKind.Options.stone: ThemeTokens.color("ink"),
 	ContinuumResourceKind.Options.meat: ThemeTokens.color("ink"),
 }
-const COLONIST_WALK_TEXTURE: Texture2D = preload("res://assets/colonist_worker_test_walk.png")
+const COLONIST_WALK_TEXTURE: Texture2D = preload("res://assets/world/colonist_walk.png")
 const COLONIST_WALK_FRAME_COUNT := 4
 const COLONIST_WALK_FRAME_MS := 140
 const COLONIST_WALK_FRAME_SIZE := 32.0
@@ -97,6 +97,7 @@ var _actor_plate_cache: Dictionary = {}
 var _actor_name_cache: Dictionary = {}
 var _destination_plate_cache: Dictionary = {}
 var _preview_plate_cache: Dictionary = {}
+var _terrain_status_cache: Dictionary = {}
 var selected_colonist_id := -1
 var _alert_pins: Array[Dictionary] = []
 var _excavation_regions: Array[Dictionary] = []
@@ -137,6 +138,17 @@ func _layout_terrain() -> void:
 		_hover_cell = _cell_at(_hover_point)
 	queue_redraw()
 	camera_changed.emit()
+
+
+## Streaming owner supplies an epoch-checked frame after exact cache updates.
+## This installs visual data only; overview values never enter terrain_model.
+func set_terrain_frame(frame: Dictionary) -> bool:
+	if not layered or not has_world_snapshot() or not terrain_view.rebuild_frame(terrain_model, frame):
+		return false
+	terrain_view.set_visible(true)
+	terrain_view.update_entities(entity_descriptors())
+	queue_redraw()
+	return true
 
 
 func _fit_cell_size() -> float:
@@ -269,6 +281,7 @@ func reset_world() -> void:
 	_actor_name_cache.clear()
 	_destination_plate_cache.clear()
 	_preview_plate_cache.clear()
+	_terrain_status_cache.clear()
 	_alert_pins.clear()
 	_excavation_regions.clear()
 	_excavation_revision = -1
@@ -617,6 +630,9 @@ func _draw() -> void:
 		return
 	if not layered:
 		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), ThemeTokens.color("map-ground-deep"))
+	if layered and terrain_view.is_overview():
+		_draw_terrain_status()
+		return
 
 	if layered:
 		var selected: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(selected_tile_id)
@@ -647,12 +663,14 @@ func _draw() -> void:
 			MapPaint.selection(self, rect.grow(-2 * metrics.scale), metrics.scale)
 
 	var visible := visible_grid_rect()
-	if zoom_percent() >= 75.0:
+	if interaction_mode != &"select" and cell >= 24 * metrics.scale:
 		for y in range(visible.position.y, visible.end.y):
 			for x in range(visible.position.x, visible.end.x):
 				if layered and terrain_model.depth_at(Vector2i(x, y)) != 0:
 					continue
-				draw_circle(origin + Vector2(x, y) * cell, metrics.scale, ThemeTokens.color("map-grid"))
+				var corner := origin + Vector2(x, y) * cell
+				draw_line(corner, corner + Vector2(cell, 0), MapPaint.translucent("map-paper", 0.12), metrics.scale)
+				draw_line(corner, corner + Vector2(0, cell), MapPaint.translucent("map-paper", 0.12), metrics.scale)
 
 	if not layered:
 		_draw_colonists(origin, cell)
@@ -667,6 +685,13 @@ func _draw() -> void:
 			Vector2(_selection_rect.size) * cell)
 		MapPaint.selection(self, selection_rect.grow(-2 * metrics.scale), metrics.scale)
 	_draw_drag_preview(origin, cell)
+	_draw_terrain_status()
+
+
+func _draw_terrain_status() -> void:
+	var status := terrain_view.presentation_status()
+	if not status.is_empty():
+		MapPaint.plate(self, Vector2(8, size.y - 38) * Vector2(metrics.scale, 1), status, "", metrics.scale, false, _terrain_status_cache, Rect2(Vector2.ZERO, size))
 
 
 func _draw_drag_preview(origin: Vector2, cell: float) -> void:
@@ -888,14 +913,35 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 		var bounds := Rect2(origin + Vector2(region.bounds.position) * cell, Vector2(region.bounds.size) * cell)
 		if not bounds.intersects(viewport):
 			continue
-		for edge: PackedVector2Array in region.visible_edges:
-			draw_line(origin + edge[0] * cell, origin + edge[1] * cell, MapPaint.translucent("map-ink", 0.45), metrics.scale)
-		if region.label_visible:
+		var focused := _region_focused(region)
+		var forest: bool = region.kind == ContinuumTileKind.Options.forest
+		if focused or (not forest and cell >= 8 * metrics.scale):
+			for edge: PackedVector2Array in region.visible_edges:
+				draw_line(origin + edge[0] * cell, origin + edge[1] * cell, MapPaint.translucent("map-ink", 0.38), metrics.scale)
+		if region.label_visible and region_label_visible(region, cell):
 			var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
 			var title := ContinuumTileKind.parse_enum_name(region.kind).to_upper()
-			if not region.work_label.is_empty():
+			if not region.work_label.is_empty() and MapLabelLod.work(cell, metrics.scale, focused):
 				title += " · " + region.work_label
 			MapPaint.plate(self, anchor, title, str(region.count), metrics.scale, false, region.plate_cache, viewport if viewport.has_point(anchor) else Rect2())
+
+
+func _region_focused(region: Dictionary) -> bool:
+	if (_hover_cell != null and region.cells.has(_hover_cell)) or region.get("sites", {}).has(selected_tile_id):
+		return true
+	if _selection_rect.has_area() and _selection_rect.intersects(region.bounds):
+		if _selection_rect.encloses(region.bounds): return true
+		for xy: Vector2i in region.cells:
+			if _selection_rect.has_point(xy): return true
+	return false
+
+
+func region_label_visible(region: Dictionary, cell: float) -> bool:
+	var focused := _region_focused(region)
+	if not MapLabelLod.region(cell, metrics.scale, focused):
+		return false
+	var minimum := 12 if region.kind == ContinuumTileKind.Options.forest else 3
+	return focused or (region.count >= minimum and region.bounds.size.x * cell >= 58 * metrics.scale)
 
 
 func _draw_ground_items(origin: Vector2, cell: float) -> void:
@@ -907,9 +953,7 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 		var column := 0.56 if stack.kind.value == ContinuumResourceKind.Options.meat else 0.04
 		var rect := Rect2(origin + Vector2(stack.x + column, stack.y + 0.65) * cell,
 				Vector2(cell * 0.40, cell * 0.33))
-		draw_rect(rect, ThemeTokens.color("map-paper"))
-		draw_rect(rect, ThemeTokens.color("map-ink"), false, metrics.scale)
-		draw_line(rect.position, rect.end, ThemeTokens.color("map-ink"), metrics.scale)
+		MapPaint.crate(self, rect)
 
 
 ## One placement calculation feeds both legacy sprites and their selection rings.
@@ -963,8 +1007,7 @@ func _draw_legacy_colonist(descriptor: Dictionary, cell: float) -> void:
 	MapPaint.sprite(self, COLONIST_WALK_TEXTURE, sprite_rect, source_rect, metrics.scale)
 	if colonist.carried_amount > 0.0:
 		var cargo_rect := Rect2(sprite_rect.end - Vector2.ONE * cell * 0.25, Vector2.ONE * cell * 0.25)
-		draw_rect(cargo_rect, ThemeTokens.color("map-paper"))
-		draw_rect(cargo_rect, ThemeTokens.color("map-ink"), false, metrics.scale)
+		MapPaint.crate(self, cargo_rect)
 
 
 func _get_tooltip(at_position: Vector2) -> String:
@@ -1267,7 +1310,7 @@ func _index_entity(entity: Dictionary) -> void:
 
 
 func entity_descriptors() -> Array:
-	if not has_world_snapshot():
+	if not has_world_snapshot() or terrain_view.is_overview():
 		return []
 	var region := visible_grid_rect(LayeredTerrainView.CAMERA_PADDING)
 	if _static_camera_dirty or region != _static_camera_region:
@@ -1317,7 +1360,8 @@ func _draw_excavations(origin: Vector2, cell: float) -> void:
 			MapPaint.plan_edge(self, origin + edge[0] * cell, origin + edge[1] * cell, metrics.scale)
 		var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
 		var viewport := Rect2(Vector2.ZERO, size)
-		MapPaint.plate(self, anchor, region.status, "", metrics.scale, true, region.plate_cache, viewport if viewport.has_point(anchor) else Rect2())
+		if MapLabelLod.work(cell, metrics.scale, _region_focused(region)):
+			MapPaint.plate(self, anchor, region.status, "", metrics.scale, true, region.plate_cache, viewport if viewport.has_point(anchor) else Rect2())
 
 
 func _cache_excavations() -> void:
