@@ -9,9 +9,13 @@ var selected_id := -1
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if map != null:
+		map.terrain_view.presentation_changed.connect(queue_redraw)
+		map.camera_changed.connect(queue_redraw)
 
 func _draw() -> void:
 	if map == null or not map.has_world_snapshot(): return
+	if map.terrain_view.is_overview() or map.terrain_view.is_frame_suspended(): return
 	var viewport := Rect2(Vector2.ZERO, size)
 	for room in rooms:
 		var area := PlanningModel.footprint(room)

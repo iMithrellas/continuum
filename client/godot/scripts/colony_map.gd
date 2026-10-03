@@ -123,6 +123,7 @@ func _ready() -> void:
 	focus_exited.connect(cancel_gestures)
 	mouse_exited.connect(_clear_hover)
 	terrain_view.attach(self)
+	terrain_view.presentation_changed.connect(queue_redraw)
 	terrain_view.set_visible(false)
 	resized.connect(_on_map_resized)
 
@@ -663,7 +664,7 @@ func _draw() -> void:
 		return
 	if not layered:
 		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), ThemeTokens.color("map-ground-deep"))
-	if layered and terrain_view.is_overview():
+	if layered and (terrain_view.is_overview() or terrain_view.is_frame_suspended()):
 		_draw_terrain_status()
 		return
 
@@ -1347,7 +1348,7 @@ func _index_entity(entity: Dictionary) -> void:
 
 
 func entity_descriptors() -> Array:
-	if not has_world_snapshot() or terrain_view.is_overview():
+	if not has_world_snapshot() or terrain_view.is_overview() or terrain_view.is_frame_suspended():
 		return []
 	var region := visible_grid_rect(LayeredTerrainView.CAMERA_PADDING)
 	if _static_camera_dirty or region != _static_camera_region:

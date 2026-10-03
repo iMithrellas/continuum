@@ -136,7 +136,7 @@ func test_frame_contract() -> void:
 	var model := OverviewOnlyModel.new()
 	model.width = 2048
 	model.height = 2048
-	model.materials = {1: {"name": "soil"}, 2: {"name": "stone"}}
+	model.materials = {0: {"name": "air", "opaque": false}, 1: {"name": "soil", "opaque": true}, 2: {"name": "stone", "opaque": true}}
 	var parent := Control.new()
 	parent.size = Vector2(1280, 720)
 	add_child(parent)
@@ -257,7 +257,7 @@ func test_gpu() -> void:
 	var overview := OverviewOnlyModel.new()
 	overview.width = 2048
 	overview.height = 2048
-	overview.materials = {1: {"name": "soil"}}
+	overview.materials = {0: {"name": "air", "opaque": false}, 1: {"name": "soil", "opaque": true}}
 	var frame := {"region": overview.bounds(), "stride": 512, "cut": 0, "revision": 1, "mode": "overview", "samples": {
 		Vector2i.ZERO: {"known": true, "surface_z": -1, "material": 1},
 		Vector2i(512, 0): {"known": true, "surface_z": -17, "material": 0}}}

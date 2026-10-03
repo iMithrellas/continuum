@@ -85,8 +85,28 @@ misaligned frames, stale cuts and over-budget detail frames return `false`.
 The streaming owner chooses a coarser authoritative LOD before calling the API.
 Pass a one-sample halo in `samples` when available for crop-edge continuity;
 the dictionary including its halo must stay inside its sample budget.
-Treat frame dictionaries as immutable and advance `revision` when sample data,
-coverage or pending state changes. Model revisions also invalidate the frame key.
+Advance `revision` when sample data, coverage or pending state changes. Every
+input, including cache-key hits, is type-checked: present samples require boolean
+`known`; known samples require integer `surface_z` and `material`. Opaque samples
+must reference a registered material whose `opaque` field is boolean `true`, with
+height in `[min_z, cut]`. Resolved-empty samples require registered nonopaque air
+(`material=0`) and exactly `surface_z=min_z-1`. Pending samples may omit both value
+fields or supply that same empty sentinel, never an exposed-surface payload.
+
+The renderer retains a primitive-only, recursively read-only snapshot. Mutating
+the caller's dictionaries cannot change an accepted frame. A reused key with
+different valid rendering samples is rejected; identical valid samples reuse
+their textures and mask allocations. Model identity/revision, geometry/cut and
+registered opacity changes invalidate the accepted context. Its pages, metadata
+bindings, masks and entity passes are immediately suspended and released, leaving
+pending coverage until a valid current frame arrives. `layout`, entity updates and
+visibility toggles cannot revive that stale frame or fall back to exact queries.
+
+`presentation_changed` notifies independent map children when their cached draw
+commands must change. External room envelopes check both `is_overview()` and
+`is_frame_suspended()`; their physical detail drawing returns with a valid detail
+frame. The frame API returns `false` for malformed input without replacing an
+otherwise compatible accepted frame.
 
 **Caller integration:** compact mode must call the frame API instead of the
 legacy `terrain_view.rebuild(model)` call in `ColonyMap.refresh`. Install the
@@ -181,3 +201,12 @@ path compares camera crops and split pages pixel-for-pixel, checks soft material
 edges, cliff pigment isolation, exact opaque mask corners, empty holes and
 representative pending pixels. Existing terrain, map interaction, sparse picking,
 feedback, asset split/crop continuity and composed-occlusion suites also pass.
+
+The follow-up `world_art_review_test.tscn` reproduces independent-review R2–R4:
+malformed and contradictory samples at reused/fresh cache keys; immutable cache
+ownership; every page and retained shader TextureRef at the maximum sample
+budget; actual old-cut → rejection → pending → new-cut pixels; whole-entity mask
+release/restoration; and external room detail → overview → detail at 1280×720 and
+1920×1080. Run it headless for validation/allocation checks or through the same
+private Xvfb runner for pixel checks. Evidence is written to
+`client/godot/build/art-review-fixes/`.

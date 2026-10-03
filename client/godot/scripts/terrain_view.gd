@@ -3,6 +3,9 @@
 class_name LayeredTerrainView
 extends RefCounted
 
+## Independent map children must invalidate their cached draw commands too.
+signal presentation_changed
+
 const SHADER = preload("res://shaders/terrain_depth.gdshader")
 const SURFACE_SHADER = preload("res://shaders/terrain_surface.gdshader")
 const PENDING_SHADER = preload("res://shaders/terrain_pending.gdshader")
@@ -34,6 +37,9 @@ var _terrain_pages: Array[Dictionary] = []
 var _active_pages: Array[Dictionary] = []
 var _frame: Dictionary = {}
 var _frame_key: Array = []
+var _frame_context: Array = []
+var _frame_suspended := false
+var _suspended_overview := false
 var _stride := 1
 var pending_samples := 0
 var _entities: Array = []
@@ -90,9 +96,12 @@ func _ensure_bands(count: int) -> void:
 		_entity_regions.append(Rect2i())
 
 func rebuild(model: LayeredTerrainModel) -> void:
-	if not _frame.is_empty():
+	if not _frame.is_empty() or _frame_suspended:
 		_frame = {}
 		_frame_key = []
+		_frame_context = []
+		_frame_suspended = false
+		_suspended_overview = false
 		_stride = 1
 		pending_samples = 0
 		_render_revision = -1
@@ -103,51 +112,133 @@ func rebuild(model: LayeredTerrainModel) -> void:
 	_ensure_bands(count)
 	_sync_region()
 	layout(_origin, _extent)
+	presentation_changed.emit()
 
 ## Explicit streaming adapter. No whole-world/whole-array fallback is made for
 ## compact worlds. The client owns sample residency, stale-epoch rejection and
 ## exact decoding. Samples <=65536; overview never authorizes physical queries.
-func rebuild_frame(model: LayeredTerrainModel, frame: Dictionary) -> bool:
-	if not frame.has_all(["region", "stride", "cut", "revision", "mode", "samples"]): return false
+func rebuild_frame(model: LayeredTerrainModel, frame: Variant) -> bool:
+	if model == null: return false
+	_ensure_frame_current(model)
+	if not _valid_frame(model, frame): return false
+	var stride: int = frame.stride
+	var key: Array = [model.get_instance_id(), model.revision, frame.revision, frame.region, stride, frame.cut, frame.mode]
+	if key == _frame_key:
+		return _same_samples(frame.samples, _frame.samples)
+	_model = model
+	_frame = _frame_snapshot(frame)
+	_frame_key = key
+	_frame_context = _model_context(model)
+	_frame_suspended = false
+	_suspended_overview = false
+	_stride = stride
+	_render_revision = -1
+	_surface_index_revision = -1
+	pending_samples = (frame.region.size.x / stride) * (frame.region.size.y / stride)
+	for xy: Vector2i in _frame.samples:
+		if frame.region.has_point(xy) and _frame.samples[xy].known: pending_samples -= 1
+	pending_samples = maxi(0, pending_samples)
+	_show_pending_ground()
+	_sync_region()
+	_layout_layers()
+	presentation_changed.emit()
+	return true
+
+func _valid_frame(model: LayeredTerrainModel, frame: Variant) -> bool:
+	if not frame is Dictionary or not frame.has_all(["region", "stride", "cut", "revision", "mode", "samples"]): return false
 	if not frame.region is Rect2i or not frame.samples is Dictionary: return false
-	var stride := int(frame.stride)
-	if stride < 1 or frame.samples.size() > 65536 or int(frame.cut) != model.cut: return false
+	if not frame.stride is int or not frame.cut is int or not frame.revision is int: return false
+	if not (frame.mode is String or frame.mode is StringName): return false
+	var stride: int = frame.stride
+	if stride < 1 or frame.samples.size() > 65536 or frame.cut != model.cut: return false
+	if frame.cut < model.min_z or frame.cut > model.max_z: return false
 	if frame.mode not in ["detail", "overview"] or (frame.mode == "detail" and stride != 1): return false
 	if frame.mode == "overview" and stride not in [8, 32, 128, 512]: return false
 	if posmod(frame.region.position.x, stride) != 0 or posmod(frame.region.position.y, stride) != 0: return false
 	if posmod(frame.region.size.x, stride) != 0 or posmod(frame.region.size.y, stride) != 0: return false
-	if not frame.region.has_area() or frame.region.get_area() / (stride * stride) > 65536: return false
+	if not frame.region.has_area(): return false
+	var columns: int = frame.region.size.x / stride
+	var rows: int = frame.region.size.y / stride
+	if columns > 65536 or rows > 65536 or columns * rows > 65536: return false
 	if frame.mode == "detail" and maxi(frame.region.size.x, frame.region.size.y) > MAX_TEXTURE_EDGE: return false
-	var key: Array = [model.get_instance_id(), model.revision, frame.revision, frame.region, stride, frame.cut, frame.mode]
-	if key == _frame_key: return true
 	for xy: Variant in frame.samples:
 		if not xy is Vector2i or posmod(xy.x, stride) != 0 or posmod(xy.y, stride) != 0: return false
 		var sample: Variant = frame.samples[xy]
-		if not sample is Dictionary: return false
-		if sample.get("known", false) and not sample.has_all(["surface_z", "material"]): return false
-		if sample.get("known", false) and int(sample.material) != 0 and (int(sample.surface_z) < model.min_z or int(sample.surface_z) > model.cut): return false
-	_model = model
-	_frame = frame
-	_frame_key = key
-	_stride = stride
-	_render_revision = -1
-	_surface_index_revision = -1
-	pending_samples = frame.region.get_area() / (stride * stride)
+		if not sample is Dictionary or not sample.get("known") is bool: return false
+		var has_values: bool = sample.has("surface_z") or sample.has("material")
+		if not sample.known and not has_values: continue
+		if not sample.has_all(["surface_z", "material"]): return false
+		if not sample.surface_z is int or not sample.material is int: return false
+		if not sample.known:
+			if sample.material != 0 or sample.surface_z != model.min_z - 1: return false
+			continue
+		if not model.materials.has(sample.material): return false
+		var opaque: Variant = LayeredTerrainModel.field(model.materials[sample.material], "opaque")
+		if not opaque is bool: return false
+		if sample.material == 0:
+			if opaque or sample.surface_z != model.min_z - 1: return false
+		elif sample.material < 0 or not opaque or sample.surface_z < model.min_z or sample.surface_z > model.cut:
+			return false
+	return true
+
+## Only primitive rendering fields are retained. Caller mutation or extra nested
+## payloads cannot modify/expand the accepted immutable visual cache.
+func _frame_snapshot(frame: Dictionary) -> Dictionary:
+	var samples := {}
 	for xy: Vector2i in frame.samples:
-		if frame.region.has_point(xy) and frame.samples[xy].get("known", false): pending_samples -= 1
-	pending_samples = maxi(0, pending_samples)
+		var source: Dictionary = frame.samples[xy]
+		var sample := {"known": source.known}
+		if source.known:
+			sample["surface_z"] = source.surface_z
+			sample["material"] = source.material
+		sample.make_read_only()
+		samples[xy] = sample
+	samples.make_read_only()
+	var result := {"region": frame.region, "stride": frame.stride, "cut": frame.cut,
+		"revision": frame.revision, "mode": String(frame.mode), "samples": samples}
+	result.make_read_only()
+	return result
+
+func _same_samples(incoming: Dictionary, accepted: Dictionary) -> bool:
+	if incoming.size() != accepted.size(): return false
+	for xy: Vector2i in incoming:
+		if not accepted.has(xy) or incoming[xy].known != accepted[xy].known: return false
+		if incoming[xy].known and (incoming[xy].surface_z != accepted[xy].surface_z or incoming[xy].material != accepted[xy].material): return false
+	return true
+
+func _model_context(model: LayeredTerrainModel) -> Array:
+	var opacity := {}
+	for id: Variant in model.materials:
+		opacity[id] = LayeredTerrainModel.field(model.materials[id], "opaque")
+	return [model.get_instance_id(), model.revision, model.bounds(), model.min_z, model.max_z, model.cut, opacity]
+
+func _ensure_frame_current(model: LayeredTerrainModel) -> void:
+	if _frame.is_empty() or _frame_context == _model_context(model): return
+	_suspended_overview = is_overview()
+	_model = model
+	pending_samples = maxi(1, (_region.size.x / _stride) * (_region.size.y / _stride))
+	_frame = {}
+	_frame_key = []
+	_frame_context = []
+	_frame_suspended = true
+	_clear_visual_passes()
+	_show_pending_ground()
+	presentation_changed.emit()
+
+func _show_pending_ground() -> void:
 	if _ground.material == null:
 		var pending := ShaderMaterial.new()
 		pending.shader = PENDING_SHADER
 		_ground.material = pending
-	_sync_region()
-	_layout_layers()
-	return true
 
 func is_overview() -> bool:
-	return _frame.get("mode", "detail") == "overview"
+	return _suspended_overview if _frame_suspended else _frame.get("mode", "detail") == "overview"
+
+func is_frame_suspended() -> bool:
+	return _frame_suspended
 
 func presentation_status() -> String:
+	if _frame_suspended: return "Terrain loading · waiting for current viewport data"
 	if is_overview():
 		return "Terrain overview · zoom in to inspect" + (" · loading" if pending_samples > 0 else "")
 	return "Terrain loading · waiting for viewport data" if pending_samples > 0 else ""
@@ -155,6 +246,8 @@ func presentation_status() -> String:
 func _sync_region() -> void:
 	if _model == null:
 		return
+	_ensure_frame_current(_model)
+	if _frame_suspended: return
 	_ensure_bands(_model.max_z - _model.min_z + 1)
 	var bounds := _model.bounds()
 	var region := bounds
@@ -256,6 +349,8 @@ func _build_page(index: int, item: Dictionary) -> void:
 			if page.layers[depth] != null:
 				page.layers[depth].texture = null
 				page.layers[depth].visible = false
+				page.layers[depth].material.set_shader_parameter("surface_data", null)
+				page.layers[depth].material.set_shader_parameter("visibility_mask", null)
 			continue
 		if page.layers[depth] == null and images[depth] != null:
 			page.layers[depth] = _new_layer(depth, false)
@@ -310,6 +405,10 @@ func update_entities(entities: Array) -> void:
 
 func _apply_entities(force := false) -> void:
 	if _model == null:
+		return
+	_ensure_frame_current(_model)
+	if _frame_suspended:
+		_entities = []
 		return
 	var groups := {}
 	var regions := {}
@@ -385,17 +484,11 @@ func _layout_layers() -> void:
 		entity_layers[depth].position = _origin + Vector2(_entity_regions[depth].position) * cell
 		entity_layers[depth].size = Vector2(_entity_regions[depth].size) * cell
 
-func reset() -> void:
-	_model = null
+func _clear_visual_passes() -> void:
 	_render_revision = -1
 	_entities = []
 	_entity_masks.clear()
 	_surface_texture = null
-	_frame = {}
-	_frame_key = []
-	_stride = 1
-	pending_samples = 0
-	if _ground != null: _ground.material = null
 	_surface_index_revision = -1
 	_surface_buckets.clear()
 	_active_pages.clear()
@@ -410,11 +503,26 @@ func reset() -> void:
 	var surface_layers := terrain_layers()
 	for layer in surface_layers + entity_layers:
 		layer.texture = null
+		layer.visible = false
 		layer.material.set_shader_parameter("visibility_mask", null)
 		if layer in surface_layers: layer.material.set_shader_parameter("surface_data", null)
+
+func reset() -> void:
+	_model = null
+	_clear_visual_passes()
+	_frame = {}
+	_frame_key = []
+	_frame_context = []
+	_frame_suspended = false
+	_suspended_overview = false
+	_stride = 1
+	pending_samples = 0
+	if _ground != null: _ground.material = null
 	set_visible(false)
+	presentation_changed.emit()
 
 func set_visible(value: bool) -> void:
+	if _model != null: _ensure_frame_current(_model)
 	if _visible == value:
 		return
 	_visible = value
