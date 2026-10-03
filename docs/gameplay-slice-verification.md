@@ -233,3 +233,51 @@ leave server time running while clients are absent, and reconnect to verify
 durable outcomes. Use existing private integration tooling where applicable;
 record server/client versions, commands, logs and observations. Do not label this
 document or a passing WASM build as that validation.
+
+## Integrated client and server checks
+
+On 2026-10-03 the integrated slice was additionally checked with Rust 1.98.1,
+Godot 4.7.2 and SpacetimeDB 2.10.0. These observations are separate from the pure
+scenarios above and do not certify release platforms or sustained multiplayer.
+
+- `just test`, `just fmt-check`, and `just wasm`: 169 unit tests and five gameplay
+  scenarios passed; historical golden traces were unchanged. Independent review
+  also passed native-feature tests and a feature-enabled WASM build.
+- `ui_check.py`: all 28 stages passed on the final client, including actual-main
+  composition, permissions, scaling, generated data, export and packed widgets.
+- `just test-gameplay-client`: nine focused client suites passed, including enum
+  cache lifecycle, generated bindings, production controls/wiring, guidance,
+  suitability, operations, map feedback and status components.
+  A tenth suite now checks the subsequent schema-validated unit-enum guard:
+  unsupported payload enums and malformed keys must fail closed without cache
+  mutation. Its independent SDK review is separate from the earlier desktop run.
+- `just test-gate-safety`: 17 connected-gate fault tests and eight production-gate
+  fault tests passed. Real private-server gates separately exercise authorization,
+  additive upgrade, disconnected progress, delivery conservation and durable
+  restart; see [connected gate](connected-colony-gate.md) and
+  [production-gate safety](production-automation-gate.md).
+
+### Actual desktop smoke
+
+An operator used the actual main scene through Hyprland/Wayland, not a local-row
+fixture. The native QA server had its own random loopback port, database, data,
+credentials and client settings. No existing colony was published to or reset.
+The backend was built at `e17b628` (the same gameplay/schema contracts, before
+the once-gather performance correction); the final policy lifecycle was repeated
+with client cache fix `2729176`. The later permission-epoch correction has
+separate actual-main fixture coverage.
+
+The desktop check observed live colonist activity, excavation progress and a
+real leave/return digest. Through Overview's production controls it set a Wood
+target, observed replicated confirmation and `target_reached`, then updated the
+target from 30 to 35 and selected Unlimited. The corrected client displayed
+`Target: unlimited` and `Confirmed by server snapshot`; an independent SQL read
+confirmed the policy table was empty. Production resumed. The pre-fix check
+had exposed stale cached enum-primary-key rows despite successful server removal;
+the [SDK regression](spacetime-enum-keys.md) now covers that lifecycle.
+
+Local evidence was retained under `/tmp/opencode/continuum-slice/live-qa/evidence/`,
+including update/removal screenshots and the final authoritative read. Those
+paths are historical evidence, not prerequisites for running the tests. The QA
+client was closed, the original workspace restored, and PID/start-identity-checked
+cleanup removed the owned server and private credential/data directories.

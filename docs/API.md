@@ -1,6 +1,6 @@
 # Continuum Public Protocol/API
 
-This guide describes the public surface of the module at schema v10. Continuum
+This guide describes the current public surface of the module. Continuum
 is a SpacetimeDB module, not an HTTP application: clients subscribe to rows and
 send reducer calls over the SpacetimeDB protocol. The Godot client and an
 external client use the same tables and reducers.
@@ -28,6 +28,11 @@ The exact connection and message encoding should be taken from the pinned SDK,
 not reimplemented from this abbreviated description. For a remote connection,
 use HTTPS/WSS and never put a real token in a URL that may be logged by a proxy,
 browser history, referrer, or debug logger.
+
+The vendored SDK includes local transport instrumentation and
+[validated unit-enum database keys](spacetime-enum-keys.md). The latter keeps
+`production_policy` updates, deletions and enum index lookups consistent with
+server rows; it does not change the wire schema or authorize optimistic state.
 
 The vendored SDK also contains an HTTP helper with these currently implemented
 paths:
@@ -64,6 +69,7 @@ private and is not a public table.
 | `colonist` | `id: u64` (primary key); `name: String` (display name); `x`, `y`, `target_x`, `target_y: i32` (current/target grid coordinates); `move_progress: f32` (normalized movement progress); `activity: Activity` (observable activity); `work: WorkType` (fixed profession); `haul_role: HaulRole` (server-derived role); `carried_kind: ResourceKind` (cargo kind, including the zero/default value when empty); `carried_amount: f32` (cargo units); `goal: Goal` (persistent current goal); `hunger`, `fatigue`, `recreation`, `mood`, `productivity: f32` (simulation scores); `sleep_hours`, `last_sleep_quality: f32` (recent sleep measures). |
 | `item_stack` | `id: u64` (primary key); `tile_id: u32` (ground tile); `x`, `y: i32` (ground coordinates); `kind: ResourceKind` (resource); `amount: f32` (ground units). Ground piles can be partial or multiple stacks. |
 | `work_order` | `id: u64` (primary key, deterministic); `tile_id: u32` (work tile); `work: WorkType` (producing profession); `priority: u8` (1 high, 2 normal, 3 low); `enabled: bool` (whether the standing intent is active). Ticks do not rewrite orders. |
+| `production_policy` | `resource: ResourceKind` (primary key); `target: f32` (positive resource-wide standing target). An absent row means unlimited production. |
 | `alert` | `id: u64` (auto-increment primary key); `code: String` (unique problem key); `severity: Severity`; `message: String`; `active: bool`; `acknowledged: bool`; `raised_game_seconds: f64` (in-game clock at raise); `raised_at: Timestamp` (server timestamp). |
 | `event_log` | `id: u64` (auto-increment primary key); `game_seconds: f64` (in-game clock); `day`, `hour`, `minute: u32` (display time components); `severity: Severity`; `message: String`; `at: Timestamp` (server timestamp). |
 
@@ -125,9 +131,13 @@ same names, for example `selfHaul` and `dedicatedHaulers`, not snake case.
 | `Severity` | `info`, `warning`, `critical` |
 
 `TileKind` is the operational layer: it is the facility/work-zone state used by
-the simulation. `Terrain` is a separate environmental layer. The current
-four-octave fBm sampler produces bounded values for all three terrain fields;
-it does not currently affect production, movement, needs, or tile conversion.
+the simulation. `Terrain` is a separate environmental layer. The four-octave
+fBm sampler produces bounded values for all three terrain fields. Persisted soil
+fertility and moisture modify farming yield; forest density modifies logging
+and hunting yield. Mining is unaffected. Multipliers are bounded to `[0.5, 1.5]`;
+missing terrain falls back to baseline yield. Fields do not imply depletion,
+seasonality, regeneration, movement, needs, or tile-conversion effects. See
+[ecological production](ecological-production.md).
 
 The two hauling policies are colony-wide. `selfHaul` gives workers the `both`
 role. `dedicatedHaulers` derives one `producer` and one `hauler` within each
@@ -157,6 +167,8 @@ Rust signatures and the generated binding types.
 | `remove_work_order` | `(order_id: u64)` | Operator/admin. Unknown ID errors. |
 | `set_haul_policy` | `(policy: HaulPolicy)` | Operator/admin. `selfHaul` or `dedicatedHaulers` only; missing config errors; existing policy is a no-op. |
 | `set_meal_policy` | `(policy: MealPolicy)` | Operator/admin. `normal` or `rationed`; missing config errors; actual changes are audited, while an unchanged policy is a no-op with no event. |
+| `set_production_policy` | `(resource: ResourceKind, target: f32)` | Operator/admin. Target must be finite, positive and at most 1,000,000; invalid inputs reject before writes. Identical target is a no-op. |
+| `remove_production_policy` | `(resource: ResourceKind)` | Operator/admin. Removes the resource target; absent row is a no-op restoring unlimited production. |
 | `acknowledge_alert` | `(alert_id: u64)` | Operator/admin. Unknown ID errors; already acknowledged is a no-op. |
 | `set_time_scale` | `(time_scale: f64)` | Admin only. Baseline accepts finite `0..=100000` (the cooldown worker explicitly rejects NaN/infinity); missing config errors; unchanged value is a no-op with no timestamp update. `0` pauses the clock. |
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |
@@ -263,6 +275,17 @@ default of `normal`. Automatic migration populates existing config rows with
 that default. New columns with defaults must remain at the end of the table
 definition. A normal republish is sufficient; do not use `--delete-data` for
 this feature.
+
+`production_policy` is an additive public table keyed by resource; it does not
+change `config`, `work_order`, or existing row identities. Existing databases
+migrate with no policy rows, preserving unlimited production. No target is
+backfilled. A normal publish with matching regenerated Godot bindings is
+sufficient; do not use `--delete-data` or reset a colony as an upgrade step.
+Only explicit policy reducers alter target intent, and reset clears its rows.
+The reducer checks operator/admin authorization before validating or writing;
+actual changes and audit events commit together. See
+[standing production targets](production-automation.md) for enforcement,
+stock accounting, physical mining, and overshoot semantics.
 
 Reducers return success, a no-op, or a rejection. A successful reducer call is
 not permission to update a local cache: wait for the subscription's server

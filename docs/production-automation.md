@@ -41,6 +41,12 @@ obey Stone targets. Physical excavation does **not** require a Mine work order:
 its operator intent is the enabled excavation designation, as before. Mining
 haulers may collect existing stone at any pile anchor even while suspended.
 
+The existing hauling dust threshold still applies: piles at or below 0.001 units
+are not picked up. Very small API targets can suspend production with only such a
+pile present; that dust remains on the ground until production resumes and adds
+enough goods. The desktop editor's minimum target is 0.1 units. Targets are not a
+promise that every fractional unit will immediately become stored stock.
+
 ## Persistence and migration
 
 This is an additive table, not a Config or WorkOrder column migration. Existing

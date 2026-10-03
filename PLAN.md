@@ -1,7 +1,7 @@
 # Continuum roadmap
 
-Reconciled on **2026-10-03** against `main` at `68b7807` and its implementation,
-tests, and feature contracts. Checked items describe the implemented scope, not
+Reconciled on **2026-10-03** after the connected gameplay slice, against its
+implementation, tests, and feature contracts. Checked items describe the implemented scope, not
 completion of the broader game or certification on every platform. Unchecked
 items are remaining work or verification; design principles are ordinary bullets.
 
@@ -29,7 +29,9 @@ colony that tolerates being unattended. Main progression loop:
 - [x] Standing per-tile orders with priorities `1..=3`, pause/remove, deterministic selection, and independent forest logging/hunting orders
 - [x] Self-haul or dedicated producer/hauler roles, bounded carried stacks, ground piles, and unlimited pooled storage; goods must be delivered before consumption
 - [x] Instant construction of all seven semantic operational tile kinds for 20 stored wood per footprint cell; rectangular builds are atomic and limited to 4,096 cells per request
-- [x] Seeded, bounded, overlapping soil fertility, forest density, and moisture fields; these ecological fields do not yet modify production or needs
+- [x] Seeded, bounded, overlapping soil fertility, forest density, and moisture fields
+- [x] Persisted terrain ecology modifies farming, logging, and hunting yield deterministically; mining is unaffected
+- [x] Pure goal proposal/validation/ordered-commit seam; bounded opt-in native threads plan from actor snapshots, while WASM remains serial and shared-state commits remain ordered
 - [x] Recreation loss can cause lower mood and sleep quality, more fatigue, reduced productivity, and food shortage; failure/recovery and resource conservation have regression coverage
 
 ### Remaining systems
@@ -40,7 +42,7 @@ arbitrary punishment. The recreation chain is the first implemented example.
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, and richer individual wants
 - [ ] Richer production chains, material-specific inventories, storage capacity, and mass-limited carrying
 - [ ] Maintenance/degradation, research, population growth, and additional interacting failure chains
-- [ ] Events/incidents and tools to explain why work or production stopped
+- [ ] Authoritative throughput accounting and server-owned explanations of why production/jobs stopped
 
 ### Construction direction
 
@@ -68,8 +70,8 @@ routine situations require less attention.
 
 - [x] Persistent standing orders and priorities; publish/load/tick do not rewrite those intents
 - [x] Colony-wide meal rationing and hauling policies
-- [ ] Player-configurable automation and broader standing policies
-- [ ] Threshold-based behavior
+- [x] Persistent per-resource production targets count stored, ground, and carried goods; targets pause eligible production (including finite physical mining) without rewriting manual pause/order intent
+- [ ] Broader player-configurable policies and rule composition beyond resource targets
 - [ ] Emergency procedures
 - [ ] Reusable macros
 
@@ -100,7 +102,7 @@ See [physical-world coordinates and interaction](docs/vertical-terrain.md) and
 ### Remaining world work
 
 - [ ] Persistent named blocks/designations that can be reused, renamed, and edited
-- [ ] Terrain fertility, forest density, and moisture effects on operational outcomes; physical geometry already affects movement, placement, and mining
+- [x] Terrain fertility, forest density, and moisture affect farming, logging, and hunting yield; physical geometry affects movement, placement, and mining
 - [ ] Procedural physical landscapes beyond the seeded ecological fields and current flat/hillside fixtures
 - [ ] Structural, thermal, and environmental simulation as required by material-driven construction
 - [ ] Multiple settlements/outposts, remote mines/farms/industrial sites, trade, resource transfer, and expeditions
@@ -116,11 +118,12 @@ See [physical-world coordinates and interaction](docs/vertical-terrain.md) and
 - [x] Local “Since you left” snapshots keyed by endpoint, database, profile, and authenticated identity; reset/backward-clock checks invalidate baselines
 - [x] Event/audit messages include command caller identities as literal text; the server retains the newest 200 event rows and reset clears history
 - [x] Active alerts and shared operator acknowledgement; no structured acknowledgement actor/time or alert location is available
+- [x] Reversible advisory Overview guidance with operation reasons, including physical mining; selected colonist destination markers/work badges; reasons are client-derived, not authoritative throughput or proof of reachability
 
 ### Remaining observability work
 
 - [ ] Durable away history and structured event actor/source/verb/subject data; local snapshots and the capped feed cannot provide complete absence history
-- [ ] Explain production/need degradation and stopped jobs; add authoritative throughput accounting rather than treating net stock change as production
+- [ ] Authoritative throughput accounting and authoritative production/need degradation or stopped-job explanations; client operation reasons remain advisory observations
 - [ ] Storage utilization once finite capacity exists, infrastructure health, and broader notifications
 - [ ] Progression-linked instrumentation, custom player-defined metrics, and better sensors/comms
 - [ ] External metrics/alerting, ideally Prometheus-compatible and usable with Grafana or custom clients
@@ -234,7 +237,8 @@ rules, not a claim that the current slice already supports them.
 ## Client diagnostics
 
 The current client targets Godot 4.7 and SpacetimeDB 2.10.0, with vendored Flametime
-SDK 0.3.2 (upstream commit `f6c59d7` plus local transport instrumentation). See
+SDK 0.3.2 (upstream commit `f6c59d7` plus local transport instrumentation and
+[validated unit-enum database keys](docs/spacetime-enum-keys.md)). See
 [protocol notes](docs/API.md#connection-and-transport) and
 [the implemented session-echo contract](docs/session-ping.md).
 
@@ -245,6 +249,7 @@ SDK 0.3.2 (upstream commit `f6c59d7` plus local transport instrumentation). See
 - [x] Mean FPS is `N / sum(intervals)`; p50/p95/p99 are nearest-rank frame times in milliseconds; Main refreshes snapshots every 250 ms
 - [x] Focus-loss resets, resume re-anchoring, and session reset handling; long frame gaps restart warmup
 - [x] Authenticated, role-independent `diagnostic_echo` acknowledgements supply latest/smoothed session RTT from WebSocket send/packet-observation timestamps, excluding SDK parse/dispatch delay
+- [x] Session echo RTT is surfaced in the live diagnostics UI; it measures acknowledged application request RTT, not kernel TCP RTT
 - [x] One echo in flight, at least one second between probes, stale/disconnected values unavailable, graph gaps for missing samples, and SDK call cancellation on timeout/reset/disconnect
 - [x] HTTP health RTT stays separate; packet loss is unavailable, and probe-timeout ratio counts settled successes/timeouts only
 - [x] Existing deterministic statistics, sampler/transport, settings, layout, and isolated real-session echo tests
@@ -256,8 +261,7 @@ currently displayed; any future equivalent must be labelled as such.
 
 ### Remaining diagnostics work
 
-- [ ] Resolve the collection/display mismatch: `DiagnosticsBar`, the older overlay, and the developer summary require `source == "tcp_info"`, but `SessionDiagnostics.snapshot()` provides echo RTT without that source. Current production UI therefore shows TCP RTT unavailable and omits the RTT sparkline despite successful echo samples
-- [ ] Add collection-to-visible-readout regression coverage using a real sampler snapshot; current presentation tests inject a synthetic `tcp_info` snapshot
+- [ ] Improve diagnostics beyond the current live session-echo RTT and bounded client-side history; packet loss and kernel TCP RTT remain unavailable
 
 ## API
 
@@ -273,10 +277,12 @@ currently displayed; any future equivalent must be labelled as such.
 - [x] Separate Rust SpacetimeDB module, pure composed simulation, thin responsibility-specific reducers, and explicit persistence/event/auth boundaries
 - [x] Server-authoritative state and game rules; one one-second scheduler advances bounded substeps in durable actor-ID order
 - [x] Behavioral golden traces, row-order independence, persistence mappings, conservation, and failure/recovery tests
+- [x] Pure proposal/validate/ordered-commit intent seam preserves actor-ordered shared-state execution; opt-in native planning threads are bounded, WASM remains serial, and no speedup is claimed
 - [x] Seeded four-octave fBm ecological fields and additive physical geometry migration preserve existing state
 - [x] Atomic bounded construction planning, delta persistence, dirty excavation writes, and cached/resumable supported navigation
 - [x] Native/WASM geometry, expansion, migration, and construction-budget fixtures for current population sizes
-- [ ] Benchmark population scaling and practical colonist limits separately from geometry/map-size budgets
+- [x] Native-only population benchmark isolates actor scaling from map expansion; it does not establish WASM fuel, server capacity, or a supported colonist limit
+- [ ] Establish practical population limits using WASM/runtime fuel, memory, transaction and end-to-end measurements
 - [ ] Narrow subscriptions to relevant/spatial state as needed; Main currently subscribes to whole public operational/terrain tables
 - [ ] Reduce unnecessary actor work through event-driven scheduling where it preserves the explicit behavioral contract
 - [ ] Optional external services (potentially Go) for push notifications, discovery/invites, and integrations
@@ -286,20 +292,25 @@ currently displayed; any future equivalent must be labelled as such.
 - [x] Persistent client identities and private membership roles; the publisher bootstraps the initial admin, and admins grant/revoke operators
 - [x] Operators manage facilities, excavation, work orders, hauling/meal policy, and alert acknowledgement; admins additionally manage speed, cooldown, reset, expansion, and membership
 - [x] Shared command/membership audit text includes caller identity; client role discovery is sender-scoped, live, and fail-closed
+- [x] Disposable private-server connected-colony regression covers authorization, disconnected scheduled progress, production/hauling/storage, and durable restart; this is not live desktop QA or sustained multiplayer play
 - [ ] Soft responsibility areas and richer membership/governance UX
 - [ ] Voting and minimum quorum for speed/major colony decisions, including protection against tiny overnight minorities changing server settings
 
 ## Clear Next Iterations
 
-- [ ] Resolve the diagnostics collection/display mismatch identified below
 - [ ] Validate the persistent multiplayer leave/return/stabilize loop through sustained play
 - [ ] Persistent named blocks that can be reused, renamed, and edited as first-class objects
 - [ ] Material-driven construction jobs that replace the current semantic facility-building PoC
-- [ ] Ecological terrain effects on farming/forestry/moisture outcomes; physical movement and excavation are already integrated
+- [ ] Ecology beyond current seeded yield modifiers: depletion, regeneration, seasons, and longer-term ecological budgets
 - [ ] Food quality, social interaction, comfort/housing, safety, relationships, research, population growth, and richer production chains
-- [ ] Threshold automation, emergency procedures, reusable macros, and player-configurable standing policies
+- [ ] Automation beyond per-resource stock targets: emergency procedures, reusable macros, and broader player-configurable policies
 - [ ] Logical-world isolation before multi-settlement trade, remote sites, expeditions, and communications loss
 - [ ] Real target-platform release validation and explicit installed-module upgrades; native provisioning and export staging are already implemented
+
+The verification menu is documented in [Playing the slice](docs/playing-the-slice.md),
+with [integration evidence](docs/gameplay-slice-verification.md#integrated-client-and-server-checks).
+Pure gameplay, reducer, private-server, and live desktop checks have different
+scopes. No gate constitutes sustained week-long multiplayer validation.
 
 ## Maintenance findings (2026-10-03)
 
@@ -310,7 +321,7 @@ remain follow-up work.
 - [ ] Retire the orphaned Docker menu adapter in `client/godot/scripts/local_server_runner.gd` and its dedicated test/recipe if that retired UI path is no longer supported. Its only caller is `local_server_runner_test.gd`; Main uses `ContinuumNativeServerController`. The `just local-server` Docker CLI helper still has an explicit entry point
 - [ ] Remove or deliberately integrate `ContinuumServerManagement.set_world_catalog`, `_world_catalog`, `select_world`, and `world_selected`: the catalog is never read, the methods have no callers, and the signal has no listener. Keep the logical-world design above as the source of future scope
 - [x] Consolidated endpoint/database parsing in `scripts/server_endpoint.gd`, shared by the join form and history. Both reject malformed IPv6, overlong DNS names/labels, and invalid ports. The direct form retains its lowercase HTTP(S)/database policy; history retains canonical keys/display spelling, separately from raw profile credential keys
-- [ ] Resolve the dead-end TCP diagnostics presentation described above; all current `tcp_info` producers are synthetic test snapshots. A headless sampler-to-bar probe reproduced a successful 7 ms echo displaying `TCP RTT N/A`
+- [x] Replaced the dead-end `tcp_info`-only presentation path with live authenticated session-echo RTT in the diagnostics bar and overlay; this is application RTT, not TCP/kernel RTT
 - [x] Removed uncalled `main.gd` helpers `attach_diagnostics_transport`, `_identity_token_path`, and `_compact_text`; `main_menu.gd`'s `_font_size` and `_font_size_changed`; `colony_map.gd`'s `_soil_colour` and `format_amount`; and `native_server_manager.gd`'s `_module_identity`
 - [x] Removed the unused controller `request_install` queue path, adapter `manifest_fields`, Linux adapter `windows_task_command` and its obsolete test, and uncalled Windows adapter `self_test`; production start/autostart installation and the real Windows supervisor/task path remain the active implementation
 - [x] Centralized need labels/inversions, optional satisfaction values, 35/15 need bands, and 24/2 resource ETA bands in `ui/components/models.gd`; observations, row adapters, and cards share them. Removed the test-only `SessionObservations.need_level` helper and redundant numeric predicate; cross-layer tests cover missing values and severity boundaries

@@ -64,8 +64,7 @@ bindings: publish
 # Start SpacetimeDB, publish the Rust module, and generate client bindings.
 setup: bindings
 
-# Run the Godot client. The client does not implicitly start Docker; the future
-# launch menu (or `just local-server`) owns local provisioning.
+# Run the Godot client; native hosting is explicit in the Servers menu.
 run *args:
     {{ quote(godot) }} --path client/godot -- "$@"
 
@@ -184,6 +183,41 @@ test-diagnostics:
 # Run the authenticated reducer-ack session diagnostics gate in private Docker resources.
 test-session-ping:
     scripts/internal/test-session-ping
+
+# Exercise persistent gameplay in a disposable native server.
+test-connected-colony:
+    scripts/internal/test-connected-colony
+
+# Verify stock-target authorization, persistence, and additive upgrade behavior.
+test-production-automation: wasm
+    python3 scripts/internal/test-production-automation.py
+
+# Exercise physical delivery, unattended failures, and recovery without a server.
+test-gameplay-core:
+    cargo test --manifest-path {{ module_manifest }} --test gameplay_slice
+
+# Backend-free connected-slice models, actual controls, bindings, and cache contracts.
+test-gameplay-client:
+    {{ quote(godot) }} --headless --path client/godot --editor --import
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/enum_key_cache_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/unit_enum_key_contract_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/production_policy_bindings_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/colony_operations_model_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/production_suitability_test.gd
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/colony_guidance_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_targets_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_wiring_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/map_feedback_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/ux_panels_test.gd
+
+# Offline timeout, redaction, interruption, and owned-resource disposal regressions.
+test-gate-safety:
+    python3 scripts/internal/connected-colony-fault-tests.py
+    python3 scripts/internal/test-production-automation-faults.py
+
+# Measure native population scaling independently of map expansion.
+profile-population *args:
+    cargo run --release --manifest-path {{ module_manifest }} --example population_profile -- "$@"
 
 # Stage the module and bootstrap scripts before using the Linux/Windows export presets.
 prepare-native-export:

@@ -66,6 +66,9 @@ then export with Godot using the Linux or Windows preset in
 
 ## More
 
+For a first run through the current connected gameplay loop, see
+[Playing the slice](docs/playing-the-slice.md).
+
 See [docs/simulation-architecture.md](docs/simulation-architecture.md) for the
 simulation overview, [docs/API.md](docs/API.md) for reducers and authorization,
 [docs/native-hosting-contract.md](docs/native-hosting-contract.md) for local
