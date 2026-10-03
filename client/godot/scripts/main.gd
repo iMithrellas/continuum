@@ -29,6 +29,8 @@ const ActivityControl = preload("res://ui/components/activity_feed.gd")
 const DigestControl = preload("res://ui/components/away_digest.gd")
 const GuidanceModel = preload("res://scripts/colony_guidance_model.gd")
 const OperationsPanel = preload("res://ui/panels/colony_operations_panel.gd")
+const OperationsModel = preload("res://scripts/colony_operations_model.gd")
+const ProductionTargets = preload("res://ui/panels/production_targets.gd")
 const InterfaceIcons = preload("res://ui/theme/icons.gd")
 const ALERT_PANEL_OWNERS := {"low_food": "overview", "low_mood": "people", "low_productivity": "overview", "recreation_unavailable": "policies"}
 
@@ -49,6 +51,7 @@ static var SUBSCRIPTION_QUERIES := PackedStringArray([
 	"SELECT * FROM speed_control", "SELECT * FROM terrain", "SELECT * FROM world_seed",
 	"SELECT * FROM world_geometry", "SELECT * FROM terrain_chunk",
 	"SELECT * FROM terrain_material", "SELECT * FROM excavation_designation",
+	"SELECT * FROM production_policy",
 ])
 
 @onready var map: ColonyMap = $Map
@@ -193,7 +196,11 @@ var _action_fit_pending := false
 var _alert_summary_cache: Dictionary = {}
 var _guidance := GuidanceModel.new()
 var _operations_panel: VBoxContainer
-var _operations_model: Script
+var _operations_model: Script = OperationsModel
+var _production_targets: ContinuumProductionTargets
+## Fixture capture stops at dispatch; it never represents backend acceptance.
+var production_intent_override: Callable
+var _production_requests: Dictionary = {}
 
 
 func _ready() -> void:
@@ -561,6 +568,7 @@ func _client_epoch_current(client: ContinuumModuleClient, generation: int) -> bo
 	return _session_epoch_current(generation) and is_instance_valid(client) and client == SpacetimeDB.Continuum
 
 func _clear_pending_requests() -> void:
+	_cancel_production_requests()
 	_intent_request = null
 	_haul_request = null
 	_meal_request = null
@@ -668,6 +676,10 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_role_name = normalized_role.capitalize()
 	_is_admin = role_is_admin and normalized_role != "unknown"
 	_can_operate = role_can_operate and normalized_role != "unknown"
+	var permissions_changed := old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name
+	if permissions_changed:
+		_permission_revision += 1
+		_cancel_production_requests()
 	var lost_operator := old_can_operate and not _can_operate
 	if lost_operator:
 		for id: int in _ack_requests:
@@ -680,8 +692,7 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_refresh_permissions()
 	_refresh_controls()
 	_render_connection_role()
-	if old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name:
-		_permission_revision += 1
+	if permissions_changed:
 		_alert_summary_cache.clear()
 		_alert_box.model = {}
 		_refresh_alerts()
@@ -1441,6 +1452,11 @@ func _build_panels() -> void:
 	_operations_panel = OperationsPanel.new()
 	_operations_panel.navigation_requested.connect(_navigate_guidance)
 	side.add_child(_operations_panel)
+	_production_targets = ProductionTargets.new()
+	_production_targets.set_supported_resources([0, 1, 2, 3])
+	_production_targets.target_requested.connect(_request_production_target)
+	_production_targets.target_removed.connect(_remove_production_target)
+	_operations_panel._body.add_child(_production_targets)
 	side.add_child(_heading("Colony"))
 	_status_label = RichTextLabel.new()
 	_status_label.bbcode_enabled = true
@@ -1902,6 +1918,7 @@ func _refresh_permissions() -> void:
 		return
 	if is_instance_valid(_operations_panel):
 		_operations_panel.set_model(_operations_panel.model, _can_operate)
+	_refresh_production_targets()
 	workspace.set_panel_authorized("policies", _can_operate)
 	workspace.set_panel_authorized("operations", _can_operate)
 	workspace.set_panel_authorized("admin", _is_admin)
@@ -1990,11 +2007,99 @@ func _refresh() -> void:
 	_ui_tables_changed.clear()
 
 
-## Optional sibling model: absence never invents readiness or automation state.
-## Its snapshot receives the same replicated rows as guidance; policies can be
-## supplied here once the production subscription/schema is integrated.
+## Normalize generated ResourceKind wrappers at the presentation boundary only.
+func _production_policy_rows() -> Array:
+	var db := SpacetimeDB.Continuum.db
+	var rows: Array = []
+	if db == null or db.production_policy == null: return rows
+	for row: ContinuumProductionPolicy in db.production_policy.iter():
+		rows.append({"resource": row.resource.value if row.resource != null else null, "target": row.target})
+	return rows
+
+## Missing subscription/config/colony are not a known empty policy snapshot.
+func _production_ready() -> bool:
+	var db := SpacetimeDB.Continuum.db
+	return _state_ready and db != null and db.production_policy != null \
+		and db.config.id.find(0) != null and db.colony.id.find(0) != null
+
+func _refresh_production_targets() -> void:
+	if not is_instance_valid(_production_targets): return
+	var ready := _production_ready()
+	var supply := {}
+	if ready:
+		var db := SpacetimeDB.Continuum.db
+		var colony: ContinuumColony = db.colony.id.find(0)
+		var stored := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
+		for kind in 4:
+			var name: String = OperationsModel.RESOURCE[kind]
+			var amounts: Array = [stored[name]]
+			for stack: ContinuumItemStack in db.item_stack.iter():
+				if stack.kind != null and stack.kind.value == kind: amounts.append(stack.amount)
+			for person: ContinuumColonist in db.colonist.iter():
+				if person.carried_kind != null and person.carried_kind.value == kind: amounts.append(person.carried_amount)
+			var valid := true
+			for amount: Variant in amounts:
+				if not OperationsModel._number(amount): valid = false
+			supply[kind] = OperationsModel._sum(amounts) if valid else NAN
+	_production_targets.set_snapshot(_production_policy_rows(), supply, _can_operate, ready)
+
+func _request_production_target(resource: int, target: float) -> void:
+	if resource < 0 or resource > 3: return
+	if not is_finite(target) or target < ProductionTargets.MIN_TARGET or target > ProductionTargets.MAX_TARGET: return
+	_dispatch_production_policy("set_production_policy", resource, [ContinuumResourceKind.create(resource), target])
+
+func _remove_production_target(resource: int) -> void:
+	if resource < 0 or resource > 3: return
+	_dispatch_production_policy("remove_production_policy", resource, [ContinuumResourceKind.create(resource)])
+
+## Re-check access at dispatch, even for programmatically emitted control signals.
+func _dispatch_production_policy(reducer: String, resource: int, payload: Array) -> void:
+	if not _production_ready() or not _can_operate or resource < 0 or resource > 3: return
+	if _production_requests.has(resource):
+		_production_targets.request_failed(resource, "A request is still awaiting acknowledgement.")
+		return
+	var call: SpacetimeDBReducerCall = _call_production_reducer(reducer, payload)
+	if call == null:
+		_production_targets.request_failed(resource, "Request was not sent; inspect connection and bindings.")
+		return
+	if call.error != OK:
+		_production_targets.request_failed(resource, "Request could not be sent (%d)." % call.error)
+		_show_action_error("Production policy could not be sent (%d)" % call.error)
+		return
+	var client: ContinuumModuleClient = SpacetimeDB.Continuum
+	var generation := _session_generation
+	var revision := _permission_revision
+	_production_requests[resource] = call
+	var response: ReducerResultMessage = await call.response
+	if not _client_epoch_current(client, generation) or _production_requests.get(resource) != call: return
+	_production_requests.erase(resource)
+	if revision != _permission_revision or not _production_ready() or not _can_operate: return
+	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+		var message := "Production policy rejected: %s" % response.reducer_result.get_err()
+		_production_targets.request_failed(resource, message)
+		_show_action_error(message)
+	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+		var message := "Production policy failed: %s" % response.reducer_result.get_internal_error()
+		_production_targets.request_failed(resource, message)
+		_show_action_error(message)
+	_dirty = true
+
+func _call_production_reducer(reducer: String, payload: Array) -> SpacetimeDBReducerCall:
+	if production_intent_override.is_valid(): return production_intent_override.call(reducer, payload)
+	var reducers := SpacetimeDB.Continuum.reducers
+	var resource: ContinuumResourceKind = payload[0]
+	match reducer:
+		"set_production_policy": return reducers.set_production_policy(resource, payload[1])
+		"remove_production_policy": return reducers.remove_production_policy(resource)
+	return SpacetimeDBReducerCall.fail(ERR_INVALID_PARAMETER)
+
+func _cancel_production_requests() -> void:
+	_production_requests.clear()
+	if is_instance_valid(_production_targets): _production_targets.cancel_pending()
+
 func _refresh_guidance() -> void:
 	if not is_instance_valid(_operations_panel): return
+	_refresh_production_targets()
 	var db := SpacetimeDB.Continuum.db
 	var config: ContinuumConfig = db.config.id.find(0) if db != null else null
 	var colony: ContinuumColony = db.colony.id.find(0) if db != null else null
@@ -2006,13 +2111,12 @@ func _refresh_guidance() -> void:
 	var colonists: Array = db.colonist.iter()
 	var stacks: Array = db.item_stack.iter()
 	var resources := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
-	if _operations_model == null and ResourceLoader.exists("res://scripts/colony_operations_model.gd"):
-		_operations_model = load("res://scripts/colony_operations_model.gd")
-	var operations: Array = []
-	if _operations_model != null and _operations_model.has_method("snapshot"):
-		operations = _operations_model.snapshot(tiles, orders, colonists, stacks, resources)
+	var context := {"physical_world": not db.world_geometry.iter().is_empty(),
+		"excavation_designations": db.excavation_designation.iter()}
+	var operations: Array = _operations_model.snapshot(tiles, orders, colonists, stacks, resources,
+		_production_policy_rows(), context)
 	_operations_panel.set_model(_guidance.snapshot(config.game_seconds, config.generation,
-		tiles, orders, colonists, stacks, resources, operations), _can_operate)
+		 tiles, orders, colonists, stacks, resources, operations), _can_operate)
 
 
 ## Resolve targets again at click time. Navigation never dispatches an intent,
@@ -2653,6 +2757,9 @@ func _save_return_baseline() -> void:
 
 
 func _end_session_observations() -> void:
+	_cancel_production_requests()
+	if is_instance_valid(_production_targets):
+		_production_targets.set_snapshot([], {}, false, false)
 	_guidance.reset()
 	if is_instance_valid(_operations_panel):
 		_operations_panel.set_model(_guidance.snapshot(0, 0, [], [], [], [], {}, [], false), false)
