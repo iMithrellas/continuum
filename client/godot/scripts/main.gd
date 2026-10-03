@@ -27,6 +27,8 @@ const ColonistControl = preload("res://ui/components/colonist_card.gd")
 const AlertsControl = preload("res://ui/components/alert_list.gd")
 const ActivityControl = preload("res://ui/components/activity_feed.gd")
 const DigestControl = preload("res://ui/components/away_digest.gd")
+const GuidanceModel = preload("res://scripts/colony_guidance_model.gd")
+const OperationsPanel = preload("res://ui/panels/colony_operations_panel.gd")
 const InterfaceIcons = preload("res://ui/theme/icons.gd")
 const ALERT_PANEL_OWNERS := {"low_food": "overview", "low_mood": "people", "low_productivity": "overview", "recreation_unavailable": "policies"}
 
@@ -189,6 +191,9 @@ var _status_balance_signature := ""
 var _status_secondary_hidden := false
 var _action_fit_pending := false
 var _alert_summary_cache: Dictionary = {}
+var _guidance := GuidanceModel.new()
+var _operations_panel: VBoxContainer
+var _operations_model: Script
 
 
 func _ready() -> void:
@@ -891,6 +896,7 @@ func _close_failed_client(client: ContinuumModuleClient, generation: int) -> voi
 
 func _schedule_reconnect() -> void:
 	_state_ready = false
+	_refresh_guidance()
 	if _intent_request != null:
 		_intent_request = null
 		_set_feedback(_intent_feedback, "Connection lost", "%s: connection lost; outcome unknown. Waiting for server state." % _intent_name)
@@ -1432,6 +1438,9 @@ func _build_panels() -> void:
 
 	section = _sections["overview"]
 	side = section
+	_operations_panel = OperationsPanel.new()
+	_operations_panel.navigation_requested.connect(_navigate_guidance)
+	side.add_child(_operations_panel)
 	side.add_child(_heading("Colony"))
 	_status_label = RichTextLabel.new()
 	_status_label.bbcode_enabled = true
@@ -1891,6 +1900,8 @@ func _sync_map_toolbar() -> void:
 func _refresh_permissions() -> void:
 	if not is_instance_valid(workspace):
 		return
+	if is_instance_valid(_operations_panel):
+		_operations_panel.set_model(_operations_panel.model, _can_operate)
 	workspace.set_panel_authorized("policies", _can_operate)
 	workspace.set_panel_authorized("operations", _can_operate)
 	workspace.set_panel_authorized("admin", _is_admin)
@@ -1961,6 +1972,7 @@ func _refresh() -> void:
 		map.bind_world_source(null)
 		_session_observations.reset()
 		_state_ready = false
+		_refresh_guidance()
 		_refresh_alerts()
 		_full_ui_refresh = true
 		return
@@ -1969,12 +1981,61 @@ func _refresh() -> void:
 	if _full_ui_refresh or _ui_tables_changed.has("colonist"):
 		_refresh_colonists()
 	_refresh_controls()
+	_refresh_guidance()
 	if _full_ui_refresh or _ui_tables_changed.has("alert"):
 		_refresh_alerts()
 	if _full_ui_refresh or _ui_tables_changed.has("event_log"):
 		_refresh_feed()
 	_full_ui_refresh = false
 	_ui_tables_changed.clear()
+
+
+## Optional sibling model: absence never invents readiness or automation state.
+## Its snapshot receives the same replicated rows as guidance; policies can be
+## supplied here once the production subscription/schema is integrated.
+func _refresh_guidance() -> void:
+	if not is_instance_valid(_operations_panel): return
+	var db := SpacetimeDB.Continuum.db
+	var config: ContinuumConfig = db.config.id.find(0) if db != null else null
+	var colony: ContinuumColony = db.colony.id.find(0) if db != null else null
+	if not _state_ready or config == null or colony == null:
+		_operations_panel.set_model(_guidance.snapshot(0, 0, [], [], [], [], {}, [], false), false)
+		return
+	var tiles: Array = db.tile.iter()
+	var orders: Array = db.work_order.iter()
+	var colonists: Array = db.colonist.iter()
+	var stacks: Array = db.item_stack.iter()
+	var resources := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
+	if _operations_model == null and ResourceLoader.exists("res://scripts/colony_operations_model.gd"):
+		_operations_model = load("res://scripts/colony_operations_model.gd")
+	var operations: Array = []
+	if _operations_model != null and _operations_model.has_method("snapshot"):
+		operations = _operations_model.snapshot(tiles, orders, colonists, stacks, resources)
+	_operations_panel.set_model(_guidance.snapshot(config.game_seconds, config.generation,
+		tiles, orders, colonists, stacks, resources, operations), _can_operate)
+
+
+## Resolve targets again at click time. Navigation never dispatches an intent,
+## and permission/readiness changes cannot resurrect stale operator controls.
+func _navigate_guidance(panel: String, tile_id: int, colonist_id: int) -> void:
+	if not _state_ready or SpacetimeDB.Continuum.db == null: return
+	if panel not in ["inspector", "people", "operations", "policies", "trends"]: return
+	if not _can_operate and panel in ["operations", "policies"]: panel = "inspector"
+	_set_mode(&"select")
+	if tile_id >= 0:
+		var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(tile_id)
+		if tile != null:
+			if map.layered: map.set_cut(tile.z)
+			map.selected_tile_id = tile.id
+			_selected_rect = ColonyMap.tile_footprint(tile)
+			map.set_selected_rect(_selected_rect)
+			_on_tile_selected(tile.id)
+			map.pan_by(map.size * 0.5 - map.world_to_screen(Vector2(tile.x, tile.y) + Vector2(0.5, 0.5)))
+	if colonist_id >= 0: _goto_colonist(colonist_id)
+	if workspace.map_only or not workspace.state(panel).open or workspace.state(panel).minimized or (workspace.compact and workspace._compact_panel != panel):
+		workspace.toggle_panel(panel)
+	else:
+		workspace.focus_panel(panel)
 
 
 func _refresh_status() -> void:
@@ -2592,6 +2653,9 @@ func _save_return_baseline() -> void:
 
 
 func _end_session_observations() -> void:
+	_guidance.reset()
+	if is_instance_valid(_operations_panel):
+		_operations_panel.set_model(_guidance.snapshot(0, 0, [], [], [], [], {}, [], false), false)
 	if is_instance_valid(_action_feedback):
 		_action_feedback.hide()
 	var latest := _authoritative_snapshot()
