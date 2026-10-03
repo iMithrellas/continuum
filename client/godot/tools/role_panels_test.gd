@@ -29,6 +29,10 @@ func _ready() -> void:
 			check(main.workspace.authorized.admin == (role == "admin"), "admin access follows verified role independently of profile")
 			check(main.workspace.authorized.developer == (profile == "developer"), "developer access follows local mode")
 			check(main.workspace.authorized.operations == (role in ["operator", "admin"]), "developer is not an editing grant")
+			if role == "viewer":
+				check(main._identity_label.text.begins_with("Read-only") and main._identity_label.tooltip_text.contains("Operator access"), "viewer badge explains the read-only restriction and correct management role")
+			elif role == "operator":
+				check(main._identity_label.text.begins_with("Operator") and main._identity_label.tooltip_text.contains("Speed, pause"), "ordinary player badge distinguishes colony management from administration")
 			main._change_speed(6.0)
 	main._profile = "developer"
 	main._set_permissions("viewer", false, false)
@@ -55,8 +59,61 @@ func _ready() -> void:
 	main._profile = "developer"
 	main._on_disconnected()
 	check(not main._is_admin and not main.workspace.authorized.admin and main.workspace.authorized.developer, "disconnect revokes admin but leaves safe offline local tools")
-	main.queue_free()
+	await _test_workspace_teardown(main)
+	var offline_client := ContinuumModuleClient.new()
+	main._access = ContinuumAccess.new(offline_client)
+	main._access.changed.connect(main._set_permissions)
+	main._access._set_role("Admin", true, true)
+	var deck: WorkspaceDeck = main.workspace
+	main.remove_child(deck)
+	check(not deck.is_inside_tree() and deck.get_viewport() == null, "workspace exits before main role teardown")
+	main.free()
+	check(not deck.authorized.operations and not deck.authorized.admin, "real main exit revokes roles on detached workspace")
+	deck.free()
+	offline_client.free()
 	await get_tree().process_frame
 	if not failed:
 		print("ROLE_PANELS_PASS")
 	get_tree().quit(1 if failed else 0)
+
+func _test_workspace_teardown(main: Node) -> void:
+	get_tree().root.size = Vector2i(1440, 900)
+	await get_tree().process_frame
+	await get_tree().process_frame
+	var deck: WorkspaceDeck = main.workspace
+	main._set_permissions("operator", true, false)
+	deck.state("operations").open = true
+	deck.state("operations").minimized = false
+	deck.state("operations").pinned = false
+	deck._apply_layout()
+	deck.focus_panel("operations")
+	deck._apply_layout()
+	var window: WorkspaceWindow = deck.windows.operations
+	var body_focus := Button.new()
+	window.content.add_child(body_focus)
+	body_focus.grab_focus()
+	check(deck.get_viewport().gui_get_focus_owner() == body_focus, "authorized panel body receives focus")
+	window._start_gesture("move", window.global_position)
+	main.map._dragging = true
+	deck.set_panel_authorized("operations", false)
+	check(window._gesture.is_empty() and not main.map._dragging and not window.visible, "live revocation cancels panel and map capture")
+	check(deck.get_viewport().gui_get_focus_owner() != body_focus, "live revocation releases restricted body focus")
+	deck.set_panel_authorized("operations", true)
+	body_focus.grab_focus()
+	window._start_gesture("move", window.global_position)
+	main.remove_child(deck)
+	main.map._dragging = true
+	deck.set_panel_authorized("operations", false)
+	check(not deck.authorized.operations and not window.visible and window._gesture.is_empty() and not main.map._dragging, "detached revocation retains authorization and cancels capture")
+	deck.set_panel_authorized("operations", true)
+	deck.set_panel_authorized("operations", false)
+	main.add_child(deck)
+	await get_tree().process_frame
+	check(deck.get_viewport().gui_get_focus_owner() != body_focus and not window.visible, "reentry does not restore stale restricted focus")
+	deck.set_panel_authorized("operations", true)
+	deck.focus_panel("operations")
+	deck._apply_layout()
+	check(window.visible, "role regrant after reentry restores permitted panel")
+	body_focus.grab_focus()
+	deck.set_panel_authorized("operations", false)
+	check(not window.visible and deck.get_viewport().gui_get_focus_owner() != body_focus, "rerole after reentry still revokes focus")

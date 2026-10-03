@@ -65,13 +65,20 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 
 ## Optional status-strip presentation; default panel rendering remains unchanged.
 func _build_compact(data: Dictionary, config: Dictionary) -> void:
-	add_theme_stylebox_override("panel", StyleBoxEmpty.new())
-	custom_minimum_size.y = ThemeTokens.number("topbar")
+	var surface := UI.surface("bg-100", "line-100", "space-2")
+	if config.get("narrow", false):
+		surface.content_margin_left = 4
+		surface.content_margin_right = 4
+	surface.content_margin_top = 4
+	surface.content_margin_bottom = 4
+	add_theme_stylebox_override("panel", surface)
+	custom_minimum_size.y = 44
+	size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	var content = UI.column()
 	content.add_theme_constant_override("separation", 0)
 	content.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var row = UI.column() if config.get("narrow", false) and model.level not in ["warn", "critical"] else UI.row()
-	row.add_theme_constant_override("separation", 0 if row is VBoxContainer else int(ThemeTokens.number("space-2")))
+	row.add_theme_constant_override("separation", 0 if row is VBoxContainer else (4 if config.get("stack_warning", false) else int(ThemeTokens.number("space-2"))))
 	var ink = UI.status_color(model.level, "ink-subtle")
 	if model.level in ["warn", "critical"]:
 		row.add_child(UI.glyph(model.level))
@@ -81,17 +88,20 @@ func _build_compact(data: Dictionary, config: Dictionary) -> void:
 	var rate = Models.measurement(data, "rate_per_game_hour")
 	var horizon = Models.measurement(data, "eta_game_hours")
 	if model.level in ["warn", "critical"]:
-		var warning = UI.row()
+		var warning = UI.column() if config.get("stack_warning", false) else UI.row()
+		if config.get("stack_warning", false): warning.add_theme_constant_override("separation", 0)
 		warning.add_child(UI.label(UI.status_word(model.level), "small", ink))
-		warning.add_child(UI.label("Est " + _horizon_copy(horizon) if horizon != null else "Horizon unavailable", "log" if config.get("abbreviate_stock", false) else "readout", ink))
+		var forecast := "Est " + _horizon_copy(horizon) if horizon != null else "Horizon unavailable"
+		if config.get("stack_warning", false): forecast = forecast.replace(" game h", "\ngame h").replace("Horizon unavailable", "Horizon\nunavailable")
+		warning.add_child(UI.label(forecast, "log" if config.get("abbreviate_stock", false) else "readout", ink))
 		content.add_child(warning)
 	elif rate != null and config.get("show_rate", true):
 		var observed = UI.row()
 		observed.add_child(UI.label(Models.signed(rate), "readout", "ink-muted"))
-		observed.add_child(UI.label("/game h observed", "small", "ink-muted"))
+		observed.add_child(UI.label("/game h", "small", "ink-muted"))
 		content.add_child(observed)
 	elif rate == null and config.get("show_rate", true) and not config.get("narrow", false):
-		content.add_child(UI.label(model.rate_copy, "small", "ink-subtle"))
+		content.add_child(UI.label(model.rate_copy, "small", "ink-muted"))
 	tooltip_text = "%s stored: %s\n%s" % [model.name, str(model.value) if model.value != null else "Unavailable", model.rate_copy]
 	if config.get("abbreviate_stock", false): tooltip_text += "\n~ quantities are abbreviated approximations; full stored value is above."
 	if rate != null:

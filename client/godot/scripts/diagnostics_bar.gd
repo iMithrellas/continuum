@@ -46,7 +46,7 @@ func _draw() -> void:
 	var font := ThemeTokens.font("readout")
 	var font_size := ThemeTokens.font_size("readout")
 	var lanes := graph_lane_rects()
-	var padding := metrics.px(3)
+	var padding := 8.0
 	var available := maxf(0, size.x - padding * 2 - (metrics.px(77) if not lanes.is_empty() else 0))
 	var full_frame := frame_text()
 	var compact_text := font.get_string_size(full_frame, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available

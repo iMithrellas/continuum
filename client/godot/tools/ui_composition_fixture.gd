@@ -197,7 +197,7 @@ func _check_functional_contracts() -> void:
 	check(fed.trend == "flat", "stable arrow requires an actual game-hour lookback")
 	check(not main._selected_card.model.has("commands") and not main._selected_card.model.has("automation_rules"), "no unsupported rest order or fictional automation")
 	check(main._resource_labels[0] is ResourceReadout, "actual main uses resource readout controls")
-	check(main.workspace.telemetry.get_combined_minimum_size().y <= ThemeTokens.number("topbar") + 1, "resource estimates cannot inflate the 40px logical topbar content")
+	check(main.workspace.telemetry.get_combined_minimum_size().y <= 44, "primary metadata retains a padded 44px row")
 	check(main._alert_box is AlertList and main._feed is ActivityFeed, "actual main uses alert and activity components")
 	check(main._return_digest.baseline_available == false, "first visit invents no return baseline")
 	check(main._connection_label.text == "Live" and main._connection_label.get_theme_color("font_color") == ThemeTokens.color("ink-muted"), "healthy connection is neutral")
@@ -292,7 +292,7 @@ func _pointer_button(pressed: bool, point: Vector2) -> InputEventMouseButton:
 
 func _check_header_contracts() -> void:
 	for frame in 4: await get_tree().process_frame
-	check(main.workspace._rows.size() == 2 and (main.workspace.area.position.y <= 74 or main._resource_group.get_parent() == main.workspace.status_content), "only status and workspace groups reserve global space; tight stock budgets reflow internally (actual %.1f)" % main.workspace.area.position.y)
+	check(main.workspace._rows.size() == 2 and main.workspace.area.position.y == main.workspace.header.size.y, "only the measured header reserves global space; tight stock budgets reflow internally")
 	for row: ScrollContainer in main.workspace._rows:
 		check(row.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER, "global chrome has no scrollbar stripes")
 	check(main.workspace._menu.text == "Panels" and not main.workspace._panel_nav.visible, "one Panels management menu replaces repeated navigation chips")
@@ -300,7 +300,7 @@ func _check_header_contracts() -> void:
 	check(not main._intent_feedback.visible or main._intent_feedback.text != "Select: drag rectangle", "default selection instructions are not persistent chrome")
 	check(_find_button(main, "Since you left") == null and main._session_menu.get_popup().get_item_text(0) == "Since you left", "digest is reachable through Menu, not a permanent top-level button")
 	var menu_rect: Rect2 = main._session_menu.get_global_rect()
-	check(main.workspace.telemetry.get_parent().get_global_rect().encloses(menu_rect), "account menu remains fully reachable without horizontal scrolling")
+	check(main.workspace._utilities.get_global_rect().encloses(menu_rect), "account menu remains fully reachable within the utility cluster")
 	var old_name: String = main.workspace.model.workspaces[main.workspace.model.active].name
 	main.workspace.model.workspaces[main.workspace.model.active].name = "A very long personal workspace name with details"
 	main.workspace._rebuild_navigation()

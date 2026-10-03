@@ -103,7 +103,32 @@ func run() -> void:
 	resource.set_model({"name": "Food", "value": 40, "availability": "warming"}, {"compact": true})
 	await settle()
 	check(visible_copy(resource).contains("Rate warming up"), "compact resources visibly distinguish rate warm-up")
-	check(resource.get_combined_minimum_size().y <= ThemeTokens.number("topbar"), "warm-up label preserves the strip height")
+	root.content_scale_size = Vector2i.ZERO
+	var warmup_baseline := 0.0
+	for scale in [1.0, 1.25, 1.5]:
+		root.content_scale_factor = scale
+		await settle()
+		check(resource.get_combined_minimum_size().y == 44 and resource.size.y == 44, "warm-up resource stays within the intended padded 44px logical budget")
+		var bounds := resource.get_global_rect()
+		var surface := resource.get_theme_stylebox("panel")
+		var insets := Vector2(surface.get_content_margin(SIDE_LEFT), surface.get_content_margin(SIDE_TOP))
+		var trailing := Vector2(surface.get_content_margin(SIDE_RIGHT), surface.get_content_margin(SIDE_BOTTOM))
+		var content_bounds := Rect2(bounds.position + insets, bounds.size - insets - trailing)
+		check(insets.x >= 8 and insets.y >= 4 and trailing.x >= 8 and trailing.y >= 4, "resource readability includes real padding, not just a taller minimum")
+		for label: Label in resource.find_children("*", "Label", true, false):
+			check(content_bounds.encloses(label.get_global_rect()) and label.get_combined_minimum_size().x <= label.size.x, "resource text fits inside padded content at every UI scale")
+		var head: HBoxContainer = resource.get_child(0).get_child(0)
+		var rate: Label = resource.get_child(0).get_child(1)
+		var stock: Label = head.get_child(1)
+		var font := stock.get_theme_font("font")
+		var font_size := stock.get_theme_font_size("font_size")
+		var baseline := stock.global_position.y - bounds.position.y + (stock.size.y - font.get_height(font_size)) * 0.5 + font.get_ascent(font_size)
+		if scale == 1.0: warmup_baseline = baseline
+		check(is_equal_approx(baseline, warmup_baseline) and head.get_global_rect().end.y <= rate.global_position.y, "numeric baseline stays stable and warm-up occupies a separate secondary line")
+		check(rate.get_theme_color("font_color") != stock.get_theme_color("font_color"), "warm-up remains visually secondary to the stored value")
+		var native_rect: Rect2 = root.get_final_transform() * bounds
+		check(is_equal_approx(native_rect.size.y, 44 * scale), "native card height applies whole-UI scaling exactly once")
+	root.content_scale_factor = 1.0
 	resource.set_model({"name": "Food", "value": 40}, {"compact": true, "narrow": true, "show_rate": false})
 	await settle()
 	check(resource.tooltip_text.contains("Rate unavailable"), "narrow rate suppression retains honest tooltip context")

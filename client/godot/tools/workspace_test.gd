@@ -215,7 +215,7 @@ func _test_manager() -> void:
 	var active := deck.model.active
 	deck.toggle_panel("people")
 	_assert(deck.state("people").minimized, "panel minimizes to its header")
-	_assert(deck.windows.people.visible and deck.windows.people.size.y == 32 and not deck.windows.people.scroll.visible, "collapse retains a real 32px header")
+	_assert(deck.windows.people.visible and deck.windows.people.size.y == 40 and not deck.windows.people.scroll.visible, "collapse retains a padded 40px header")
 	deck.toggle_panel("people")
 	_assert(not deck.state("people").minimized and deck.windows["people"].visible, "panel restores from navigation")
 	deck.state("people").pinned = true
@@ -297,15 +297,15 @@ func _test_headers(deck: WorkspaceDeck, manager_path: String) -> void:
 	deck._layout_action(2)
 	_assert(not deck.model.show_panel_headers and not window.titlebar.visible and window.drag_strip.visible and window.divider.visible,
 		"hidden headers preserve visible drag and restore affordances")
-	_assert(is_equal_approx(window.scroll.offset_top, deck.metrics.px(36)) and Rect2(window.position, window.size) == original,
-		"hidden headers retain a 24px drag strip without changing window geometry")
+	_assert(is_equal_approx(window.scroll.offset_top, deck.metrics.px(44)) and Rect2(window.position, window.size) == original,
+		"hidden headers retain a 28px drag strip and 16px body gutter without changing geometry")
 	var reloaded := WorkspaceLayout.new()
 	_assert(reloaded.load_from(manager_path) and not reloaded.show_panel_headers,
 		"UI header toggle auto-saves the preference")
 	deck.switch_workspace("build")
 	_assert(not deck.windows.operations.titlebar.visible, "header preference also applies after switching workspaces")
 	deck.apply_metrics(UiMetrics.new(24))
-	_assert(not deck.windows.operations.titlebar.visible and is_equal_approx(deck.windows.operations.scroll.offset_top, deck.metrics.px(36)),
+	_assert(not deck.windows.operations.titlebar.visible and is_equal_approx(deck.windows.operations.scroll.offset_top, deck.metrics.px(44)),
 		"font scaling preserves hidden headers and their compact inset")
 	deck.apply_metrics(UiMetrics.new(13))
 	var shortcut := InputEventKey.new()

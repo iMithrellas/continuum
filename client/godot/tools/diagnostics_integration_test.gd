@@ -81,8 +81,8 @@ func _run() -> void:
 		"production diagnostics are an inline bar, not a floating CanvasLayer")
 	_assert(diagnostics_rect == Rect2(Vector2.ZERO, main.workspace.diagnostics_host.size),
 		"production diagnostics use local header bounds")
-	_assert(main.workspace.telemetry.get_child(0) == main._clock,
-		"game telemetry starts with the clock, without the Continuum brand")
+	_assert(main.workspace.telemetry.get_child(0) == main._clock_group and main._clock_group.is_ancestor_of(main._clock) and main._clock_group.is_ancestor_of(main._population),
+		"game telemetry starts with the padded clock/crew group")
 	var original_viewport_size := get_tree().root.size
 	get_tree().root.size = Vector2i(2000, 1072)
 	await get_tree().process_frame
@@ -95,20 +95,23 @@ func _run() -> void:
 		for viewport_size in [Vector2i(360, 480), Vector2i(1440, 900), Vector2i(2000, 1072)]:
 			get_tree().root.size = viewport_size
 			main.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+			main.configure_diagnostics(true, false, false)
 			for _frame in 8: await get_tree().process_frame
 			var host: Control = main.workspace.diagnostics_host
 			var telemetry_view: ScrollContainer = main.workspace._rows[0]
-			_assert(host.get_parent() == telemetry_view.get_parent(), "diagnostics and telemetry viewport are header siblings")
-			_assert(host.get_parent().get_global_rect().encloses(host.get_global_rect()), "diagnostics fit inside the first header row")
-			_assert(main.get_viewport_rect().encloses(host.get_global_rect()), "diagnostics fit inside the actual game viewport")
-			_assert(host.size.x <= host.get_parent().size.x * 0.4 + 1, "diagnostics never reserve over 40 percent of the header")
-			_assert(host.get_global_rect().position.x >= telemetry_view.get_global_rect().end.x, "diagnostics do not cover telemetry")
-			_assert(is_equal_approx(telemetry_view.custom_minimum_size.y, ThemeTokens.number("topbar")), "telemetry viewport preserves the 40 logical pixel row")
-			_assert(host.get_global_rect().end.y <= main.workspace.area.get_global_rect().position.y, "diagnostics never cover map or workspace windows")
+			_assert_utility_geometry(main, viewport_size)
+			_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "readout-only diagnostics do not reserve graph lanes")
+			_assert(main._clock_group.size.y == 44 and telemetry_view.size.y >= 44, "padded metadata retains its 44px logical height at every scale")
 			main.configure_diagnostics(true, true, false)
+			for _frame in 8: await get_tree().process_frame
+			_assert_utility_geometry(main, viewport_size)
 			for lane: Rect2 in main._diagnostics_overlay.graph_lane_rects():
 				_assert(main._diagnostics_overlay.panel_rect().encloses(lane), "inline graphs remain inside the bar")
-			if viewport_size.x == 360:
+				var global_lane: Rect2 = main._diagnostics_overlay.get_global_transform() * lane
+				_assert(not global_lane.intersects(main.workspace._menu.get_global_rect()) and not global_lane.intersects(main._session_menu.get_global_rect()), "graphs never cover Panels or Menu hit areas")
+			if main.size.x >= 1280:
+				_assert(main._diagnostics_overlay.graph_lane_rects().size() == 2, "wide utility cluster preserves both enabled diagnostic graphs")
+			else:
 				_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "narrow header collapses sparklines")
 			var area_before: Rect2 = main.workspace.area.get_global_rect()
 			var left_before: float = telemetry_view.size.x
@@ -174,6 +177,29 @@ func _run() -> void:
 		return
 	print("DIAGNOSTICS_INTEGRATION_PASS")
 	get_tree().quit(0)
+
+
+func _assert_utility_geometry(main: Control, native_size: Vector2i) -> void:
+	var deck: WorkspaceDeck = main.workspace
+	var host := deck.diagnostics_host.get_global_rect()
+	var utilities := deck._utilities.get_global_rect()
+	var telemetry := deck._rows[0].get_global_rect()
+	var header := deck.header.get_global_rect()
+	var panels := deck._menu.get_global_rect()
+	var menu: Rect2 = main._session_menu.get_global_rect()
+	_assert(deck.diagnostics_host.get_parent() == deck.utility_row and deck._menu.get_parent() == deck.utility_row and main._session_menu.get_parent() == deck.utility_row,
+		"diagnostics, Panels and Menu share the deliberate utility cluster")
+	_assert(utilities.encloses(host) and utilities.encloses(panels) and utilities.encloses(menu), "all utility content stays inside its surface")
+	_assert(header.encloses(utilities) and main.get_viewport_rect().encloses(utilities), "utility cluster fits the actual logical viewport")
+	_assert(header.end.x - utilities.end.x >= 12 and utilities.position.y >= header.position.y + 8, "upper-right utility cluster keeps its outer insets")
+	_assert(host.end.x + 8 <= panels.position.x and panels.end.x + 8 <= menu.position.x, "diagnostics leave separate, non-overlapping Panels and Menu hit areas")
+	_assert(panels.size.y == 32 and menu.size.y == 32 and is_equal_approx(panels.get_center().y, menu.get_center().y), "utility buttons keep equal aligned 32px heights")
+	_assert(telemetry.end.x + 12 <= utilities.position.x or utilities.end.y + 8 <= telemetry.position.y, "utility cluster has a gutter from telemetry in both side-by-side and stacked layouts")
+	_assert(utilities.end.y <= deck._tabs.global_position.y and utilities.end.y <= deck.area.global_position.y, "diagnostics and utility buttons never cover view tabs or the map")
+	_assert(main._diagnostics_overlay.panel_rect() == Rect2(Vector2.ZERO, deck.diagnostics_host.size), "diagnostics use their real parent-local drawing bounds after reflow")
+	var native_bounds := Rect2(Vector2.ZERO, Vector2(native_size))
+	for rect: Rect2 in [utilities, host, panels, menu]:
+		_assert(native_bounds.encloses(main.get_viewport().get_final_transform() * rect), "utility drawing and input bounds remain inside the native window after whole-UI scaling")
 
 
 func _render_preview(main: Control, font_size: int, viewport_size: Vector2i) -> void:

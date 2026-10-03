@@ -3,6 +3,7 @@ class_name WorkspaceDeck
 extends Control
 
 signal workspace_changed
+signal header_layout_changed
 
 var model := WorkspaceLayout.new()
 var windows: Dictionary = {}
@@ -36,6 +37,12 @@ var _tab_alert_nodes: Dictionary = {}
 var _panel_buttons: Dictionary = {}
 var _drag_origins: Dictionary = {}
 var _body_focus_reveal_pending := false
+var header: PanelContainer
+var utility_row: HBoxContainer
+var _header_rows: VBoxContainer
+var _utilities: PanelContainer
+var _status_viewport: ScrollContainer
+var _diagnostics_graph := false
 
 
 func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
@@ -48,36 +55,61 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	stack.add_theme_constant_override("separation", 0)
 	stack.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(stack)
-	var header := PanelContainer.new()
-	header.add_theme_stylebox_override("panel", DeckTheme.box(ThemeTokens.color("bg-000"), ThemeTokens.color("line-100"), 0))
+	header = PanelContainer.new()
+	header.name = "GlobalHeader"
+	var surface := DeckTheme.box(ThemeTokens.color("bg-000"), ThemeTokens.color("line-100"), 12)
+	surface.content_margin_top = 8
+	surface.content_margin_bottom = 4
+	surface.set_corner_radius_all(0)
+	surface.set_border_width_all(0)
+	surface.border_width_bottom = 1
+	header.add_theme_stylebox_override("panel", surface)
 	stack.add_child(header)
-	var rows := VBoxContainer.new()
-	rows.add_theme_constant_override("separation", 0)
-	header.add_child(rows)
+	_header_rows = VBoxContainer.new()
+	_header_rows.add_theme_constant_override("separation", 8)
+	header.add_child(_header_rows)
 	_telemetry_header = HBoxContainer.new()
-	_telemetry_header.add_theme_constant_override("separation", 0)
-	rows.add_child(_telemetry_header)
+	_telemetry_header.add_theme_constant_override("separation", 12)
+	_header_rows.add_child(_telemetry_header)
 	telemetry = _scroll_row(_telemetry_header, ThemeTokens.number("topbar"))
+	telemetry.add_theme_constant_override("separation", 12)
 	status_content = VBoxContainer.new()
 	status_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	status_content.add_theme_constant_override("separation", 0)
+	status_content.add_theme_constant_override("separation", 8)
 	status_content.custom_minimum_size.y = ThemeTokens.number("topbar")
-	var status_viewport := telemetry.get_parent()
-	status_viewport.remove_child(telemetry)
-	status_viewport.add_child(status_content)
+	_status_viewport = telemetry.get_parent()
+	_status_viewport.remove_child(telemetry)
+	_status_viewport.add_child(status_content)
 	status_content.add_child(telemetry)
 	telemetry.custom_minimum_size.y = ThemeTokens.number("topbar")
-	# Reserve the horizontal scroll track consistently: toggling inline
-	# diagnostics must not move the map when the telemetry crosses overflow.
-	status_viewport.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_NEVER
+	_utilities = PanelContainer.new()
+	_utilities.name = "ViewLayoutUtilities"
+	_utilities.custom_minimum_size.y = 44
+	_utilities.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	var utility_surface := DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 8)
+	utility_surface.content_margin_top = 4
+	utility_surface.content_margin_bottom = 4
+	_utilities.add_theme_stylebox_override("panel", utility_surface)
+	_telemetry_header.add_child(_utilities)
+	utility_row = HBoxContainer.new()
+	utility_row.custom_minimum_size.y = 32
+	utility_row.add_theme_constant_override("separation", 8)
+	_utilities.add_child(utility_row)
 	diagnostics_host = Control.new()
 	diagnostics_host.name = "DiagnosticsHost"
 	diagnostics_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	diagnostics_host.clip_contents = true
 	diagnostics_host.visible = false
-	_telemetry_header.add_child(diagnostics_host)
+	utility_row.add_child(diagnostics_host)
 	_telemetry_header.resized.connect(_resize_diagnostics_host)
-	var workspace_row := _scroll_row(rows, ThemeTokens.number("panel-header"))
+	_status_viewport.resized.connect(func() -> void: header_layout_changed.emit())
+	var workspace_row := _scroll_row(_header_rows, ThemeTokens.number("panel-header"))
+	workspace_row.add_theme_constant_override("separation", 12)
+	var views := Label.new()
+	views.text = "VIEWS"
+	ThemeTokens.apply_label(views, "section")
+	views.tooltip_text = "Personal view presets. Switching views only changes the panels on this device."
+	workspace_row.add_child(views)
 	_tabs = HBoxContainer.new()
 	workspace_row.add_child(_tabs)
 	_status = Label.new()
@@ -86,8 +118,10 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_menu = MenuButton.new()
 	_menu.focus_mode = Control.FOCUS_ALL
 	_menu.text = "Panels"
-	_menu.theme_type_variation = "ButtonQuiet"
-	workspace_row.add_child(_menu)
+	_menu.icon = UiIcons.texture("chevron-down")
+	_menu.custom_minimum_size.y = 32
+	_menu.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	utility_row.add_child(_menu)
 	_menu.get_popup().id_pressed.connect(_layout_action)
 	_menu.about_to_popup.connect(_build_management_menu)
 	workspace_row.resized.connect(_fit_navigation)
@@ -101,6 +135,8 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	area.resized.connect(_apply_layout)
 	area.resized.connect(_fit_navigation)
+	resized.connect(_fit_header)
+	_fit_header.call_deferred()
 	_panel_nav = HBoxContainer.new()
 	add_child(_panel_nav)
 	_panel_nav.hide()
@@ -117,19 +153,33 @@ func apply_metrics(ui_metrics: UiMetrics) -> void:
 	_apply_layout()
 
 
-func set_diagnostics_visible(enabled: bool) -> void:
+func set_diagnostics_visible(enabled: bool, graph := false) -> void:
 	diagnostics_host.visible = enabled
+	_diagnostics_graph = enabled and graph
 	_resize_diagnostics_host()
 
 
 func _resize_diagnostics_host() -> void:
 	if not is_instance_valid(diagnostics_host):
 		return
-	# The scroll viewport keeps its original row height, but never dictates the
-	# window width. Diagnostics reserve at most 40% of the actual header width.
 	diagnostics_host.custom_minimum_size = Vector2(
-		minf(0 if size.x < 550 else (120 if size.x < 800 else metrics.px(360)), maxf(0, _telemetry_header.size.x * 0.4)) if diagnostics_host.visible else 0,
+		((360 if _diagnostics_graph else 224) if size.x >= 1280 else (112 if size.x >= 900 else 0)) if diagnostics_host.visible else 0,
 		0)
+
+
+func status_width() -> float:
+	return maxf(1, _status_viewport.size.x)
+
+func _fit_header() -> void:
+	if not is_instance_valid(_utilities): return
+	var stacked := size.x < 550
+	var parent: Container = _header_rows if stacked else _telemetry_header
+	if _utilities.get_parent() != parent:
+		_utilities.reparent(parent)
+		if stacked: _header_rows.move_child(_utilities, 0)
+	_utilities.size_flags_horizontal = Control.SIZE_SHRINK_END if stacked else Control.SIZE_FILL
+	_resize_diagnostics_host()
+	header_layout_changed.emit()
 
 
 func _scroll_row(parent: Node, height: float) -> HBoxContainer:
@@ -263,14 +313,15 @@ func set_panel_authorized(key: String, allowed: bool) -> void:
 	authorized[key] = allowed
 	if not allowed and windows.has(key):
 		_alert_summaries.clear()
-		if _map.has_method("cancel_gestures"):
+		if is_instance_valid(_map) and _map.has_method("cancel_gestures"):
 			_map.call("cancel_gestures")
 		windows[key].cancel_interaction()
 		windows[key].visible = false
-		var focus := get_viewport().gui_get_focus_owner()
+		var viewport := get_viewport() if is_inside_tree() else null
+		var focus := viewport.gui_get_focus_owner() if viewport != null else null
 		if focus != null and windows[key].is_ancestor_of(focus):
 			focus.release_focus()
-	if _ready_layout:
+	if _ready_layout and is_inside_tree():
 		_rebuild_navigation()
 		_apply_layout()
 		if _dialog.visible:
@@ -415,7 +466,7 @@ func _apply_layout() -> void:
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
 		var rect := Rect2(Vector2.ZERO, area.size) if compact else WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 		if saved.minimized:
-			rect.size.y = ThemeTokens.number("panel-header")
+			rect.size.y = window.chrome_height()
 		if not compact:
 			rect.position = rect.position.round()
 			rect.size = rect.size.round()
@@ -482,7 +533,8 @@ func _rebuild_navigation() -> void:
 		var row := HBoxContainer.new()
 		tab.add_child(row)
 		var name: String = model.workspaces[id].name
-		var button := _button(row, name if name.length() <= 28 else name.left(27) + "…", name + " · switch workspace", switch_workspace.bind(id))
+		var button := _button(row, name if name.length() <= 28 else name.left(27) + "…", name + " · personal view preset; colony state is unchanged", switch_workspace.bind(id))
+		button.custom_minimum_size.y = 32
 		button.set_meta("workspace_id", id)
 		_tab_buttons[id] = button
 		button.add_theme_color_override("font_color", ThemeTokens.color("ink" if model.active == id else "ink-muted"))
@@ -531,21 +583,28 @@ func _build_management_menu() -> void:
 	for id: String in model.workspaces:
 		popup.add_radio_check_item(model.workspaces[id].name, 200 + model.workspaces.keys().find(id))
 		popup.set_item_checked(popup.item_count - 1, model.active == id)
-	_menu.tooltip_text = "Manage permitted panels and workspaces. " + _status.text
+	_menu.tooltip_text = "View & layout · show panels or choose a personal view preset. Ctrl+P opens Panels; Ctrl+F edits this layout. " + _status.text
 
 func _fit_navigation() -> void:
 	if not is_instance_valid(_tabs) or not is_instance_valid(_menu): return
 	for tab in _tabs.get_children(): tab.show()
-	var available := size.x - _menu.get_combined_minimum_size().x - 24
+	for id: String in _tab_buttons:
+		var title: String = model.workspaces[id].name
+		_tab_buttons[id].text = title if title.length() <= 28 else title.left(27) + "…"
+		_tab_buttons[id].custom_minimum_size.x = 0
+		_tab_buttons[id].text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+	var available := size.x - 84
 	var needed := _tabs.get_combined_minimum_size().x
 	if size.x < 1000 or needed > available:
 		for id: String in _tab_buttons:
 			_tab_buttons[id].get_parent().get_parent().visible = id == model.active
 		var active_button: Button = _tab_buttons.get(model.active)
 		if active_button != null:
+			if size.x < 350 and model.active in ["daily", "build", "welfare"]:
+				active_button.text = {"daily": "Daily", "build": "Build", "welfare": "Welfare"}[model.active]
 			active_button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-			active_button.custom_minimum_size.x = minf(200, maxf(80, available - 48))
-			active_button.tooltip_text = model.workspaces[model.active].name + " · choose workspace in Panels"
+			active_button.custom_minimum_size.x = minf(200, maxf(80, available - 32))
+			active_button.tooltip_text = model.workspaces[model.active].name + " · personal view preset; choose views in Panels"
 
 func _update_tab_alert(id: String) -> void:
 	if not _tab_alert_nodes.has(id):
@@ -680,7 +739,10 @@ func _layout_action(id: int) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	if event.ctrl_pressed and event.keycode == KEY_F:
+	if event.ctrl_pressed and event.keycode == KEY_P:
+		_menu.grab_focus()
+		_menu.show_popup()
+	elif event.ctrl_pressed and event.keycode == KEY_F:
 		edit_workspace(false)
 	elif event.ctrl_pressed and event.shift_pressed and event.keycode == KEY_H:
 		toggle_panel_headers()

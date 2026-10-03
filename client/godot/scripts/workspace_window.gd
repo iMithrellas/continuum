@@ -54,6 +54,7 @@ func setup(title: String) -> void:
 	header_ground.offset_bottom = ThemeTokens.number("panel-header")
 	add_child(header_ground)
 	titlebar = HBoxContainer.new()
+	titlebar.add_theme_constant_override("separation", 8)
 	titlebar.set_anchors_and_offsets_preset(Control.PRESET_TOP_WIDE)
 	titlebar.mouse_filter = Control.MOUSE_FILTER_STOP
 	titlebar.mouse_default_cursor_shape = Control.CURSOR_MOVE
@@ -109,6 +110,7 @@ func setup(title: String) -> void:
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
 	content = VBoxContainer.new()
+	content.add_theme_constant_override("separation", 12)
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(content)
@@ -159,10 +161,10 @@ func set_focused(value: bool) -> void:
 	_focused = value
 	var surface: StyleBox = get_theme_stylebox("panel").duplicate(true)
 	if surface is StyleBoxFlat:
-		surface.set_border_width_all(3)
+		surface.set_border_width_all(1)
 		surface.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("bg-400")
 	else:
-		surface.body.set_border_width_all(3)
+		surface.body.set_border_width_all(1)
 		surface.body.border_color = DeckTheme.ACCENT if value else ThemeTokens.color("bg-400")
 	add_theme_stylebox_override("panel", surface)
 
@@ -180,27 +182,27 @@ func set_collapsed(is_collapsed: bool) -> void:
 func refresh_metrics() -> void:
 	if not is_instance_valid(titlebar):
 		return
-	titlebar.offset_left = ThemeTokens.number("space-3")
-	titlebar.offset_right = -ThemeTokens.number("space-4")
-	titlebar.offset_top = ThemeTokens.number("space-2")
-	titlebar.offset_bottom = ThemeTokens.number("panel-header")
-	var chrome_height := ThemeTokens.number("panel-header") if header_visible else ThemeTokens.number("control-sm")
-	header_ground.offset_left = 3
-	header_ground.offset_right = -3
-	header_ground.offset_top = 3
+	titlebar.offset_left = 12
+	titlebar.offset_right = -16
+	titlebar.offset_top = 8
+	titlebar.offset_bottom = chrome_height() - 8
+	var chrome_height := chrome_height()
+	header_ground.offset_left = 1
+	header_ground.offset_right = -1
+	header_ground.offset_top = 1
 	header_ground.offset_bottom = chrome_height
 	drag_strip.offset_left = 12
 	drag_strip.offset_right = -12
 	drag_strip.offset_top = 0
 	drag_strip.offset_bottom = chrome_height
-	divider.offset_left = 3
-	divider.offset_right = -3
+	divider.offset_left = 1
+	divider.offset_right = -1
 	divider.offset_top = chrome_height - 1
 	divider.offset_bottom = chrome_height
-	scroll.offset_left = ThemeTokens.number("space-3")
-	scroll.offset_right = -ThemeTokens.number("space-3")
-	scroll.offset_top = chrome_height + ThemeTokens.number("space-3")
-	scroll.offset_bottom = -ThemeTokens.number("space-3")
+	scroll.offset_left = 16 if not compact else 12
+	scroll.offset_right = -scroll.offset_left
+	scroll.offset_top = chrome_height + 16
+	scroll.offset_bottom = -16
 	for child: Node in titlebar.get_children():
 		if child is Button:
 			child.custom_minimum_size = Vector2(ThemeTokens.number("control-sm"), ThemeTokens.number("control-sm"))
@@ -218,6 +220,9 @@ func refresh_metrics() -> void:
 			handle.set_anchor(axis + 2, trailing)
 			handle.set_offset(axis, corner if edges[axis] == 0 else (-extent if edges[axis] > 0 else 0.0))
 			handle.set_offset(axis + 2, -corner if edges[axis] == 0 else (extent if edges[axis] < 0 else 0.0))
+
+func chrome_height() -> float:
+	return ThemeTokens.number("panel-header") + 8 if header_visible else ThemeTokens.number("control-sm") + 4
 
 
 func set_header_visible(value: bool) -> void:

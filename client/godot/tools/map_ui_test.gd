@@ -115,6 +115,7 @@ func _test_flat_map_input() -> void:
 
 
 func _test_controller_surface() -> void:
+	get_tree().root.size = Vector2i(1440, 900)
 	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
 	await main.ready
@@ -123,11 +124,16 @@ func _test_controller_surface() -> void:
 	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and main.get_window().content_scale_factor == 1.0 and
 			main._haul_button.get_theme_font_size("font_size") == 13 and main._build_menu.get_theme_font_size("font_size") == 13,
 		"legacy lower font bound migrates to 100% without shrinking canonical typography")
+	await _test_header_geometry(main)
+	var clock_baseline: float = _label_baseline(main._clock) - main._clock_group.global_position.y
 	main.apply_font_size(24, false)
 	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 150 and main.get_window().content_scale_factor == 1.5 and
-			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock.custom_minimum_size.x == 100 and
-			main.workspace.telemetry.get_parent().custom_minimum_size.y == 40 and main._haul_button.get_theme_font_size("font_size") == 13 and main._connection_label.get_theme_font_size("font_size") == 13,
+			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock_group.custom_minimum_size.y == 44 and
+			main._haul_button.get_theme_font_size("font_size") == 13 and main._connection_label.get_theme_font_size("font_size") == ThemeTokens.font_size("small"),
 		"legacy maximum font bound scales the entire viewport once while logical metrics remain fixed")
+	await _test_header_geometry(main)
+	_assert(is_equal_approx(_label_baseline(main._clock) - main._clock_group.global_position.y, clock_baseline),
+		"clock baseline inside the padded time group remains stable at 150 percent")
 	main.apply_font_size(13, false)
 	_assert(main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0, "runtime reference size restores exactly")
 	main.apply_font_size(10, false)
@@ -160,6 +166,46 @@ func _test_controller_surface() -> void:
 		"disconnected and pending clients are gated")
 	await _refresh_real_tiles(main)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(isolated_path))
+
+
+func _test_header_geometry(main: Control) -> void:
+	for frame in 8: await get_tree().process_frame
+	var status: Rect2 = main.workspace._rows[0].get_global_rect()
+	var clock: Rect2 = main._clock_group.get_global_rect()
+	_assert(clock.size.y == 44 and status.encloses(clock), "44px time group fits the actual status viewport: clock=%s status=%s scale=%.2f" % [clock, status, main.get_window().content_scale_factor])
+	for label: Label in [main._clock, main._population]:
+		_assert(clock.encloses(label.get_global_rect()) and label.get_combined_minimum_size().x <= label.size.x,
+			"clock and crew text fit their content-sized surface without clipping")
+		_assert(label.global_position.x >= clock.position.x + 8 and label.get_global_rect().end.x <= clock.end.x - 8,
+			"time-group text keeps real 8px horizontal insets")
+	_assert(main._clock.get_global_rect().end.y <= main._population.global_position.y,
+		"primary clock and secondary crew occupy distinct lines")
+	var previous_card := Rect2()
+	var previous_baseline := 0.0
+	for card: ResourceReadout in main._resource_labels.values():
+		var bounds := card.get_global_rect()
+		_assert(card.get_combined_minimum_size().y == 44 and bounds.size.y == 44 and status.encloses(bounds),
+			"calm resource cards keep a bounded 44px logical height inside the status viewport")
+		_assert(not bounds.intersects(clock) and not bounds.intersects(main._session_group.get_global_rect()),
+			"resource cards cannot overlap time or session metadata")
+		for label: Label in card.find_children("*", "Label", true, false):
+			_assert(bounds.encloses(label.get_global_rect()) and label.get_combined_minimum_size().x <= label.size.x,
+				"resource names, values and secondary text fit their card")
+		var value: Label = card.get_child(0).get_child(0).get_child(-1)
+		var baseline := _label_baseline(value)
+		if previous_card.has_area():
+			_assert(not previous_card.intersects(bounds), "adjacent resource cards never overlap")
+			if previous_card.position.y == bounds.position.y:
+				_assert(bounds.position.x - previous_card.end.x >= 4 and absf(baseline - previous_baseline) <= 1,
+					"resource values share a stable row baseline with a visible inter-card gutter")
+		previous_card = bounds
+		previous_baseline = baseline
+
+
+func _label_baseline(label: Label) -> float:
+	var font := label.get_theme_font("font")
+	var font_size := label.get_theme_font_size("font_size")
+	return label.global_position.y + (label.size.y - font.get_height(font_size)) * 0.5 + font.get_ascent(font_size)
 
 
 func _test_workspace_surface(main: Control) -> void:
@@ -220,8 +266,14 @@ func _test_workspace_surface(main: Control) -> void:
 	await get_tree().process_frame
 	_assert(main.workspace.compact and main.workspace.area.size.x == 390,
 		"production UI fits a phone viewport without a fixed-width sidebar")
-	_assert(main.workspace.area.position.y < 140,
-		"telemetry text cannot inflate the header through narrow wrapping (actual y=%.1f toolbar=%s groups=%s/%s)" % [main.workspace.area.position.y, main._map_toolbar.size, main._map_layer_label.get_parent().get_combined_minimum_size(), main._map_zoom_label.get_parent().get_combined_minimum_size()])
+	await _test_header_geometry(main)
+	var utilities: Rect2 = main.workspace._utilities.get_global_rect()
+	var status: Rect2 = main.workspace._rows[0].get_global_rect()
+	var views: Rect2 = main.workspace._rows[1].get_global_rect()
+	_assert(main.workspace.area.position.y == main.workspace.header.size.y and main.workspace.header.size.y <= 202 and status.size.y <= 96,
+		"narrow header has a bounded padded utility row, two status rows and view tabs (actual %.1f)" % main.workspace.header.size.y)
+	_assert(utilities.end.y + 8 <= status.position.y and status.end.y + 8 <= views.position.y and views.end.y <= main.workspace.area.global_position.y,
+		"stacked utilities, status and view tabs have real gutters and cannot overlap the map")
 	main.size = desktop_size
 	await get_tree().process_frame
 	await get_tree().process_frame

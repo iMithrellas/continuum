@@ -54,7 +54,7 @@ func _observed_stocks(values: Array) -> void:
 
 func _check_complete_status(values: Array) -> void:
 	var status: Rect2 = main.workspace._rows[0].get_global_rect()
-	check(status.encloses(main._session_menu.get_global_rect()), "actual Menu hit area is fully inside the clipped status viewport")
+	check(main.workspace._utilities.get_global_rect().encloses(main._session_menu.get_global_rect()), "actual Menu hit area is fully inside the utility cluster")
 	check(status.encloses(main._connection_label.get_parent().get_global_rect()), "neutral connection glyph and word remain fully visible")
 	for card: ResourceReadout in main._resource_labels.values():
 		check(card.is_visible_in_tree() and status.encloses(card.get_global_rect()), "every live resource fits the aggregate clipped status budget: " + card.model.name)
@@ -63,12 +63,12 @@ func _check_complete_status(values: Array) -> void:
 			check(_find_label(card, "Critical" if card.model.level == "critical" else "Warning"), "every actual resource severity word is visibly rendered")
 			var forecast := _forecast_label(card)
 			check(forecast != null and "game h" in forecast.text and "Est " in forecast.text, "every warning retains estimated game-hour units")
-			if card.model.level == "critical": check("<0.1 game h" in forecast.text, "positive sub-resolution ETA is less-than, never apparent zero")
+			if card.model.level == "critical": check("<0.1 game h" in forecast.text.replace("\n", " "), "positive sub-resolution ETA is less-than, never apparent zero")
 	check(main.map.get_global_rect() == main.workspace.area.get_global_rect(), "status reflow leaves the map filling all remaining workspace area")
 	var global_point: Vector2 = main.map.get_global_transform() * main.map.world_to_screen(Vector2(8.5, 8.5))
 	check(main.map.screen_to_world(main.map.get_global_transform().affine_inverse() * global_point).distance_to(Vector2(8.5, 8.5)) < 0.001, "projection/global picking reconcile after state-driven status reflow")
 	if values[0] == 150.0 and main.workspace.area.size.x >= 640:
-		check(status.size.y == ThemeTokens.number("topbar"), "calm data restores the nominal 40px strip without a viewport resize")
+		check(status.size.y == 44, "calm data restores the padded 44px strip without a viewport resize")
 	check(main.workspace._rows.size() == 2 and main.workspace._rows[1].get_global_rect().position.y >= status.end.y, "internal resource reflow does not overlap the workspace strip")
 
 func _forecast_label(node: Node) -> Label:

@@ -22,12 +22,15 @@ the shared simulation for everyone, not just the local client's animation.
   speed, reset, world expansion, and membership. Local Developer/Admin profiles
   are not server roles; server authorization is decisive.
 
-Use the **Panels** menu to open `Overview`/`Operations`, `People`, `Policies`,
-`Inspector`, and `Trends`. Map tools select, build, excavate, and configure
-facilities/orders; the map's right inspector shows selected tile details and
-terrain potential. Overview suggestions are navigation/inspection guidance. They
-are reversible, never issue reducers, and are not a safety system or a promise of
-recovery.
+Open **Panels** in the upper-right, beside **Menu**, to show `Overview`/`Operations`,
+`People`, `Policies`, `Inspector`, or `Trends`. `Ctrl+P` opens the panel chooser;
+its view presets arrange panels and do not change permissions. The floating
+`Inspector` examines the map's physical terrain, including beyond the starter
+legacy Tile area: material and elevation may be available there, while ecology
+can be unavailable (shown as unavailable, not guessed). Map tools select, build,
+excavate, and configure facilities/orders. Overview suggestions are reversible
+navigation and inspection guidance; they issue no reducers and are not a safety
+system or promise of recovery.
 
 | Task | Required server role | Where |
 | --- | --- | --- |
@@ -37,9 +40,12 @@ recovery.
 | Change meal/haul policies | Operator or Admin | `Policies` |
 | Change time scale, reset/expand world, manage members | Admin only | F9 admin panel / server administration controls |
 
-The F10 Developer panel is local diagnostics/debug UI, not an authorization
-route. A normal client profile is a viewer until an existing server admin grants
-operator membership.
+The normal client profile defaults to **Operator**, unless an explicit Viewer
+assignment exists. Local Developer/Admin profiles and the F10 Developer panel
+cannot grant or self-elevate server permissions; server authorization is decisive.
+After upgrading from a version where revocation removed membership rows, previously
+revoked members now default to Operator and must be explicitly assigned Viewer
+again. Existing Admin and Operator assignments are preserved.
 
 ## Observe → food delivered
 

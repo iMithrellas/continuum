@@ -129,7 +129,7 @@ func _check_readout_fit(bar: RecordingBar) -> void:
 				await process_frame
 				await process_frame
 				var font := ThemeTokens.font("readout")
-				var available: float = width - bar.metrics.px(6) - (bar.metrics.px(77) if not bar.graph_lane_rects().is_empty() else 0.0)
+				var available: float = width - 16.0 - (bar.metrics.px(77) if not bar.graph_lane_rects().is_empty() else 0.0)
 				var full_width := font.get_string_size(test_case.full, HORIZONTAL_ALIGNMENT_LEFT, -1, ThemeTokens.font_size("readout")).x
 				var expected: String = test_case.full if full_width <= available else test_case.compact
 				_assert(expected in bar.drawn_text, "production fit guard draws %s at width %d / metrics %d" % [expected, width, font_size])
@@ -142,7 +142,7 @@ func _check_readout_fit(bar: RecordingBar) -> void:
 						maximum_compact = maxf(maximum_compact, bar.drawn_widths[index])
 					else:
 						maximum_full = maxf(maximum_full, bar.drawn_widths[index])
-	print("DIAGNOSTICS_RTT_FIT compact_max=%.2f full_max=%.2f narrow_max=%.2f production_available=114.00" % [maximum_compact, maximum_full, maximum_narrow])
+	print("DIAGNOSTICS_RTT_FIT compact_max=%.2f full_max=%.2f narrow_max=%.2f production_available=104.00" % [maximum_compact, maximum_full, maximum_narrow])
 
 
 func _assert(condition: bool, message: String) -> void:
