@@ -24,6 +24,7 @@ const MiningCell = Types.MiningCell
 const ItemStack = Types.ItemStack
 const Membership = Types.Membership
 const Role = Types.Role
+const ProductionPolicy = Types.ProductionPolicy
 const SpeedControl = Types.SpeedControl
 const Terrain = Types.Terrain
 const TerrainChunk = Types.TerrainChunk

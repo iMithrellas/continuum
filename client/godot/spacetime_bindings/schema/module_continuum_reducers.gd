@@ -77,6 +77,10 @@ func grant_admin(identity: PackedByteArray) -> SpacetimeDBReducerCall:
 func place_facility(x: int, y: int, z: int, kind: ContinuumTileKind, width: int, depth: int, clearance_height: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('place_facility', [x, y, z, kind, width, depth, clearance_height], [&'I32', &'I32', &'I32', &'ContinuumTileKind', &'U16', &'U16', &'U16'])
 
+## 0. resource: ContinuumResourceKind [br]
+func remove_production_policy(resource: ContinuumResourceKind) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('remove_production_policy', [resource], [&'ContinuumResourceKind'])
+
 ## 0. order_id: int [br]
 func remove_work_order(order_id: int) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('remove_work_order', [order_id], [&'U64'])
@@ -123,6 +127,11 @@ func set_meal_policy(policy: ContinuumMealPolicy) -> SpacetimeDBReducerCall:
 ## 1. authorized: bool [br]
 func set_operator(identity: PackedByteArray, authorized: bool) -> SpacetimeDBReducerCall:
 	return _client.call_reducer('set_operator', [identity, authorized], [&'__identity__', &'Bool'])
+
+## 0. resource: ContinuumResourceKind [br]
+## 1. target: float [br]
+func set_production_policy(resource: ContinuumResourceKind, target: float) -> SpacetimeDBReducerCall:
+	return _client.call_reducer('set_production_policy', [resource, target], [&'ContinuumResourceKind', &'F32'])
 
 ## 0. cooldown_seconds: int [br]
 func set_speed_change_cooldown(cooldown_seconds: int) -> SpacetimeDBReducerCall:

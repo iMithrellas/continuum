@@ -20,6 +20,7 @@ const MiningCell = preload('res://spacetime_bindings/schema/types/continuum_mini
 const ItemStack = preload('res://spacetime_bindings/schema/types/continuum_item_stack.gd')
 const Membership = preload('res://spacetime_bindings/schema/types/continuum_membership.gd')
 const Role = preload('res://spacetime_bindings/schema/types/continuum_role.gd')
+const ProductionPolicy = preload('res://spacetime_bindings/schema/types/continuum_production_policy.gd')
 const SpeedControl = preload('res://spacetime_bindings/schema/types/continuum_speed_control.gd')
 const Terrain = preload('res://spacetime_bindings/schema/types/continuum_terrain.gd')
 const TerrainChunk = preload('res://spacetime_bindings/schema/types/continuum_terrain_chunk.gd')
