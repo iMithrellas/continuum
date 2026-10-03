@@ -32,6 +32,7 @@ const MAX_STEP_SECONDS: f64 = 60.0;
 
 mod components;
 mod decisions;
+mod intents;
 mod logistics;
 mod movement;
 mod needs;

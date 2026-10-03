@@ -11,6 +11,10 @@ crate-type = ["cdylib", "rlib"]
 spacetimedb = "2.10.0"
 log = "0.4"
 
+[features]
+# Only owned, pure goal proposals use threads; WASM always uses the serial executor.
+native-parallel-intents = []
+
 [profile.release]
 opt-level = "z"
 lto = true

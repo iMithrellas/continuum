@@ -1,5 +1,6 @@
-use super::decisions::{decide, destination_for, destination_still_serves, Availability};
-use super::logistics::{assign_haul_roles, labour_goal, step_haul, step_work};
+use super::decisions::{destination_for, destination_still_serves, Availability};
+use super::intents::{plan_batch, uses_speculation, worker_count, DecisionInput};
+use super::logistics::{assign_haul_roles, step_haul, step_work};
 use super::movement::step_travel;
 use super::needs::{accrue_needs, step_eat, step_recreate, step_sleep, update_wellbeing};
 use super::{Activity, Goal, ResourceKind, TileKind, Tuning, World, MAX_STEP_SECONDS};
@@ -37,6 +38,15 @@ pub enum SimEvent {
 /// stock contention depends on this order. The roster is fixed during the step.
 /// Large durations use bounded intervals; non-positive/non-finite durations are ignored.
 pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<SimEvent> {
+    step_with_workers(world, tuning, dt_game_seconds, worker_count())
+}
+
+fn step_with_workers(
+    world: &mut World,
+    tuning: &Tuning,
+    dt_game_seconds: f64,
+    workers: usize,
+) -> Vec<SimEvent> {
     let mut events = Vec::new();
     if !dt_game_seconds.is_finite() || dt_game_seconds <= 0.0 {
         return events;
@@ -45,10 +55,16 @@ pub fn step(world: &mut World, tuning: &Tuning, dt_game_seconds: f64) -> Vec<Sim
     let order = world.colonist_order();
     let mut remaining = dt_game_seconds;
     while remaining > MAX_STEP_SECONDS {
-        events.extend(step_bounded(world, tuning, MAX_STEP_SECONDS, &order));
+        events.extend(step_bounded(
+            world,
+            tuning,
+            MAX_STEP_SECONDS,
+            &order,
+            workers,
+        ));
         remaining -= MAX_STEP_SECONDS;
     }
-    events.extend(step_bounded(world, tuning, remaining, &order));
+    events.extend(step_bounded(world, tuning, remaining, &order, workers));
     events
 }
 
@@ -57,6 +73,7 @@ fn step_bounded(
     tuning: &Tuning,
     dt_game_seconds: f64,
     order: &[usize],
+    workers: usize,
 ) -> Vec<SimEvent> {
     let mut events = Vec::new();
     let dt_hours = (dt_game_seconds / 3600.0) as f32;
@@ -72,39 +89,26 @@ fn step_bounded(
         recreation: world.has_enabled(TileKind::Recreation),
     };
 
+    let mut proposals = if uses_speculation(workers, order.len()) {
+        let inputs = order
+            .iter()
+            .map(|&index| DecisionInput::speculate(&world.colonists[index], interval_availability))
+            .collect();
+        Some(plan_batch(inputs, tuning, workers).into_iter())
+    } else {
+        None
+    };
+
     for &colonist_index in order {
-        let labour = labour_goal(world, colonist_index, tuning);
-        let colonist = &world.colonists[colonist_index];
-        let live_availability = Availability {
-            food: interval_availability.food
-                && world
-                    .live_destination(colonist_index, tuning, Goal::Eat)
-                    .is_some(),
-            kitchen: interval_availability.kitchen
-                && world
-                    .live_destination(colonist_index, tuning, Goal::Eat)
-                    .is_some(),
-            sleep: interval_availability.sleep
-                && world
-                    .live_destination(colonist_index, tuning, Goal::Sleep)
-                    .is_some(),
-            recreation: interval_availability.recreation
-                && world
-                    .live_destination(colonist_index, tuning, Goal::Recreate)
-                    .is_some(),
+        let current = DecisionInput::gather(world, colonist_index, tuning, interval_availability);
+        let decision = if let Some(proposals) = &mut proposals {
+            proposals
+                .next()
+                .expect("one proposal per scheduled actor")
+                .validate(current, tuning)
+        } else {
+            current.decide(tuning)
         };
-        let decision = decide(
-            &colonist.task,
-            &colonist.needs,
-            &colonist.rest,
-            tuning,
-            if world.geometry.is_some() {
-                &live_availability
-            } else {
-                &interval_availability
-            },
-            labour,
-        );
         let mut desired = decision.goal;
 
         if decision.denied_recreation {
@@ -276,3 +280,7 @@ fn step_bounded(
 fn world_cell(actor: &super::Colonist) -> super::geometry::Cell {
     super::geometry::Cell(actor.position.x, actor.position.y, actor.spatial.z)
 }
+
+#[cfg(test)]
+#[path = "intent_tests.rs"]
+mod intent_tests;

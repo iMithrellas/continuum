@@ -1,7 +1,7 @@
 use super::{Activity, ActivityState, Goal, Needs, Rest, Tile, Tuning, World};
 
-/// What the colony can currently offer. Computed once per tick so that every
-/// colonist sees the same world, independent of iteration order.
+/// Interval-start facility/food availability, optionally filtered by live reachability.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Availability {
     /// There is an enabled food tile *and* food in store.
     pub(super) food: bool,
@@ -78,6 +78,7 @@ pub(super) fn destination_still_serves(
     tile.enabled
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct Decision {
     pub(super) goal: Goal,
     /// Recreation denial on a goal transition, not on every waiting interval.
