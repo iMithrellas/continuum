@@ -14,8 +14,8 @@ signal local_refresh_requested
 signal native_autostart_requested(enabled: bool)
 signal world_selected(world_id: String, world_slug: String)
 
+const Endpoint = preload("res://scripts/server_endpoint.gd")
 const HOST_PLACEHOLDER := "http://127.0.0.1:3001"
-const DATABASE_PATTERN := "^[a-z0-9]+(-[a-z0-9]+)*$"
 
 var history: ContinuumConnectionHistory
 var probes: ContinuumServerProbes
@@ -418,49 +418,8 @@ func _update_probe_label(key: String) -> void:
 static func validate_endpoint(host: String, database: String) -> String:
 	if not (host.begins_with("http://") or host.begins_with("https://")):
 		return "Host must begin with http:// or https://."
-	var authority := host.substr(7) if host.begins_with("http://") else host.substr(8)
-	if authority.is_empty() or authority.contains(" ") or authority.contains("/") or authority.contains("?") or authority.contains("#"):
-		return "Host must contain only a hostname and optional port."
-	if authority.contains("@"):
-		return "Host credentials are not supported."
-	if not _valid_authority(authority):
-		return "Host must be a valid hostname, IPv4 address, or bracketed IPv6 address."
-	var database_pattern := RegEx.new()
-	database_pattern.compile(DATABASE_PATTERN)
-	if database.is_empty() or database.length() > 128 or database_pattern.search(database) == null:
+	if Endpoint.parse(host).is_empty():
+		return "Host must contain only a valid hostname, IPv4 address, or bracketed IPv6 address and optional port."
+	if database != database.to_lower() or not Endpoint.valid_database(database):
 		return "Database must use lowercase letters and numbers separated by dashes."
 	return ""
-
-static func _valid_authority(authority: String) -> bool:
-	if authority.begins_with("["):
-		var close := authority.find("]")
-		if close < 0 or close == 1:
-			return false
-		var address := authority.substr(1, close - 1)
-		var ipv6 := RegEx.new()
-		ipv6.compile("^[0-9A-Fa-f:.]+$")
-		if not ipv6.search(address) or not address.contains(":"):
-			return false
-		var suffix := authority.substr(close + 1)
-		return suffix.is_empty() or (suffix.begins_with(":") and _valid_port(suffix.substr(1)))
-	if authority.count(":") > 1:
-		return false
-	var host_part := authority
-	if authority.contains(":"):
-		var colon := authority.find(":")
-		host_part = authority.substr(0, colon)
-		if not _valid_port(authority.substr(colon + 1)):
-			return false
-	if host_part.is_empty() or host_part.begins_with(".") or host_part.ends_with("."):
-		return false
-	for label: String in host_part.split("."):
-		if label.is_empty() or label.begins_with("-") or label.ends_with("-"):
-			return false
-	var hostname := RegEx.new()
-	hostname.compile("^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$")
-	return hostname.search(host_part) != null
-
-static func _valid_port(value: String) -> bool:
-	if value.is_empty() or not value.is_valid_int() or value != str(int(value)):
-		return false
-	return int(value) >= 1 and int(value) <= 65535

@@ -3,11 +3,11 @@
 class_name SessionObservations
 extends RefCounted
 
+const Models = preload("res://ui/components/models.gd")
 const GAME_HOUR := 3600.0
 const SAMPLE_INTERVAL := 60.0
 const MAX_SAMPLES := 122
 const STABLE_EPSILON := 0.5
-const NEED_FIELDS := {"Fed": "hunger", "Rest": "fatigue", "Leisure": "recreation", "Mood": "mood", "Output": "productivity"}
 
 var _samples: Array[Dictionary] = []
 var _generation := -1
@@ -28,19 +28,11 @@ func reset() -> void:
 
 static func satisfaction(raw: Dictionary) -> Dictionary:
 	var result := {}
-	for label: String in NEED_FIELDS:
-		var field: String = NEED_FIELDS[label]
-		if not raw.has(field) or not _finite_number(raw[field]):
-			continue
-		var value := float(raw[field])
-		if label in ["Fed", "Rest", "Leisure"]:
-			value = 100.0 - value
-		result[label] = clampf(value, 0.0, 100.0)
+	for descriptor: Array in Models.NEEDS:
+		var value: Variant = Models.need_value(raw, descriptor)
+		if value != null:
+			result[descriptor[0]] = value
 	return result
-
-
-static func need_level(value: float) -> String:
-	return "critical" if value < 15.0 else ("warn" if value < 35.0 else "notice")
 
 
 ## Needs and stocks must be actual replicated values, not smoothed estimates.
@@ -88,7 +80,8 @@ func resource(name: String) -> Dictionary:
 		var horizon := maxf(0.0, float(result.value)) / -rate
 		result.hours_left = horizon
 		result.estimate_label = "estimate · %.1f gameh left" % horizon
-		result.level = "critical" if horizon < 2.0 else ("warn" if horizon < 24.0 else "notice")
+		var level: String = Models.band(horizon, Models.RESOURCE_THRESHOLDS)
+		result.level = "notice" if level == "nominal" else level
 	return result
 
 
@@ -99,7 +92,7 @@ func need_trend(id: Variant, label: String) -> Dictionary:
 		return unavailable
 	for sample: Dictionary in _samples:
 		if float(sample.seconds) >= float(anchor.seconds):
-			if not sample.needs.has(id) or not sample.needs[id].has(label) or not _finite_number(sample.needs[id][label]):
+			if not sample.needs.has(id) or not sample.needs[id].has(label) or not Models.numeric(sample.needs[id][label]):
 				return unavailable
 	var difference := float(_samples.back().needs[id][label]) - float(anchor.needs[id][label])
 	return {"available": true, "difference": difference, "direction": "up" if difference > STABLE_EPSILON else ("down" if difference < -STABLE_EPSILON else "stable"), "lookback_game_seconds": float(_samples.back().seconds) - float(anchor.seconds)}
@@ -122,13 +115,9 @@ func _hour_anchor() -> Dictionary:
 	return {}
 
 
-static func _finite_number(value: Variant) -> bool:
-	return (value is int or value is float) and is_finite(float(value))
-
-
 static func _numeric_values(values: Dictionary) -> Dictionary:
 	var result := {}
 	for key: Variant in values:
-		if _finite_number(values[key]):
+		if Models.numeric(values[key]):
 			result[key] = float(values[key])
 	return result

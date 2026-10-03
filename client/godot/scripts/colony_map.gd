@@ -618,10 +618,6 @@ func _draw() -> void:
 	_draw_drag_preview(origin, cell)
 
 
-func _soil_colour(terrain: Resource) -> Color:
-	return ThemeTokens.color("map-ground" if terrain != null else "map-ground-deep")
-
-
 func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 	if not _dragging:
 		return
@@ -733,14 +729,6 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 		if region.label_visible:
 			var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
 			MapPaint.plate(self, anchor, ContinuumTileKind.parse_enum_name(region.kind).to_upper(), str(region.count), metrics.scale, false, region.plate_cache)
-
-
-static func format_amount(amount: float) -> String:
-	if amount >= 1000000.0:
-		return "%.1fm" % (amount / 1000000.0)
-	if amount >= 1000.0:
-		return "%.1fk" % (amount / 1000.0)
-	return "%.1f" % amount if amount < 10.0 else "%.0f" % amount
 
 
 func _draw_ground_items(origin: Vector2, cell: float) -> void:

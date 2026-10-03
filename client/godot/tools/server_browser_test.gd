@@ -3,6 +3,7 @@ extends SceneTree
 const History = preload("res://scripts/connection_history.gd")
 const Probes = preload("res://scripts/server_probes.gd")
 const Management = preload("res://scripts/server_management.gd")
+const Profile = preload("res://scripts/client_profile.gd")
 var failures := 0
 
 func _init() -> void:
@@ -19,12 +20,30 @@ func _init() -> void:
 
 func _test_validation() -> void:
 	for endpoint: Array in [["http://127.0.0.1:3000", "continuum"], ["https://[2001:db8::1]:443", "continuum"],
-			["http://localhost", "continuum-sidebar-access-it-648299"]]:
+			["http://localhost", "continuum-sidebar-access-it-648299"], ["http://[::1]:65535", "a"],
+			["https://" + "a".repeat(63) + ".example", "a".repeat(128)],
+			["http://" + ".".join(["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(61)]), "continuum"]]:
 		_assert(Management.validate_endpoint(endpoint[0], endpoint[1]).is_empty(), "valid direct endpoint accepted: %s" % endpoint[0])
+		_assert(not History.canonical_key(endpoint[0], endpoint[1]).is_empty(), "accepted direct endpoint can be saved: %s" % endpoint[0])
 	for endpoint: Array in [["127.0.0.1:3000", "continuum"], ["http://", "continuum"], ["http://?", "continuum"],
 			["http://:3000", "continuum"], ["http://localhost:0", "continuum"], ["http://localhost", "bad name"],
-			["http://localhost", "continuum_worker"], ["http://[::1]3000", "continuum"]]:
+			["http://localhost", "continuum_worker"], ["http://[::1]3000", "continuum"],
+			["http://[::::]", "continuum"], ["http://[1:2:3]", "continuum"], ["http://[::1", "continuum"],
+			["http://[127.0.0.1]", "continuum"], ["http://2001:db8::1", "continuum"],
+			["http://" + "a".repeat(64) + ".example", "continuum"],
+			["http://" + ".".join(["a".repeat(63), "b".repeat(63), "c".repeat(63), "d".repeat(62)]), "continuum"],
+			["http://example..com", "continuum"], ["http://-example.com", "continuum"],
+			["http://example.com:65536", "continuum"], ["http://example.com:080", "continuum"],
+			["http://example.com:+80", "continuum"], ["http://example.com:" + "9".repeat(30), "continuum"],
+			["http://user@example.com", "continuum"], ["http://example.com/path", "continuum"],
+			["http://example.com?query", "continuum"], ["http://example.com#fragment", "continuum"],
+			["http://localhost", "a".repeat(129)], ["http://localhost", "-colony"],
+			["http://localhost", "colony-"], ["http://localhost", "colony--one"]]:
 		_assert(not Management.validate_endpoint(endpoint[0], endpoint[1]).is_empty(), "invalid direct endpoint rejected: %s / %s" % endpoint)
+		_assert(History.canonical_key(endpoint[0], endpoint[1]).is_empty(), "invalid endpoint cannot be saved: %s / %s" % endpoint)
+	for endpoint: Array in [["HTTP://Example.com", "continuum"], ["http://example.com", "Continuum"], ["ws://example.com", "continuum"]]:
+		_assert(not Management.validate_endpoint(endpoint[0], endpoint[1]).is_empty(), "direct form keeps its lowercase HTTP(S)/database policy")
+		_assert(not History.canonical_key(endpoint[0], endpoint[1]).is_empty(), "history still accepts supported SDK/CLI spellings")
 
 func _test_keys() -> void:
 	var key := History.canonical_key("HTTPS://Example.COM:443", "Continuum", "main-world")
@@ -41,6 +60,10 @@ func _test_keys() -> void:
 	_assert(History.canonical_key("http://example.com", "continuum-") == "", "database trailing dash rejected")
 	_assert(History.canonical_key("http://example.com", "continuum--db") == "", "database repeated dash rejected")
 	_assert(History.canonical_key("http://example.com", "Continuum-DB") == "http://example.com/continuum-db/default-world", "database case canonicalized")
+	_assert(History.canonical_key("WS://Example.com:80", "Continuum") == "ws://example.com/continuum/default-world" and
+		History.canonical_key("wss://Example.com:443", "Continuum") == "wss://example.com/continuum/default-world", "WebSocket history keys retain known default-port rules")
+	_assert(Profile.token_path(Profile.NORMAL, "http://Example.com:80", "Continuum") !=
+		Profile.token_path(Profile.NORMAL, "http://example.com", "continuum"), "history normalization does not merge raw credential keys")
 
 func _test_persistence_boundaries() -> void:
 	var base := "/tmp/continuum-browser-test-%d" % Time.get_ticks_usec()
@@ -49,7 +72,8 @@ func _test_persistence_boundaries() -> void:
 	var history = History.new(); history.load_from(base + ".history", base + ".favorites")
 	var key := History.canonical_key("http://Host", "Continuum", "default-world")
 	_assert(history.record_successful_subscription("http://Host", "Continuum", "default-world", "Home", 5) == OK, "successful subscription recorded")
-	_assert(history.record_successful_subscription("http://Host", "Continuum", "default-world", "Home", 6) == OK, "case variants deduplicate")
+	_assert(history.record_successful_subscription("HTTP://HOST:80", "continuum", "default-world", "Home", 6) == OK, "case variants deduplicate")
+	_assert(history.entries().size() == 1 and history.entries()[0].database == "Continuum" and history.entries()[0].endpoint == "http://Host", "deduplication preserves original display spelling")
 	_assert(history.set_favorite(key, true) == OK, "favorite can be persisted")
 	_assert(history.remove_history(key) == OK, "history can be removed")
 	_assert(history.entries().is_empty(), "history removal clears history only")
@@ -216,9 +240,10 @@ func _test_rendered_browser() -> void:
 	probes.set_visible(false)
 	var joins: Array[Dictionary] = []
 	manager.join_requested.connect(func(target: Dictionary) -> void: joins.append(target))
-	manager._join_host.text = "invalid"
-	manager._join_server()
-	_assert(joins.is_empty() and manager._status_warning, "direct join validates input in Servers")
+	for host: String in ["invalid", "http://[::::]", "http://" + "a".repeat(64) + ".example"]:
+		manager._join_host.text = host
+		manager._join_server()
+		_assert(joins.is_empty() and manager._status_warning and not manager._busy, "invalid direct join shows feedback without dispatch or busy state: " + host)
 	manager._join_host.text = "  http://localhost:3001  "
 	manager._join_database.text = "  continuum  "
 	manager._join_server()

@@ -83,9 +83,6 @@ func request_stop(force := false) -> void:
 		_mutex.unlock()
 	_queue("force_stop" if force else "stop")
 
-func request_install() -> void:
-	_queue("install")
-
 func request_autostart(enabled: bool) -> void:
 	_queue("autostart:%s" % str(enabled))
 
@@ -121,8 +118,7 @@ func _worker() -> void:
 		var epoch := _startup_epoch
 		_mutex.unlock()
 		if not operation.is_empty():
-			if operation == "install": manager.install_native()
-			elif operation == "start":
+			if operation == "start":
 				var current := manager.status()
 				if current in ["stopping", "stop_timeout"] or (current == "starting" and _runtime_epoch != epoch):
 					_mutex.lock()

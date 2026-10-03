@@ -440,9 +440,6 @@ func _healthy() -> bool:
 func _health_due() -> bool:
 	return _last_health_check < 0 or Time.get_ticks_msec() - _last_health_check >= HEALTH_INTERVAL_MS
 
-func _module_identity() -> String:
-	return _file_sha256(module_artifact)
-
 func _file_sha256(path: String) -> String:
 	if path.is_empty() or not FileAccess.file_exists(path):
 		return "unavailable"

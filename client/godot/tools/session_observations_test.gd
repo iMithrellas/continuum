@@ -2,6 +2,7 @@ extends SceneTree
 
 const Session = preload("res://scripts/session_observations.gd")
 const Returns = preload("res://scripts/return_snapshots.gd")
+const Models = preload("res://ui/components/models.gd")
 var failures: Array[String] = []
 
 
@@ -23,10 +24,16 @@ func check(condition: bool, message: String) -> void:
 
 
 func _test_needs() -> void:
-	var needs: Dictionary = Session.satisfaction({"hunger": 91, "fatigue": 72, "recreation": 5, "mood": 110, "productivity": -5})
+	var raw := {"hunger": 91, "fatigue": 72, "recreation": 5, "mood": 110, "productivity": -5}
+	var needs: Dictionary = Session.satisfaction(raw)
 	check(needs == {"Fed": 9.0, "Rest": 28.0, "Leisure": 95.0, "Mood": 100.0, "Output": 0.0}, "needs invert and clamp actual fields")
-	check(Session.need_level(14.9) == "critical" and Session.need_level(15) == "warn" and Session.need_level(35) == "notice", "bands are strict and critical wins")
-	check(not Session.satisfaction({"mood": NAN}).has("Mood"), "nonfinite needs are unavailable")
+	for need: Dictionary in Models.colonist(raw).needs:
+		check(need.value == needs[need.label], "observed satisfaction matches the displayed " + need.label)
+	check(Models.need({"value": 14.9}).level == "critical" and Models.need({"value": 15}).level == "warn" and Models.need({"value": 35}).level == "nominal", "display bands are strict and critical wins")
+	var unavailable := {"hunger": true, "fatigue": "72", "mood": NAN, "productivity": INF}
+	check(Session.satisfaction(unavailable).is_empty(), "missing, malformed, and nonfinite needs are unavailable")
+	for need: Dictionary in Models.colonist(unavailable).needs:
+		check(need.value == null, "unavailable observation stays unavailable in the displayed " + need.label)
 
 
 func _test_sampling() -> void:
@@ -71,7 +78,10 @@ func _test_sampling() -> void:
 		for minute in range(61):
 			session.observe(minute * 60.0, 1, {"food": hours + 1.0 - minute / 60.0}, {})
 		var expected := "critical" if hours < 2.0 else ("warn" if hours < 24.0 else "notice")
-		check(session.resource("food").level == expected, "forecast severity boundary %.2f gameh" % hours)
+		var observed: Dictionary = session.resource("food")
+		check(observed.level == expected, "forecast severity boundary %.2f gameh" % hours)
+		var displayed: Dictionary = Models.resource({"value": observed.value, "rate_per_game_hour": observed.rate, "eta_game_hours": observed.hours_left})
+		check(displayed.level == ("nominal" if expected == "notice" else expected), "displayed forecast uses the same severity at %.2f gameh" % hours)
 
 
 func _test_returns() -> void:

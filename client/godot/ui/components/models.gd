@@ -3,6 +3,8 @@ extends RefCounted
 ## Inputs are dictionaries; returned models are owned copies. No reducer calls.
 
 const NEEDS = [["Fed", "hunger", true], ["Rest", "fatigue", true], ["Leisure", "recreation", true], ["Mood", "mood", false], ["Output", "productivity", false]]
+const NEED_THRESHOLDS = {"warn": 35.0, "critical": 15.0}
+const RESOURCE_THRESHOLDS = {"warn": 24.0, "critical": 2.0}
 const LEVELS = {"nominal": 0, "notice": 0, "warn": 1, "critical": 2}
 
 static func numeric(value: Variant) -> bool:
@@ -39,11 +41,11 @@ static func measurement(data: Dictionary, key: String) -> Variant:
 static func level(value: Variant) -> String:
 	return value if value is String and LEVELS.has(value) else "notice"
 
-static func thresholds(config: Dictionary, warn_default: float, critical_default: float) -> Dictionary:
+static func thresholds(config: Dictionary, defaults: Dictionary) -> Dictionary:
 	var warn = measurement(config, "warn")
 	var critical = measurement(config, "critical")
 	if warn == null or critical == null or critical < 0 or warn < critical:
-		return {"warn": warn_default, "critical": critical_default}
+		return defaults.duplicate()
 	return {"warn": warn, "critical": critical}
 
 static func band(value: Variant, limits: Dictionary) -> String:
@@ -56,7 +58,7 @@ static func band(value: Variant, limits: Dictionary) -> String:
 	return "nominal"
 
 static func need(data: Dictionary, config: Dictionary = {}) -> Dictionary:
-	var limits = thresholds(config, 35, 15)
+	var limits = thresholds(config, NEED_THRESHOLDS)
 	limits.warn = minf(limits.warn, 100)
 	limits.critical = minf(limits.critical, 100)
 	var value = measurement(data, "value")
@@ -72,14 +74,18 @@ static func need(data: Dictionary, config: Dictionary = {}) -> Dictionary:
 		distance = limits[severity] - value
 	return {"label": text(data, "label", "Need"), "value": value, "level": severity, "thresholds": limits, "deviation": distance, "trend": trend, "trend_horizon": horizon, "availability": text(data, "availability", "unavailable")}
 
+## The same satisfaction projection feeds displayed cards and observed trends.
+static func need_value(data: Dictionary, descriptor: Array) -> Variant:
+	var value = measurement(data, descriptor[1])
+	if value == null:
+		return null
+	return clampf(100.0 - value if descriptor[2] else value, 0.0, 100.0)
+
 static func colonist(data: Dictionary, config: Dictionary = {}) -> Dictionary:
 	var out = data.duplicate(true)
 	var needs: Array = []
 	for descriptor in NEEDS:
-		var value = measurement(data, descriptor[1])
-		if value != null and descriptor[2]:
-			value = 100 - value
-		var need_data = {"label": descriptor[0], "value": value}
+		var need_data = {"label": descriptor[0], "value": need_value(data, descriptor)}
 		if data.get("need_trends") is Dictionary and data.need_trends.get(descriptor[1]) is Dictionary:
 			var trend_data: Dictionary = data.need_trends[descriptor[1]]
 			need_data["trend"] = text(trend_data, "trend")
@@ -122,7 +128,7 @@ static func resource(data: Dictionary, config: Dictionary = {}) -> Dictionary:
 		copy = signed(rate) + "/game h"
 		if rate < 0:
 			if eta != null:
-				severity = band(eta, thresholds(config, 24, 2))
+				severity = band(eta, thresholds(config, RESOURCE_THRESHOLDS))
 				copy += " · estimate %.1f game h left (as observed)" % eta
 			else:
 				copy += " · horizon unavailable"

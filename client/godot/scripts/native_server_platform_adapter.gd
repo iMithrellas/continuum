@@ -1,13 +1,9 @@
 class_name ContinuumNativeServerPlatformAdapter extends RefCounted
 
-## Common surface reserved for the Windows worker; Linux exposes it now so both
-## workers consume the same latest manifest contract.
+## Linux implementation of the native manager's platform operations.
 func runtime_path(version: String) -> Dictionary:
 	var root := (OS.get_environment("XDG_DATA_HOME") if not OS.get_environment("XDG_DATA_HOME").is_empty() else OS.get_environment("HOME").path_join(".local/share")).path_join("Continuum/native/spacetimedb/%s" % version)
 	return {"runtime": root.path_join("spacetimedb-standalone"), "cli": root.path_join("spacetimedb-cli"), "supervisor": root.path_join("native-server-supervisor.sh")}
-
-func manifest_fields() -> PackedStringArray:
-	return PackedStringArray(["phase", "runtime", "runtime_sha256", "cli_sha256", "supervisor_sha256", "module_sha256", "database", "pid", "runtime_pid", "started_at", "runtime_started_at", "runtime_parent_pid", "runtime_binary", "startup_nonce", "data_dir", "host"])
 
 func supports_native_hosting() -> bool:
 	return OS.get_name() == "Linux" and _linux_x86_64()
@@ -122,9 +118,6 @@ func linux_unit_contents(supervisor: String, runtime: String, cli: String, modul
 
 func _systemd_quote(value: String) -> String:
 	return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')
-
-func windows_task_command(command: String, host: String, data_path: String) -> String:
-	return '"%s" start --listen-addr %s --data-dir "%s" --jwt-key-dir "%s"' % [command, host.trim_prefix("http://"), data_path, data_path]
 
 func _process_start_token(pid: int) -> String:
 	return str(_process_snapshot(pid).get("started_at", ""))
