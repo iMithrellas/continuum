@@ -215,12 +215,14 @@ test-gameplay-client:
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_wiring_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/map_feedback_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/map_inspector_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/planning_test.tscn
     {{ quote(godot) }} --headless --path client/godot --script res://tools/ux_panels_test.gd
 
 # Offline timeout, redaction, interruption, and owned-resource disposal regressions.
 test-gate-safety:
     python3 scripts/internal/connected-colony-fault-tests.py
     python3 scripts/internal/test-production-automation-faults.py
+    python3 scripts/internal/test-world-ready.py
 
 # Measure native population scaling independently of map expansion.
 profile-population *args:
