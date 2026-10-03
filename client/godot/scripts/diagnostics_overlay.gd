@@ -9,6 +9,40 @@ var frame_snapshot: Dictionary = {}
 var rtt_snapshot: Dictionary = {}
 var safe_rect_override: Variant = null
 
+## Snapshots follow SessionDiagnostics: acknowledged session echoes, not TCP or HTTP.
+static func has_session_rtt(snapshot: Dictionary) -> bool:
+	var latency: Variant = snapshot.get("rtt_ms")
+	return not snapshot.get("rtt_stale", false) and (latency is float or latency is int) \
+		and is_finite(float(latency)) and float(latency) >= 0.0
+
+## Explicit allowlist for the developer's copyable diagnostics summary.
+static func session_summary_lines(snapshot: Dictionary) -> Array[String]:
+	var lines: Array[String] = []
+	if has_session_rtt(snapshot):
+		lines.append("Session echo RTT ms: %.2f" % float(snapshot.rtt_ms))
+	else:
+		lines.append("Session echo RTT: unavailable")
+	lines.append(probe_timeout_text(snapshot))
+	lines.append("Packet loss: unavailable")
+	return lines
+
+static func probe_timeout_text(snapshot: Dictionary) -> String:
+	var ratio: Variant = snapshot.get("probe_timeout_ratio")
+	if (ratio is float or ratio is int) and is_finite(float(ratio)) \
+			and float(ratio) >= 0.0 and float(ratio) <= 1.0:
+		return "probe timeouts %.0f%%" % (float(ratio) * 100.0)
+	return "probe timeouts N/A"
+
+func session_rtt_text(compact_text := false) -> String:
+	var label := "Session" if compact_text else "Session RTT"
+	if not has_session_rtt(rtt_snapshot):
+		return "%s N/A" % label
+	return "%s %.1f ms" % [label, float(rtt_snapshot.rtt_ms)]
+
+## Historical RTT remains visible when stale; null samples break the line.
+func session_rtt_graph() -> Array:
+	return rtt_snapshot.get("rtt_graph", [])
+
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 
@@ -93,18 +127,15 @@ func _draw() -> void:
 	else:
 		frame_text = "FPS --  warmup %d/%d" % [frame_snapshot.get("count", 0), frame_snapshot.get("minimum", 0)]
 	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(33)), frame_text, ThemeTokens.font_size("readout"), ThemeTokens.color("ink"), text_width)
-	var rtt_text := "TCP RTT N/A"
-	if rtt_snapshot.get("source", "") == "tcp_info" and rtt_snapshot.get("rtt_ms", null) != null and not rtt_snapshot.get("rtt_stale", false):
-		rtt_text = "TCP RTT %.1f ms" % rtt_snapshot.rtt_ms
-	elif rtt_snapshot.get("rtt_stale", false):
-		rtt_text = "TCP RTT N/A (stale)"
+	var rtt_text := session_rtt_text()
+	if rtt_snapshot.get("rtt_stale", false):
+		rtt_text += " (stale)"
 	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(48)), rtt_text, ThemeTokens.font_size("readout"), ThemeTokens.color("ink"), text_width)
-	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(63)), "probe timeouts %.0f%%" % (float(rtt_snapshot.get("probe_timeout_ratio", 0.0)) * 100.0) if rtt_snapshot.get("probe_timeout_ratio", null) != null else "probe timeouts N/A", ThemeTokens.font_size("log"), ThemeTokens.color("ink-subtle"), text_width)
+	_draw_text(font, rect.position + Vector2(metrics.px(8), metrics.px(63)), probe_timeout_text(rtt_snapshot), ThemeTokens.font_size("log"), ThemeTokens.color("ink-subtle"), text_width)
 	if not graph_lane_rects().is_empty():
 		var lanes := graph_lane_rects()
 		_draw_series(lanes[0], frame_snapshot.get("frame_graph", []), ThemeTokens.color("ink-muted"), "frame-time ms")
-		if rtt_snapshot.get("source", "") == "tcp_info" and not rtt_snapshot.get("rtt_stale", false):
-			_draw_series(lanes[1], rtt_snapshot.get("rtt_graph", []), ThemeTokens.color("meter-fill"), "TCP RTT ms")
+		_draw_series(lanes[1], session_rtt_graph(), ThemeTokens.color("meter-fill"), "session RTT ms")
 
 func _draw_series(rect: Rect2, values: Array, color: Color, _label: String) -> void:
 	if values.is_empty():

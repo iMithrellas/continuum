@@ -1672,11 +1672,7 @@ func _developer_summary_text() -> String:
 		var value: Variant = frame.get(key)
 		if (value is float or value is int) and is_finite(float(value)):
 			lines.append("%s: %.2f" % [key, float(value)])
-	var latency: Variant = rtt.get("rtt_ms")
-	if rtt.get("source", "") == "tcp_info" and not rtt.get("rtt_stale", false) and (latency is float or latency is int) and is_finite(float(latency)):
-		lines.append("TCP RTT ms: %.2f" % float(latency))
-	else:
-		lines.append("TCP RTT: unavailable")
+	lines.append_array(DiagnosticsOverlayControl.session_summary_lines(rtt))
 	return "\n".join(lines)
 
 

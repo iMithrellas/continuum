@@ -186,9 +186,18 @@ func _render_preview(main: Control, font_size: int, viewport_size: Vector2i) -> 
 	if directory.is_empty():
 		return
 	main._menu.visible = false
+	var session := SessionDiagnostics.new()
+	var sent: Array[int] = []
+	session.configure_probe(func(id: int) -> bool:
+		sent.append(id)
+		return true)
+	session.set_connected(true)
+	for tick in [0, 1_000_000, 2_000_000]:
+		session.pump(tick)
+		session.respond(sent.back(), tick + 7_200)
 	main._diagnostics_overlay.set_snapshots(
 		{"ready": true, "mean_fps": 60.0, "p95_frame_ms": 16.7, "frame_graph": [16.0, 20.0, 16.7]},
-		{"source": "tcp_info", "rtt_ms": 7.2, "rtt_graph": [7.1, 9.0, 7.2]})
+		session.snapshot(2_007_200))
 	for _frame in 3: await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	_assert(main._diagnostics_overlay.is_visible_in_tree(), "bar remains visible with gameplay and viewer panels")

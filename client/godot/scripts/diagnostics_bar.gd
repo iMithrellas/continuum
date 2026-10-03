@@ -1,5 +1,5 @@
 ## Inline header diagnostics. The inherited snapshots remain available to tools,
-## but reducer echoes and HTTP probes are never presented as TCP measurements.
+## presenting acknowledged session echoes without claiming TCP measurements.
 class_name DiagnosticsBar
 extends DiagnosticsOverlay
 
@@ -14,10 +14,13 @@ func panel_rect() -> Rect2:
 	return Rect2(Vector2.ZERO, size)
 
 
-func session_rtt_text() -> String:
-	if rtt_snapshot.get("source", "") != "tcp_info" or rtt_snapshot.get("rtt_ms", null) == null or rtt_snapshot.get("rtt_stale", false):
-		return "TCP RTT N/A"
-	return "TCP RTT %.1f ms" % float(rtt_snapshot.rtt_ms)
+func session_rtt_text(compact_text := false) -> String:
+	if not compact_text:
+		return super.session_rtt_text()
+	if not has_session_rtt(rtt_snapshot):
+		return "Echo N/A"
+	var milliseconds := float(rtt_snapshot.rtt_ms)
+	return "Echo %.0f ms" % milliseconds if milliseconds < 1000.0 else "Echo %.1f s" % (milliseconds / 1000.0)
 
 
 func frame_text(compact_text := false) -> String:
@@ -54,20 +57,18 @@ func _draw() -> void:
 	_draw_line(font, Vector2(padding, baseline), frame, font_size, available)
 	var rtt := session_rtt_text()
 	if font.get_string_size(rtt, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available:
-		rtt = "TCP N/A" if rtt == "TCP RTT N/A" else "TCP %.1f ms" % float(rtt_snapshot.rtt_ms)
+		rtt = session_rtt_text(true)
 	_draw_line(font, Vector2(padding, size.y / 2 + baseline), rtt, font_size, available)
 	if not lanes.is_empty():
 		_draw_sparkline(lanes[0], frame_snapshot.get("frame_graph", []), ThemeTokens.color("ink-muted"))
-		if rtt_snapshot.get("source", "") == "tcp_info" and not rtt_snapshot.get("rtt_stale", false):
-			_draw_sparkline(lanes[1], rtt_snapshot.get("rtt_graph", []), ThemeTokens.color("meter-fill"))
+		_draw_sparkline(lanes[1], session_rtt_graph(), ThemeTokens.color("meter-fill"))
 
 
-func _draw_line(font: Font, point: Vector2, text: String, font_size: int, width: float) -> void:
-	# draw_string's width does not truncate unwrapped text. Clip at the host and
-	# explicitly fit the text; no tooltip promises on this input-transparent UI.
-	# Never clip a numeric unit or TCP qualifier into an ambiguous readout.
+func _draw_line(font: Font, point: Vector2, text: String, font_size: int, width: float) -> bool:
 	if font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= width:
 		draw_string(font, point, text, HORIZONTAL_ALIGNMENT_RIGHT, width, font_size, ThemeTokens.color("ink"))
+		return true
+	return false
 
 
 func _draw_sparkline(rect: Rect2, values: Array, color: Color) -> void:
