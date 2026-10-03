@@ -37,6 +37,8 @@ var _tab_alert_nodes: Dictionary = {}
 var _panel_buttons: Dictionary = {}
 var _drag_origins: Dictionary = {}
 var _body_focus_reveal_pending := false
+var _body_focus_reveal_epoch := 0
+var _body_focus_reveal_callback := Callable()
 var header: PanelContainer
 var utility_row: HBoxContainer
 var _header_rows: VBoxContainer
@@ -519,17 +521,36 @@ func _queue_body_focus_reveal() -> void:
 	if control == null:
 		return
 	_body_focus_reveal_pending = true
-	# Node-bound callbacks disconnect on teardown; never reacquire/steal focus.
-	get_tree().process_frame.connect(_reveal_retained_body_focus.bind(control, 2), CONNECT_ONE_SHOT)
+	# A freed, typed Control fails argument conversion before the callback can clear its latch.
+	_schedule_body_focus_reveal(weakref(control), 2, _body_focus_reveal_epoch)
 
 
-func _reveal_retained_body_focus(control: Control, settling_frames: int) -> void:
+func _schedule_body_focus_reveal(control_ref: WeakRef, settling_frames: int, epoch: int) -> void:
+	_body_focus_reveal_callback = _reveal_retained_body_focus.bind(control_ref, settling_frames, epoch)
+	get_tree().process_frame.connect(_body_focus_reveal_callback, CONNECT_ONE_SHOT)
+
+
+## Leaving the tree invalidates callbacks even if this same deck is later reattached.
+func _exit_tree() -> void:
+	if _body_focus_reveal_callback.is_valid() and get_tree().process_frame.is_connected(_body_focus_reveal_callback):
+		get_tree().process_frame.disconnect(_body_focus_reveal_callback)
+	_body_focus_reveal_callback = Callable()
+	_body_focus_reveal_epoch += 1
+	_body_focus_reveal_pending = false
+
+
+func _reveal_retained_body_focus(control_ref: WeakRef, settling_frames: int, epoch: int) -> void:
+	if epoch != _body_focus_reveal_epoch:
+		return
+	_body_focus_reveal_callback = Callable()
+	var control := control_ref.get_ref() as Control
+	if not is_inside_tree() or not is_instance_valid(control) or not control.is_visible_in_tree() or get_viewport().gui_get_focus_owner() != control:
+		_body_focus_reveal_pending = false
+		return
 	if settling_frames > 0:
-		get_tree().process_frame.connect(_reveal_retained_body_focus.bind(control, settling_frames - 1), CONNECT_ONE_SHOT)
+		_schedule_body_focus_reveal(control_ref, settling_frames - 1, epoch)
 		return
 	_body_focus_reveal_pending = false
-	if not is_instance_valid(control) or not control.is_visible_in_tree() or get_viewport().gui_get_focus_owner() != control:
-		return
 	if _dialog.visible or (is_instance_valid(_confirmation) and _confirmation.visible):
 		return
 	for window: WorkspaceWindow in windows.values():

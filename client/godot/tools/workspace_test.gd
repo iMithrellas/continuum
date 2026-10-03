@@ -261,6 +261,7 @@ func _test_manager() -> void:
 	await _test_collapsed_panel_interactions(deck)
 	await _test_floating_overlap(deck)
 	await _test_retained_body_focus_resize(deck)
+	await _test_deferred_body_focus_lifecycle(deck)
 	await _test_navigation_focus(deck)
 	deck.toggle_map_only()
 	var map_point := deck.area.get_global_rect().position + Vector2(500, 300)
@@ -917,6 +918,99 @@ func _test_retained_body_focus_resize(deck: WorkspaceDeck) -> void:
 	deck._apply_layout()
 	await _settle_layout()
 	print("WORKSPACE_RETAINED_BODY_FOCUS_PASS same-node scale-100-125-150 viewport-resize clipping keyboard pointer pinned no-scroll-reset")
+
+## Real workspace layout queues focus across frames; no callback is invoked directly.
+## Disable ScrollContainer's own follow-focus to prove the deck releases its latch
+## and subsequently reveals a new retained focus, rather than relying on native scroll.
+func _test_deferred_body_focus_lifecycle(deck: WorkspaceDeck) -> void:
+	var old_panels: Dictionary = deck.model.workspaces[deck.model.active].panels.duplicate(true)
+	var active := deck.model.active
+	var window: WorkspaceWindow = deck.windows.people
+	var old_follow := window.scroll.follow_focus
+	window.scroll.follow_focus = false
+	for key: String in deck.windows:
+		deck.state(key).open = key == "people"
+	deck.state("people").minimized = false
+	deck.state("people").pinned = true
+	deck.state("people").rect = [0.1, 0.1, 0.32, 0.5]
+	deck._apply_layout()
+	await _settle_layout()
+	for mutation: String in ["free", "free_after_frame", "detach", "replace", "collapse", "workspace", "deck_teardown"]:
+		var fixture := VBoxContainer.new()
+		var spacer := Control.new()
+		spacer.custom_minimum_size.y = 900
+		fixture.add_child(spacer)
+		var doomed := Button.new()
+		doomed.name = "RetainedAction"
+		doomed.text = "Old retained action"
+		fixture.add_child(doomed)
+		var next := Button.new()
+		next.text = "Later retained action"
+		fixture.add_child(next)
+		window.content.add_child(fixture)
+		await _settle_layout()
+		window.scroll.scroll_vertical = 0
+		doomed.grab_focus()
+		deck._apply_layout()
+		_assert(deck._body_focus_reveal_pending, "%s schedules actual workspace focus reveal" % mutation)
+		if mutation == "free_after_frame":
+			await get_tree().process_frame
+			_assert(deck._body_focus_reveal_pending, "focus remains pending after first settling frame")
+		if mutation in ["free", "free_after_frame", "replace"]:
+			doomed.free()
+			doomed = null
+			if mutation == "replace":
+				var replacement := Button.new()
+				replacement.name = "RetainedAction"
+				replacement.text = "Replacement identity"
+				fixture.add_child(replacement)
+				replacement.grab_focus()
+		elif mutation == "detach":
+			fixture.remove_child(doomed)
+		elif mutation == "collapse":
+			deck.toggle_panel("people")
+		elif mutation == "workspace":
+			deck.switch_workspace("build")
+		elif mutation == "deck_teardown":
+			var parent := deck.get_parent()
+			parent.remove_child(deck)
+			_assert(not deck._body_focus_reveal_pending, "deck teardown releases pending latch immediately")
+			parent.add_child(deck)
+			next.grab_focus()
+			deck._apply_layout()
+			_assert(deck._body_focus_reveal_pending, "reattached deck accepts a fresh reveal request")
+			await get_tree().process_frame
+			_assert(deck._body_focus_reveal_pending, "stale teardown callback does not release newer pending latch")
+		await _settle_layout()
+		_assert(not deck._body_focus_reveal_pending, "%s releases pending latch without retaining dead focus" % mutation)
+		if mutation != "deck_teardown":
+			_assert(window.scroll.scroll_vertical == 0, "%s stale request never reveals old or replacement control" % mutation)
+		if mutation == "detach":
+			doomed.free()
+		if mutation == "workspace":
+			deck.switch_workspace(active)
+		if mutation == "collapse":
+			deck.toggle_panel("people")
+		await _settle_layout()
+		var owner := get_viewport().gui_get_focus_owner()
+		if owner != null:
+			owner.release_focus()
+		window.scroll.scroll_vertical = 0
+		await _settle_layout()
+		next.grab_focus()
+		_assert(not _unclipped_control_rect(next).encloses(next.get_global_rect()), "%s later focus starts clipped with native follow-focus disabled" % mutation)
+		deck._apply_layout()
+		_assert(deck._body_focus_reveal_pending, "%s permits later workspace reveal request" % mutation)
+		await _settle_layout()
+		_assert(not deck._body_focus_reveal_pending and get_viewport().gui_get_focus_owner() == next and _unclipped_control_rect(next).encloses(next.get_global_rect()), "%s later retained focus is revealed without replacement or stuck latch" % mutation)
+		window.content.remove_child(fixture)
+		fixture.free()
+		await _settle_layout()
+	window.scroll.follow_focus = old_follow
+	deck.model.workspaces[active].panels = old_panels
+	deck._apply_layout()
+	await _settle_layout()
+	print("WORKSPACE_DEFERRED_FOCUS_LIFECYCLE_PASS free free-after-frame detach replace collapse workspace teardown-epoch later-focus-reveal")
 
 func _test_navigation_focus(deck: WorkspaceDeck) -> void:
 	var viewport := get_viewport()
