@@ -102,13 +102,18 @@ func check(value: bool, message: String) -> void:
 		failures += 1
 		push_error(message)
 
-func source(coordinate: Vector2i, version := 1) -> Dictionary:
+func source(coordinate: Vector2i, version := 1, width := 2048, height := 2048) -> Dictionary:
 	var base := PackedInt32Array()
 	base.resize(1024)
 	base.fill(0)
 	var depth := PackedByteArray()
 	depth.resize(1024)
 	depth.fill(3)
+	for index in 1024:
+		var xy := coordinate * 32 + Vector2i(index % 32, index / 32)
+		if xy.x >= width or xy.y >= height:
+			base[index] = -16
+			depth[index] = 0
 	return {"chunk_x": coordinate.x, "chunk_y": coordinate.y, "generation_id": 9, "revision": version,
 		"base_z": base, "soil_depth": depth, "soil_fertility": depth, "forest_density": depth, "moisture": depth}
 
@@ -318,7 +323,7 @@ func controller_route() -> void:
 	main._on_table_changed("world_generation")
 	main._large_world.tick(0.1)
 	check(main._world_overlay._phase.text == "Validating world" and main._world_overlay._progress.value == 50.0, "real controller updates phase-local counters while world remains unready")
-	var stored := source(Vector2i.ZERO)
+	var stored := source(Vector2i.ZERO, 1, 24, 24)
 	stored.generation_id = 12
 	db.terrain_column_chunk.values = [stored]
 	status.ready = true
