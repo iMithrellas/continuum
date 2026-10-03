@@ -49,7 +49,7 @@ def main():
     if not run("import", PROJECT, "--editor", "--import"):
         (state / "summary.log").write_text("FAIL import\n")
         return True
-    for name in (["workspace_test", "map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test", "planning_test", "world_art_test", "large_map_wire_test", "world_art_review_test", "legacy_surface_stream_test"]):
+    for name in (["workspace_test", "map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test", "planning_test", "world_art_test", "large_map_wire_test", "world_art_review_test", "legacy_surface_stream_test", "compact_validation_test", "overview_burst_test", "terrain_sdk_cache_test", "terrain_local_cache_test", "world_ecology_art_test"]):
         run(name, PROJECT, "--scene", f"res://tools/{name}.tscn")
     run("workspace_collapsed_production_test", PROJECT, "--scene", "res://tools/workspace_collapsed_production_test.tscn")
     run("role_panels_test", PROJECT, "--scene", "res://tools/role_panels_test.tscn", "--", "--profile=developer")

@@ -25,16 +25,48 @@ var _render_revision := -1
 var _render_mode: StringName = &""
 var _material_dirty := false
 var _local_failure := ""
+var _render_dirty := false
+var rendered_frames := 0
+var _changed_detail := {}
+var _changed_overview := {}
+var _refresh_detail_all := false
+var _refresh_overview_all := false
+var _overview_render_context: Array = []
+var _overview_render_rows := 0
+var _overview_force_render := false
+var _detail_render_context: Array = []
+var _detail_render_rows := 0
+var _detail_force_render := false
 const PHASES := ["Preparing world", "Generating terrain", "Building overview", "Validating world", "Founding colony", "Ready", "Generation failed"]
 
 func attach(value_map: ColonyMap) -> void:
 	map = value_map
-	map.camera_changed.connect(func() -> void: _camera_dirty = true)
-	map.cut_changed.connect(func(_cut: int) -> void: _camera_dirty = true)
+	map.camera_changed.connect(_camera_changed)
+	map.cut_changed.connect(_cut_changed)
 	detail.changed.connect(_detail_changed)
 	detail.failed.connect(_fail)
 	overview.changed.connect(_render_changed)
+	overview.reconciled.connect(_overview_reconciled)
 	overview.failed.connect(_fail)
+
+func _camera_changed() -> void:
+	_camera_dirty = true
+
+func _cut_changed(_cut: int) -> void:
+	_camera_dirty = true
+
+func _overview_reconciled() -> void:
+	_overview_force_render = true
+	_render_changed()
+
+func dispose() -> void:
+	stop()
+	if is_instance_valid(map):
+		if map.camera_changed.is_connected(_camera_changed): map.camera_changed.disconnect(_camera_changed)
+		if map.cut_changed.is_connected(_cut_changed): map.cut_changed.disconnect(_cut_changed)
+	detail.dispose()
+	overview.dispose()
+	map = null
 
 static func supports_generation(db: Variant) -> bool:
 	return LayeredTerrainModel.field(db, "world_generation") != null
@@ -121,10 +153,24 @@ func _legacy_ended(owner: Variant, session_epoch: int, handle: Variant) -> void:
 	if _legacy_handle == handle and client == owner and epoch == session_epoch and _active:
 		_fail("Legacy terrain subscription ended unexpectedly.")
 
-func mark_changed(_table: String) -> void:
+func mark_changed(_table: String, row: Variant = null) -> void:
 	_dirty = true
 	if _table == "terrain_material":
 		_material_dirty = true
+	if _table in ["terrain_material", "world_geometry"]:
+		_refresh_detail_all = true
+		_refresh_overview_all = true
+	if _table in ["terrain_column_chunk", "terrain_chunk"]:
+		if row == null:
+			_refresh_detail_all = true
+		else:
+			var divisor := 2.0 if _table == "terrain_chunk" else 1.0
+			_changed_detail[Vector2i(floori(LayeredTerrainModel.field(row, "chunk_x") / divisor), floori(LayeredTerrainModel.field(row, "chunk_y") / divisor))] = true
+	if _table == "terrain_overview_chunk":
+		if row == null:
+			_refresh_overview_all = true
+		elif LayeredTerrainModel.field(row, "lod") == overview.lod and LayeredTerrainModel.field(row, "cut_z") == overview.cut:
+			_changed_overview[Vector2i(LayeredTerrainModel.field(row, "chunk_x"), LayeredTerrainModel.field(row, "chunk_y"))] = true
 
 func tick(delta: float) -> void:
 	if not _active or client == null:
@@ -143,6 +189,8 @@ func tick(delta: float) -> void:
 		if _material_dirty:
 			_material_dirty = false
 			map.terrain_model.set_materials(ColonyMap.table_rows(client.db, "terrain_material"))
+			_detail_force_render = true
+			_overview_force_render = true
 		var rows := ColonyMap.table_rows(client.db, "world_generation")
 		if rows.is_empty():
 			_fail("Generation state disappeared; reconnect required.")
@@ -152,10 +200,22 @@ func tick(delta: float) -> void:
 		else:
 			_update_generation(rows[0])
 		for coordinate: Vector2i in detail.active_coordinates():
+			if not _refresh_detail_all and not _changed_detail.has(coordinate):
+				continue
+			var before_revision := map.terrain_model.revision
 			if not adapter.snapshot(map.terrain_model, coordinate, client, generation):
 				map.terrain_model.set_chunk_complete(coordinate, false)
 				_fail("Authoritative terrain coverage became unavailable.")
-		overview.refresh()
+			if before_revision != map.terrain_model.revision:
+				_detail_force_render = true
+		if _refresh_overview_all:
+			overview.refresh()
+		elif not _changed_overview.is_empty():
+			overview.refresh(_changed_overview.keys())
+		_changed_detail.clear()
+		_changed_overview.clear()
+		_refresh_detail_all = false
+		_refresh_overview_all = false
 		_render_changed()
 	if map.selected_rect() != _pinned_rect:
 		_pinned_rect = map.selected_rect()
@@ -221,12 +281,43 @@ func _announce() -> void:
 		ready.emit()
 
 func _render_changed() -> void:
+	if is_instance_valid(map) and compact and not map._frozen_selection.is_empty() and not map.terrain_model.selection_valid(map._frozen_selection):
+		map.clear_selection()
+	if _render_dirty:
+		return
+	_render_dirty = true
+	_flush_render.call_deferred()
+
+func _flush_render() -> void:
+	if not _render_dirty:
+		return
+	_render_dirty = false
 	if map == null or not compact:
 		return
-	if not map._frozen_selection.is_empty() and not map.terrain_model.selection_valid(map._frozen_selection):
-		map.clear_selection()
+	if map.terrain_model.presentation_mode == &"overview":
+		_detail_render_context.clear()
+		var context: Array = [map.visible_grid_rect(1), map.terrain_model.cut, overview.lod]
+		var count := overview.rows.size()
+		# Batch growth across SDK cycles; camera changes, loss, and completion bypass it.
+		if not _overview_force_render and context == _overview_render_context and count > _overview_render_rows and count - _overview_render_rows < 32 \
+				and overview._stream.active_coordinates().size() < overview._stream._wanted.size():
+			return
+		_overview_render_context = context
+		_overview_render_rows = count
+		_overview_force_render = false
+	else:
+		_overview_render_context.clear()
+		var context: Array = [map.visible_grid_rect(1), map.terrain_model.cut]
+		var count := detail.active_coordinates().size()
+		if not _detail_force_render and context == _detail_render_context and count > _detail_render_rows and count - _detail_render_rows < 8 \
+				and count < detail._wanted.size():
+			return
+		_detail_render_context = context
+		_detail_render_rows = count
+		_detail_force_render = false
 	map.queue_redraw()
 	if map.size.x > 0 and map.size.y > 0:
+		rendered_frames += 1
 		var frame := map.terrain_model.render_frame(map.visible_grid_rect(1))
 		if frame.region.has_area() and not map.set_terrain_frame(frame):
 			_fail("Terrain frame exceeded the renderer's bounded frame contract.")
@@ -264,6 +355,17 @@ func stop() -> void:
 	_bootstrap_seconds = 0.0
 	compact = false
 	_local_failure = ""
+	_render_dirty = false
+	_changed_detail.clear()
+	_changed_overview.clear()
+	_refresh_detail_all = false
+	_refresh_overview_all = false
+	_overview_render_context.clear()
+	_overview_render_rows = 0
+	_overview_force_render = false
+	_detail_render_context.clear()
+	_detail_render_rows = 0
+	_detail_force_render = false
 	_render_revision = -1
 	_render_mode = &""
 	_pinned_rect = Rect2i()

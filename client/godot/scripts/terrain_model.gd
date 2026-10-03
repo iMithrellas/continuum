@@ -270,29 +270,54 @@ func configure_sources(edge: int, reader: Callable) -> void:
 	rebuild()
 
 func apply_source_chunk(coordinate: Vector2i, payload: Variant, version: int) -> void:
+	if source_chunks.has(coordinate) and source_chunks[coordinate].revision == version and source_chunks[coordinate].payload == payload:
+		return
 	source_chunks[coordinate] = {"payload": payload, "revision": version}
-	rebuild()
+	_invalidate_region(Rect2i(coordinate * source_edge, Vector2i.ONE * source_edge))
 
 func set_chunk_complete(coordinate: Vector2i, complete: bool) -> void:
+	if _complete_sources.get(coordinate, false) == complete:
+		return
 	_complete_sources[coordinate] = complete
-	rebuild()
+	_invalidate_region(Rect2i(coordinate * source_edge, Vector2i.ONE * source_edge))
 
 func apply_edit_chunk(coordinate: Vector3i, values: Variant) -> void:
+	if chunks.has(coordinate) and chunks[coordinate] == values:
+		return
 	chunks[coordinate] = values
-	rebuild()
+	_invalidate_region(Rect2i(Vector2i(coordinate.x, coordinate.y) * EDGE, Vector2i.ONE * EDGE))
 
 func remove_edit_chunk(coordinate: Vector3i) -> void:
+	if not chunks.has(coordinate):
+		return
 	chunks.erase(coordinate)
-	rebuild()
+	_invalidate_region(Rect2i(Vector2i(coordinate.x, coordinate.y) * EDGE, Vector2i.ONE * EDGE))
 
 func evict_source_chunk(coordinate: Vector2i) -> void:
+	var changed: bool = source_chunks.has(coordinate) or _complete_sources.get(coordinate, false)
 	source_chunks.erase(coordinate)
 	_complete_sources.erase(coordinate)
 	var area := Rect2i(coordinate * source_edge, Vector2i.ONE * source_edge)
 	for edit: Vector3i in chunks.keys():
 		if area.intersects(Rect2i(Vector2i(edit.x, edit.y) * EDGE, Vector2i.ONE * EDGE)):
 			chunks.erase(edit)
-	rebuild()
+			changed = true
+	if changed:
+		_invalidate_region(area)
+
+## Exact local changes revoke only their horizontal rays. Work is bounded by
+## one replicated source/edit footprint, never all resident/logical columns.
+## Authority advances; unrelated ready selections/exposure remain coherent.
+func _invalidate_region(rect: Rect2i) -> void:
+	var area := rect.intersection(bounds())
+	for y in range(area.position.y, area.end.y):
+		for x in range(area.position.x, area.end.x):
+			var xy := Vector2i(x, y)
+			surfaces.erase(xy)
+			_exposed_bottom.erase(xy)
+			_resolved_columns.erase(xy)
+	revision += 1
+	exposure_revision += 1
 
 ## Renderer contract. Samples are exact physical rays; overview is a separate
 ## server-authored payload and must never enter this model's picking queries.
@@ -308,12 +333,13 @@ func frame_samples(rect: Rect2i, stride := 1, budget := MAX_FRAME_SAMPLES) -> Di
 			if samples.size() >= limit:
 				return {"rect": area, "stride": step, "cut": cut, "revision": revision, "mode": &"detail", "samples": samples, "truncated": true}
 			var xy := Vector2i(x, y)
-			var surface: Variant = surface_at(xy)
-			var state: StringName = &"surface" if surface != null else (&"resolved_empty" if _resolved_columns.get(xy, false) else &"pending")
+			var source := Vector2i(floori(x / float(source_edge)), floori(y / float(source_edge)))
+			var covered: bool = not _source_reader.is_valid() or (source_chunks.has(source) and _complete_sources.get(source, false))
+			var surface: Variant = surface_at(xy) if covered else null
+			var state: StringName = &"surface" if surface != null else (&"resolved_empty" if covered and _resolved_columns.get(xy, false) else &"pending")
 			var sample := {"xy": xy, "surface": surface, "state": state,
 				"material": material_at(surface) if surface != null else -1}
-			var source := Vector2i(floori(x / float(source_edge)), floori(y / float(source_edge)))
-			if source_chunks.has(source) and _complete_sources.get(source, false):
+			if surface != null and source_chunks.has(source) and _complete_sources.get(source, false):
 				var index := posmod(x, source_edge) + source_edge * posmod(y, source_edge)
 				for key in ["soil_fertility", "forest_density", "moisture"]:
 					var values: Variant = field(source_chunks[source].payload, key, [])
@@ -339,6 +365,11 @@ func render_frame(rect: Rect2i, budget := MAX_FRAME_SAMPLES) -> Dictionary:
 		var surface: Variant = sample.surface
 		samples[xy] = {"known": sample.state != &"pending", "surface_z": surface.z if surface != null else min_z - 1,
 			"material": sample.material if surface != null else 0}
+		if surface != null and sample.state == &"surface":
+			for key in ["soil_fertility", "forest_density", "moisture"]:
+				var value: Variant = sample.get(key)
+				if (value is float or value is int) and is_finite(float(value)) and value >= 0.0 and value <= 1.0:
+					samples[xy][key] = float(value)
 	return {"region": Rect2i(start, finish - start), "stride": stride, "cut": cut,
 		"revision": data.revision, "mode": String(data.mode), "samples": samples}
 

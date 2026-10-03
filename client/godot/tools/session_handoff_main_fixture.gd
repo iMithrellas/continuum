@@ -13,7 +13,7 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 func _on_connected(_identity: PackedByteArray, _token: String) -> void:
 	connected_events += 1
 
-func _on_table_changed(_table_name: String) -> void:
+func _on_table_changed(_table_name: String, _row: Variant = null) -> void:
 	row_events += 1
 
 func _refresh_alerts() -> void:

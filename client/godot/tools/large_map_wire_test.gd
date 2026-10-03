@@ -172,6 +172,7 @@ func run() -> void:
 		owner.handles[index].applied.emit()
 		index += 1
 	check(session.loading.playable and owner.handles.size() <= 64, "starter viewport becomes playable only after exact matching snapshots")
+	await get_tree().process_frame
 	var idle_builds := Vector2i(map.terrain_view.terrain_build_count, map.terrain_view.mask_build_count)
 	for tick in 8:
 		session.tick(0.1)
@@ -198,6 +199,7 @@ func run() -> void:
 	geometry.height = 2048
 
 	var cache := TerrainOverviewCache.new()
+	cache.target_samples = 65536
 	cache.attach(owner, model, 7, 9)
 	cache.request_frame(Rect2i(0, 0, 2048, 2048), 0.25, 0)
 	var frame := cache.frame_samples(Rect2i(0, 0, 2048, 2048), 0, 100)
@@ -402,6 +404,18 @@ func controller_route() -> void:
 	main._on_bootstrap_ended(expired, main._session_generation)
 	main._on_subscription_applied(expired, main._session_generation)
 	check(not main._state_ready and not main.map.is_processing_input(), "ended bootstrap remains terminal for its subscription")
+	main.leave_session()
+	main._has_configured_client = false
+	status.ready = false
+	status.phase = 1
+	main._menu._last_button.pressed.emit()
+	var disconnected_timer: WeakRef = weakref(main._subscription)
+	var disconnected_epoch: int = main._session_generation
+	owner.disconnected.emit()
+	await get_tree().process_frame
+	main._on_bootstrap_timeout(disconnected_timer, disconnected_epoch)
+	check(disconnected_timer.get_ref() == null and not main._state_ready and not main.map.is_processing_input(),
+		"actual disconnect releases bootstrap; later weak timer is harmless and cannot enable input")
 	main.free()
 	local.free()
 	SpacetimeDB.Continuum = old_client
@@ -419,5 +433,6 @@ func check_ecology(main: Control, farm: ContinuumTile, context: String) -> void:
 		and main._block_info.tooltip_text.contains("density 0.20"), context + " selected production block retains authoritative ecology averages")
 	check(main.map._potential_yield(Vector2i(farm.x, farm.y), ContinuumTileKind.Options.farm) == "potential 90%",
 		context + " productive zone potential uses typed operational ecology, not source-column bytes/defaults")
-	check(main.map._potential_yield(Vector2i(13, 12), ContinuumTileKind.Options.forest) == "potential unknown",
-		context + " missing operational ecology remains unknown despite physical terrain/source ecology")
+	var fallback := "potential 51%" if main._large_world.compact else "potential unknown"
+	check(main.map._potential_yield(Vector2i(13, 12), ContinuumTileKind.Options.forest) == fallback,
+		context + " missing operational ecology uses only the exact acknowledged detail column, never defaults/neighbours")

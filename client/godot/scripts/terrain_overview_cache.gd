@@ -3,11 +3,15 @@ class_name TerrainOverviewCache
 extends RefCounted
 
 signal changed
+## Existing coverage changed or was lost; must bypass progressive-growth batching.
+signal reconciled
 signal failed(message: String)
 var rows: Dictionary = {}
 var lod := 3
 var cut := 0
 var revision := 0
+var snapshot_count := 0
+var target_samples := 16384
 var generation := 0
 var _client: Variant
 var _epoch := 0
@@ -51,7 +55,7 @@ func request_frame(rect: Rect2i, pixels_per_cell: float, layer: int) -> void:
 		var estimated := ceili(rect.size.x / float(stride)) * ceili(rect.size.y / float(stride))
 		var edge := 16 * stride
 		var tiles := (ceili(rect.end.x / float(edge)) - floori(rect.position.x / float(edge))) * (ceili(rect.end.y / float(edge)) - floori(rect.position.y / float(edge)))
-		if stride * pixels_per_cell >= 2.0 and estimated <= 65536 and tiles <= 256:
+		if stride * pixels_per_cell >= 2.0 and estimated <= clampi(target_samples, 256, 65536) and tiles <= 256:
 			next_lod = candidate
 			break
 	if next_lod != lod or layer != cut or _stream.client == null:
@@ -69,8 +73,14 @@ func _queries(coordinate: Vector2i, _edge: int, version: int) -> PackedStringArr
 	return PackedStringArray(["SELECT * FROM terrain_overview_chunk WHERE lod = %d AND cut_z = %d AND chunk_x = %d AND chunk_y = %d AND generation_id = %d" % [lod, cut, coordinate.x, coordinate.y, version]])
 
 func _snapshot(_model: LayeredTerrainModel, coordinate: Vector2i, client: Variant, version: int) -> bool:
+	snapshot_count += 1
 	var found: Variant = null
 	for row in ColonyMap.table_rows(client.db, "terrain_overview_chunk"):
+		if not CompactTerrainAdapter.coordinates_valid(row) \
+				or not CompactTerrainAdapter.integer_field(row, "generation_id", 0, 9223372036854775807) \
+				or not CompactTerrainAdapter.integer_field(row, "lod", 0, 255) \
+				or not CompactTerrainAdapter.integer_field(row, "cut_z", _coverage.min_z, _coverage.max_z):
+			return false
 		if LayeredTerrainModel.field(row, "generation_id") != version or LayeredTerrainModel.field(row, "lod") != lod or LayeredTerrainModel.field(row, "cut_z") != cut:
 			continue
 		if LayeredTerrainModel.field(row, "chunk_x") != coordinate.x or LayeredTerrainModel.field(row, "chunk_y") != coordinate.y:
@@ -87,7 +97,7 @@ func _snapshot(_model: LayeredTerrainModel, coordinate: Vector2i, client: Varian
 		var stored := {}
 		for key in ["generation_id", "revision", "lod", "cut_z", "chunk_x", "chunk_y", "surface_z", "material", "soil_fertility", "forest_density", "moisture"]:
 			var value: Variant = LayeredTerrainModel.field(found, key)
-			stored[key] = value.duplicate() if value is Array else value
+			stored[key] = value.duplicate() if value is Array or value is PackedByteArray or value is PackedInt32Array or value is PackedInt64Array else value
 		rows[coordinate] = stored
 		_row_revisions[coordinate] = next_revision
 		revision += 1
@@ -125,14 +135,16 @@ func _valid_row(row: Variant, coordinate: Vector2i, version: int) -> bool:
 			return false
 	return true
 
-func refresh() -> void:
-	var invalidated := false
+func refresh(coordinates: Variant = null) -> void:
+	var before := revision
 	for coordinate: Vector2i in _stream.active_coordinates():
+		if coordinates != null and coordinate not in coordinates:
+			continue
 		if not _snapshot(_coverage, coordinate, _client, generation) and rows.has(coordinate):
 			rows.erase(coordinate)
 			revision += 1
-			invalidated = true
-	if invalidated:
+	if revision != before:
+		reconciled.emit()
 		changed.emit()
 
 func frame_samples(rect: Rect2i, layer: int, budget: int) -> Dictionary:
@@ -170,3 +182,13 @@ func tick(delta: float) -> void:
 func stop() -> void:
 	_stream.stop()
 	rows.clear()
+
+func dispose() -> void:
+	_stream.dispose()
+	rows.clear()
+	_row_revisions.clear()
+	_physical = null
+	_client = null
+	for definition in get_signal_list():
+		for connection in get_signal_connection_list(definition.name):
+			disconnect(definition.name, connection.callable)

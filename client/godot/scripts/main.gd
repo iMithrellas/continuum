@@ -323,7 +323,8 @@ func _ready() -> void:
 	_large_world.loading.changed.connect(func() -> void:
 		if _large_world.client != null and not _large_world.loading.playable:
 			_state_ready = false
-		map.set_process_input((_failed_bootstrap == null or _subscription != _failed_bootstrap) and (_large_world.client == null or _large_world.loading.playable)))
+		map.set_process_input(_session_requested and (_failed_bootstrap == null or _subscription != _failed_bootstrap) \
+			and (_large_world.loading.playable or (_large_world.client == null and _state_ready))))
 	_large_world.loading.cancel_requested.connect(leave_session)
 	_world_overlay = WorldLoadingOverlay.new()
 	_world_overlay.attach(self, _large_world.loading)
@@ -590,11 +591,13 @@ func _bind_client(client: ContinuumModuleClient) -> void:
 	_bind_client_signal(client.connection_error, func(code: int, reason: String) -> void:
 		if _client_epoch_current(client, generation): _on_connection_error(code, reason))
 	_bind_client_signal(client.row_inserted, func(table_name: String, _row: Resource) -> void:
-		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+		if _client_epoch_current(client, generation): _on_table_changed(table_name, _row))
 	_bind_client_signal(client.row_updated, func(table_name: String, _old: Resource, _new: Resource) -> void:
-		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+		if _client_epoch_current(client, generation):
+			_on_table_changed(table_name, _old)
+			_on_table_changed(table_name, _new))
 	_bind_client_signal(client.row_deleted, func(table_name: String, _row: Resource) -> void:
-		if _client_epoch_current(client, generation): _on_table_changed(table_name))
+		if _client_epoch_current(client, generation): _on_table_changed(table_name, _row))
 
 func _bind_client_signal(source: Signal, callback: Callable) -> void:
 	source.connect(callback)
@@ -841,6 +844,9 @@ func _exit_tree() -> void:
 		_session_ping.dispose()
 		_session_ping = null
 	_release_main_subscription()
+	if _large_world != null:
+		_large_world.dispose()
+		_large_world = null
 	if _access != null:
 		_access.stop()
 		_access = null
@@ -871,7 +877,7 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 		return
 	_subscription.applied.connect(_on_subscription_applied.bind(_subscription, _session_generation))
 	_subscription.end.connect(_on_bootstrap_ended.bind(_subscription, _session_generation))
-	get_tree().create_timer(15.0).timeout.connect(_on_bootstrap_timeout.bind(_subscription, _session_generation))
+	get_tree().create_timer(15.0).timeout.connect(_on_bootstrap_timeout.bind(weakref(_subscription), _session_generation))
 
 func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int) -> void:
 	if _subscription != subscription or not _session_epoch_current(generation):
@@ -889,8 +895,12 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 	_menu.set_status("World subscription failed or ended. You can retry.", true)
 	_server_management.set_busy(false)
 
-func _on_bootstrap_timeout(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if _subscription == subscription and _session_epoch_current(generation) and is_instance_valid(subscription) and not subscription.active:
+func _on_bootstrap_timeout(subscription: Variant, generation: int) -> void:
+	if subscription is WeakRef:
+		subscription = subscription.get_ref()
+	if not is_instance_valid(subscription):
+		return
+	if _subscription == subscription and _session_epoch_current(generation) and not subscription.active:
 		_on_bootstrap_ended(subscription, generation)
 
 
@@ -921,6 +931,7 @@ func _finish_subscription_ready(subscription: SpacetimeDBSubscription, generatio
 	if subscription == _failed_bootstrap or _subscription != subscription or not _session_epoch_current(generation):
 		return
 	_state_ready = true
+	map.set_process_input(true)
 	_resume_context = {"client": SpacetimeDB.Continuum, "generation": generation,
 		"subscription": subscription, "host": _host, "database": _database}
 	_full_ui_refresh = true
@@ -1111,9 +1122,9 @@ func _process_diagnostics() -> void:
 		_session_diagnostics.snapshot(now_usec))
 
 
-func _on_table_changed(table_name: String) -> void:
+func _on_table_changed(table_name: String, row: Variant = null) -> void:
 	if _large_world != null and table_name in ["world_generation", "terrain_column_chunk", "terrain_overview_chunk", "terrain_chunk", "terrain_material", "world_geometry"]:
-		_large_world.mark_changed(table_name)
+		_large_world.mark_changed(table_name, row)
 	_dirty = true
 	_ui_tables_changed[table_name] = true
 	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config",

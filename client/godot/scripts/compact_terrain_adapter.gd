@@ -53,6 +53,8 @@ static func detail_queries(coordinate: Vector2i, edge: int, generation: int) -> 
 func snapshot(model: LayeredTerrainModel, coordinate: Vector2i, client: Variant, generation: int) -> bool:
 	var found: Variant = null
 	for row in ColonyMap.table_rows(client.db, "terrain_column_chunk"):
+		if not coordinates_valid(row):
+			return false
 		if LayeredTerrainModel.field(row, "chunk_x") == coordinate.x and LayeredTerrainModel.field(row, "chunk_y") == coordinate.y:
 			if found != null:
 				return false
@@ -99,7 +101,7 @@ func snapshot(model: LayeredTerrainModel, coordinate: Vector2i, client: Variant,
 		var stored := {}
 		for key in ["chunk_x", "chunk_y", "generation_id", "revision", "base_z", "soil_depth", "soil_fertility", "forest_density", "moisture"]:
 			var value: Variant = LayeredTerrainModel.field(found, key)
-			stored[key] = value.duplicate() if value is Array else value
+			stored[key] = value.duplicate() if value is Array or value is PackedByteArray or value is PackedInt32Array or value is PackedInt64Array else value
 		model.apply_source_chunk(coordinate, stored, version)
 		source_revisions[coordinate] = version
 	for xyz: Vector3i in present:

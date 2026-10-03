@@ -43,6 +43,23 @@ func run() -> void:
 	db.terrain_column_chunk.values = [source]
 	check(adapter.snapshot(model, Vector2i.ZERO, client, 9), "install source revision two")
 	model.set_chunk_complete(Vector2i.ZERO, true)
+	var source_authority := model.revision
+	var source_exposure := model.exposure_revision
+	var installed_source: Dictionary = model.source_chunks.duplicate(true)
+	var installed_revisions := adapter.source_revisions.duplicate()
+	for key in ["generation_id", "revision", "chunk_x", "chunk_y"]:
+		var outside: int = -1 if key == "generation_id" else (4294967296 if key == "revision" else 2147483648)
+		for value: Variant in [true, "0", null, 0.5, outside]:
+			var bad := source.duplicate(true)
+			bad[key] = value
+			db.terrain_column_chunk.values = [bad]
+			check(not adapter.snapshot(model, Vector2i.ZERO, client, 9)
+				and model.revision == source_authority and model.exposure_revision == source_exposure
+				and model.source_chunks == installed_source and adapter.source_revisions == installed_revisions
+				and model._complete_sources.get(Vector2i.ZERO, false), "source boundary rejects metadata atomically " + key)
+	db.terrain_column_chunk.values = [{"chunk_x": 1, "chunk_y": 0}, source]
+	check(adapter.snapshot(model, Vector2i.ZERO, client, 9), "source selector skips unrelated payload validation")
+	db.terrain_column_chunk.values = [source]
 	var edit := ContinuumTerrainChunk.new()
 	edit.id = 1
 	edit.chunk_z = -1
@@ -79,6 +96,12 @@ func run() -> void:
 	check(not adapter.snapshot(model, Vector2i.ZERO, client, 9) and model.revision == authority, "unknown material rejects entire edit snapshot")
 	local._tables["terrain_chunk"].clear()
 	check(adapter.snapshot(model, Vector2i.ZERO, client, 9) and model.surface_at(Vector2i.ZERO) == Vector3i(0, 0, -1), "acknowledged absent edit restores baseline")
+	source.base_z[0] = 6
+	source.soil_depth[0] = 255
+	check(model.material_at(Vector3i.ZERO) == 0 and model.material_at(Vector3i(0, 0, -4)) == 2,
+		"packed source arrays are detached from mutable normalized rows")
+	source.base_z[0] = 0
+	source.soil_depth[0] = 3
 	var cache := TerrainOverviewCache.new()
 	cache.attach(client, model, 1, 9)
 	var overview := {"generation_id": 9, "revision": 2, "lod": 3, "cut_z": 0, "chunk_x": 0, "chunk_y": 0}
@@ -89,6 +112,23 @@ func run() -> void:
 		overview[key] = values
 	db.terrain_overview_chunk.values = [overview]
 	check(cache._snapshot(model, Vector2i.ZERO, client, 9), "valid overview revision two")
+	var overview_authority := cache.revision
+	var installed_overview: Dictionary = cache.rows.duplicate(true)
+	var overview_revisions := cache._row_revisions.duplicate()
+	for key in ["generation_id", "revision", "lod", "cut_z", "chunk_x", "chunk_y"]:
+		var outside: int = -1 if key == "generation_id" else (4294967296 if key == "revision" else (256 if key == "lod" else (16 if key == "cut_z" else 2147483648)))
+		for value: Variant in [true, "0", null, 0.5, outside]:
+			var bad := overview.duplicate(true)
+			bad[key] = value
+			db.terrain_overview_chunk.values = [bad]
+			check(not cache._snapshot(model, Vector2i.ZERO, client, 9) and cache.revision == overview_authority
+				and cache.rows == installed_overview and cache._row_revisions == overview_revisions,
+				"overview boundary rejects metadata atomically " + key)
+	db.terrain_overview_chunk.values = [{"generation_id": 9, "lod": 3, "cut_z": 0, "chunk_x": 1, "chunk_y": 0}, overview]
+	check(cache._snapshot(model, Vector2i.ZERO, client, 9), "overview selector skips unrelated payload validation")
+	overview.surface_z[0] = 0
+	check(cache.rows[Vector2i.ZERO].surface_z[0] == -1, "packed overview arrays cannot mutate installed representatives")
+	overview.surface_z[0] = -1
 	for key in ["generation_id", "revision", "lod", "cut_z", "chunk_x", "chunk_y"]:
 		var bad := overview.duplicate(true)
 		bad[key] = float(bad[key])
@@ -120,6 +160,18 @@ func run() -> void:
 	db.terrain_overview_chunk.values = [overview]
 	cache.refresh()
 	check(cache.rows.has(Vector2i.ZERO), "valid current overview can restore invalidated row")
+	for key in ["generation_id", "revision", "lod", "cut_z", "chunk_x", "chunk_y"]:
+		for value: Variant in [true, "0", null, 0.5, 9223372036854775807]:
+			var bad := overview.duplicate(true)
+			bad[key] = value
+			db.terrain_overview_chunk.values = [bad]
+			cache.refresh()
+			check(not cache.rows.has(Vector2i.ZERO)
+				and cache.frame_samples(Rect2i(0, 0, 8, 8), 0, 1).samples[0].state == &"pending"
+				and cache._row_revisions[Vector2i.ZERO] == 2, "bad metadata refresh revokes overview coverage " + key)
+			db.terrain_overview_chunk.values = [overview]
+			cache.refresh()
+			check(cache.rows.has(Vector2i.ZERO), "valid metadata restores overview after rejected refresh")
 	var malformed := overview.duplicate(true)
 	malformed.material.resize(255)
 	db.terrain_overview_chunk.values = [malformed]

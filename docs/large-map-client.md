@@ -1,5 +1,8 @@
 # Large-map client integration
 
+Latest S1–S6 fixes, generated-binding dependencies, actual private fresh/restart
+core gates and remaining visual diagnostic: [stream-review-followup.md](stream-review-followup.md).
+
 The client follows the locked storage-version-1 contract: persisted 32×32
 columns, complete 16³ overrides, and server-authored per-cut overview rows at
 LOD 3/5/7/9. It does not generate geometry from seeds.

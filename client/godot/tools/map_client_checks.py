@@ -62,6 +62,11 @@ for name, scene, marker in [
     ("planning", "planning_test", "PLANNING_TEST "),
     ("world-art", "world_art_test", "WORLD_ART_TEST_PASS"),
     ("world-art-review", "world_art_review_test", "WORLD_ART_REVIEW_PASS"),
+    ("world-ecology-art", "world_ecology_art_test", "WORLD_ECOLOGY_ART_PASS"),
+    ("compact-validation", "compact_validation_test", "COMPACT_VALIDATION_PASS"),
+    ("overview-burst", "overview_burst_test", "OVERVIEW_INVALIDATION_PASS"),
+    ("terrain-sdk-cache", "terrain_sdk_cache_test", "TERRAIN_SDK_CACHE_PASS"),
+    ("terrain-local-cache", "terrain_local_cache_test", "TERRAIN_LOCAL_CACHE_PASS"),
 ]:
     run(name, ["--scene", f"res://tools/{scene}.tscn"], marker)
 run("legacy-map-ui", ["--scene", "res://tools/map_client_legacy_ui_test.tscn", "--", "--settings-file=res://build/map-client/checks-legacy.cfg"], "MAP_UI_PASS")
@@ -78,6 +83,8 @@ if options.gpu:
         run(name, ["--scene", f"res://tools/{name}.tscn"], marker, gpu=True)
     run("world-art-render", ["--scene", "res://tools/world_art_test.tscn"], "WORLD_ART_TEST_PASS", gpu=True)
     run("world-art-review-render", ["--scene", "res://tools/world_art_review_test.tscn"], "WORLD_ART_REVIEW_PASS", gpu=True)
+    run("world-ecology-art-render", ["--scene", "res://tools/world_ecology_art_test.tscn"], "WORLD_ECOLOGY_ART_PASS", gpu=True)
+    run("terrain-local-cache-render", ["--scene", "res://tools/terrain_local_cache_test.tscn"], "TERRAIN_LOCAL_CACHE_PASS", gpu=True)
     run("large-map-wire-render", ["--scene", "res://tools/large_map_wire_test.tscn"], "LARGE_MAP_WIRE_PASS:", gpu=True)
     run("legacy-surface-stream-render", ["--scene", "res://tools/legacy_surface_stream_test.tscn"], "LEGACY_SURFACE_STREAM_PASS", gpu=True)
     for edge in (24, 128, 256):
