@@ -18,6 +18,8 @@ var query_adapter := Callable()
 var snapshot_adapter := Callable()
 var _wanted: Dictionary = {}
 var _entries: Dictionary = {}
+## Handles remain owned until server end, even across cut/LOD/session replacement.
+var _retired: Dictionary = {}
 var _request_serial := 0
 var mode: StringName = &"detail"
 var manage_physical := true
@@ -68,9 +70,9 @@ func request_frame(rect: Rect2i, pixels_per_cell: float, cut: int) -> void:
 func _pump() -> void:
 	if client == null or not client.is_connected_db() or not query_adapter.is_valid():
 		return
-	var pending := 0
+	var pending := _retired.size()
 	for entry: Dictionary in _entries.values():
-		if not entry.applied:
+		if not entry.applied or entry.releasing:
 			pending += 1
 	for coordinate: Vector2i in _wanted:
 		if pending >= max_pending or _entries.size() >= max_resident:
@@ -101,6 +103,7 @@ func _applied(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: 
 	if not _matches(coordinate, serial, owner, session_epoch, world_generation):
 		return
 	_entries[coordinate].applied = true
+	_entries[coordinate].seconds = 0.0
 	if not _wanted.has(coordinate):
 		_release(coordinate)
 		return
@@ -123,6 +126,7 @@ func _release(coordinate: Vector2i) -> void:
 	if not entry.applied or entry.releasing:
 		return
 	entry.releasing = true
+	entry.seconds = 0.0
 	if client.is_connected_db():
 		var result: int = entry.handle.unsubscribe()
 		if result != OK:
@@ -144,6 +148,16 @@ func _ended(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: in
 	_pump()
 
 func tick(delta: float) -> void:
+	for serial: int in _retired.keys():
+		var retired: Dictionary = _retired[serial]
+		if not retired.owner.is_connected_db():
+			retired.owner.discard_subscription(retired.handle)
+			_retired.erase(serial)
+			continue
+		retired.seconds += maxf(0.0, delta)
+		if retired.seconds > acknowledgement_seconds:
+			failed.emit("Retired terrain acknowledgement timed out; reconnect required.")
+			retired.seconds = -INF
 	for coordinate: Vector2i in _entries.keys():
 		var entry: Dictionary = _entries[coordinate]
 		if entry.applied and not entry.releasing:
@@ -152,6 +166,7 @@ func tick(delta: float) -> void:
 		if entry.seconds > acknowledgement_seconds:
 			failed.emit("Terrain subscription acknowledgement timed out; reconnect required.")
 			entry.seconds = -INF
+	_pump()
 
 func stop() -> void:
 	_wanted.clear()
@@ -164,16 +179,49 @@ func stop() -> void:
 			_evict(coordinate)
 		if old_client != null:
 			if old_client.is_connected_db():
-				if _entries[coordinate].applied:
-					handle.unsubscribe()
+				var entry: Dictionary = _entries[coordinate]
+				var serial: int = entry.serial
+				_retired[serial] = {"owner": old_client, "handle": handle,
+					"releasing": entry.releasing, "seconds": entry.seconds}
+				handle.end.connect(_retired_ended.bind(serial), CONNECT_ONE_SHOT)
+				if entry.applied:
+					if not entry.releasing:
+						_retired_applied(serial)
 				else:
-					# Finish releasing even if the owning session stopped meanwhile.
-					handle.applied.connect(func() -> void: handle.unsubscribe(), CONNECT_ONE_SHOT)
+					handle.applied.connect(_retired_applied.bind(serial), CONNECT_ONE_SHOT)
 			else:
 				old_client.discard_subscription(handle)
 	_entries.clear()
 	query_adapter = Callable()
 	snapshot_adapter = Callable()
+
+func _retired_applied(serial: int) -> void:
+	if not _retired.has(serial):
+		return
+	var entry: Dictionary = _retired[serial]
+	if entry.releasing:
+		return
+	entry.releasing = true
+	entry.seconds = 0.0
+	if entry.owner.is_connected_db():
+		var result: int = entry.handle.unsubscribe()
+		if result != OK:
+			failed.emit("Retired terrain unsubscribe failed (%d)." % result)
+	else:
+		entry.owner.discard_subscription(entry.handle)
+		_retired.erase(serial)
+		_pump()
+
+func _retired_ended(serial: int) -> void:
+	_retired.erase(serial)
+	_pump()
+
+func outstanding_count() -> int:
+	var count := _retired.size()
+	for entry: Dictionary in _entries.values():
+		if not entry.applied or entry.releasing:
+			count += 1
+	return count
 
 func resident_count() -> int:
 	return _entries.size()

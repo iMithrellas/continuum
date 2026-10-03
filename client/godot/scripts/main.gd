@@ -89,6 +89,7 @@ var _meal_request_seconds := 0.0
 var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
+var _failed_bootstrap: SpacetimeDBSubscription
 var _large_world: LargeWorldSession
 var _world_overlay: WorldLoadingOverlay
 var _resume_context: Dictionary = {}
@@ -322,7 +323,7 @@ func _ready() -> void:
 	_large_world.loading.changed.connect(func() -> void:
 		if _large_world.client != null and not _large_world.loading.playable:
 			_state_ready = false
-		map.set_process_input(_large_world.client == null or _large_world.loading.playable))
+		map.set_process_input((_failed_bootstrap == null or _subscription != _failed_bootstrap) and (_large_world.client == null or _large_world.loading.playable)))
 	_large_world.loading.cancel_requested.connect(leave_session)
 	_world_overlay = WorldLoadingOverlay.new()
 	_world_overlay.attach(self, _large_world.loading)
@@ -691,7 +692,8 @@ func _hide_server_management() -> void:
 		_menu.set_busy(_manual_connection_busy() or _server_management._native_busy)
 
 func _manual_connection_busy() -> bool:
-	return _session_requested and not _state_ready and not _direct_launch
+	return _session_requested and not _state_ready and not _direct_launch \
+		and (_failed_bootstrap == null or _subscription != _failed_bootstrap)
 
 func _sync_menu_input() -> void:
 	var blocked := _menu.visible or _server_management.visible or (is_instance_valid(_digest_overlay) and _digest_overlay.visible)
@@ -876,7 +878,12 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 		return
 	_state_ready = false
 	_set_connection_text("World subscription ended; reconnect required.", ThemeTokens.color("critical"))
+	_failed_bootstrap = subscription
+	_resume_context.clear()
+	map.set_process_input(false)
+	map.set_process_unhandled_input(false)
 	if _large_world != null:
+		_large_world.stop()
 		_large_world.loading.fail("World subscription ended; reconnect required.")
 	_menu.set_busy(false)
 	_menu.set_status("World subscription failed or ended. You can retry.", true)
@@ -899,7 +906,7 @@ func _release_main_subscription() -> void:
 
 
 func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if _subscription != subscription or not _session_epoch_current(generation):
+	if subscription == _failed_bootstrap or _subscription != subscription or not _session_epoch_current(generation):
 		return
 	if _large_world != null and _large_world.start(SpacetimeDB.Continuum, generation):
 		visible = true
@@ -911,7 +918,7 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 	_finish_subscription_ready(subscription, generation)
 
 func _finish_subscription_ready(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if _subscription != subscription or not _session_epoch_current(generation):
+	if subscription == _failed_bootstrap or _subscription != subscription or not _session_epoch_current(generation):
 		return
 	_state_ready = true
 	_resume_context = {"client": SpacetimeDB.Continuum, "generation": generation,

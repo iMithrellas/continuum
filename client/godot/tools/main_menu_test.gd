@@ -188,6 +188,7 @@ func _test_controller_resume() -> void:
 	subscription.end.emit()
 	_assert(not main._can_resume_colony(), "ended subscription cannot resume")
 	subscription.applied.emit()
+	_assert(not main._state_ready and not main._can_resume_colony(), "late applied cannot revive terminal ended subscription")
 	main._session_generation += 1
 	_assert(not main._can_resume_colony(), "stale ready generation cannot resume")
 	main._session_generation = generation
@@ -198,8 +199,7 @@ func _test_controller_resume() -> void:
 	replacement.free()
 	main._menu.show_menu()
 	client.live = false
-	main._menu._last_button.pressed.emit()
-	_assert(main._menu.visible and main.starts == 1 and main._menu._last_button.text == "Join last server", "stale Resume click after socket close cannot join or expose game")
+	_assert(main._menu.visible and main.starts == 1 and main._menu._last_button.text == "Join last server", "terminal subscription offers cold join rather than stale Resume")
 	client.disconnected.emit()
 	_assert(not main._can_resume_colony() and not main._menu._last_button.disabled, "disconnect while settings open immediately offers cold retry")
 	main._menu._last_button.pressed.emit()
@@ -288,7 +288,26 @@ func _test_sdk_menu_route() -> void:
 	_assert(not main._can_resume_colony() and main._menu._last_button.text == "Join last server", "actual SDK half-ready transport is never resumable")
 	var applied := SubscribeAppliedMessage.new()
 	applied.query_id.id = main._subscription.query_id
+	var sdk_database := client.db
+	var world := preload("res://tools/terrain_fixture.gd").database()
+	client.db = sdk_database
+	world._tables["colony"][0] = ContinuumColony.new()
+	for table_name in ["world_geometry", "terrain_material", "colony"]:
+		var table := TableUpdateData.new()
+		table.table_name = table_name
+		for row: Resource in world._tables[table_name].values():
+			table.inserts.append(row)
+		applied.tables.append(table)
 	client._handle_parsed_message(applied)
+	var dense := SubscribeAppliedMessage.new()
+	dense.query_id.id = main._large_world._legacy_handle.query_id
+	var chunks := TableUpdateData.new()
+	chunks.table_name = "terrain_chunk"
+	for row: Resource in world._tables["terrain_chunk"].values():
+		chunks.inserts.append(row)
+	dense.tables.append(chunks)
+	client._handle_parsed_message(dense)
+	world.free()
 	main._set_permissions("Viewer", false, false)
 	_assert(main._state_ready and main._subscription.active and main._role_name == "Viewer", "applied real SDK subscription is ready for read-only Viewer")
 	client.base_url = "ws://127.0.0.1:%d" % server.get_local_port()

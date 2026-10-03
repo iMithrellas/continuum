@@ -110,6 +110,8 @@ func run() -> void:
 	stream.attach(other, model, 8, 10, queries, snapshot)
 	owner.handles[2].applied.emit()
 	check(snapshots[0] == 1 and owner.handles[2].unsubscribes == 1, "old client epoch snapshot cannot mutate new model")
+	for handle in owner.handles:
+		handle.end.emit()
 	stream.request_frame(Rect2i(0, 0, 64, 64), 32.0, 0)
 	other.online = false
 	stream.stop()
@@ -129,6 +131,38 @@ func run() -> void:
 	stream.stop()
 
 	var loading := WorldLoadingState.new()
+	var phase_stream := TerrainStream.new()
+	var burst_stream := TerrainStream.new()
+	var burst_owner := FakeClient.new()
+	burst_stream.max_pending = 4
+	for replacement in 33:
+		burst_stream.attach(burst_owner, model, replacement, replacement, queries, snapshot)
+		burst_stream.request_frame(Rect2i(0, 0, 128, 128), 32.0, replacement)
+	check(burst_owner.handles.size() == 4 and burst_stream.outstanding_count() == 4,
+		"rapid replacements share four outstanding handles rather than abandoning pending requests")
+	for index in 4:
+		burst_owner.handles[index].applied.emit()
+		check(burst_owner.handles.size() == 4, "late apply retains budget until unsubscribe end")
+	for index in 4:
+		burst_owner.handles[index].end.emit()
+	check(burst_owner.handles.size() == 8 and burst_stream.outstanding_count() == 4,
+		"server release acknowledgements pump only the latest replacement intent")
+	burst_owner.online = false
+	burst_stream.stop()
+	var phase_owner := FakeClient.new()
+	var phase_errors := [0]
+	phase_stream.failed.connect(func(_message: String) -> void: phase_errors[0] += 1)
+	phase_stream.attach(phase_owner, model, 1, 1, queries, snapshot)
+	phase_stream.request_frame(Rect2i(0, 0, 32, 32), 32.0, 0)
+	phase_stream.tick(14.0)
+	phase_owner.handles[0].applied.emit()
+	phase_stream.request_frame(Rect2i(0, 0, 2048, 2048), 0.25, 0)
+	phase_stream.tick(2.0)
+	check(phase_errors[0] == 0, "unsubscribe clock does not inherit fourteen subscribe seconds")
+	phase_stream.tick(14.0)
+	check(phase_errors[0] == 1, "unsubscribe receives its own full acknowledgement deadline")
+	phase_owner.handles[0].end.emit()
+	phase_stream.stop()
 	loading.begin(owner, 7, 9)
 	loading.bootstrap_applied(owner, 7, 9, true)
 	loading.server_progress(owner, 7, 9, "Generating columns", 128, 1024, false)

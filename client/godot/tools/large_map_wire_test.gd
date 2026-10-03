@@ -1,4 +1,4 @@
-## Locked schema adapter/lifecycle tests before combined binding regeneration.
+## Typed schema adapter/lifecycle tests with generated production bindings.
 extends Node
 
 class Rows extends RefCounted:
@@ -6,10 +6,62 @@ class Rows extends RefCounted:
 	func iter() -> Array:
 		return values
 
-class ExtendedDb extends ContinuumModuleDb:
+class NormalizedDb extends RefCounted:
 	var world_generation := Rows.new()
 	var terrain_column_chunk := Rows.new()
 	var terrain_overview_chunk := Rows.new()
+	var base: ContinuumModuleDb
+	func _init(local: LocalDatabase) -> void:
+		base = ContinuumModuleDb.new(local)
+	func _get(key: StringName) -> Variant:
+		return base.get(key) if key in base else null
+
+static func typed_row(row: Variant, schema: GDScript) -> Variant:
+	if row is Resource:
+		return row
+	var result: Variant = schema.new()
+	if result is ContinuumWorldGeneration:
+		result.storage_version = 1
+		result.generator_version = 1
+	for key: String in row:
+		if key == "phase":
+			result.phase = ContinuumGenerationPhase.create(int(row[key]))
+		elif key in ["base_z", "surface_z", "material"]:
+			var values: Array[int] = []
+			values.assign(Array(row[key]))
+			result.set(key, values)
+		else:
+			result.set(key, row[key])
+	return result
+
+class GenerationRows extends ContinuumWorldGenerationTable:
+	var values: Array = []
+	func iter() -> Array[ContinuumWorldGeneration]:
+		var result: Array[ContinuumWorldGeneration] = []
+		for row in values:
+			result.append(load("res://tools/large_map_wire_test.gd").typed_row(row, ContinuumWorldGeneration))
+		return result
+class SourceRows extends ContinuumTerrainColumnChunkTable:
+	var values: Array = []
+	func iter() -> Array[ContinuumTerrainColumnChunk]:
+		var result: Array[ContinuumTerrainColumnChunk] = []
+		for row in values:
+			result.append(load("res://tools/large_map_wire_test.gd").typed_row(row, ContinuumTerrainColumnChunk))
+		return result
+class OverviewRows extends ContinuumTerrainOverviewChunkTable:
+	var values: Array = []
+	func iter() -> Array[ContinuumTerrainOverviewChunk]:
+		var result: Array[ContinuumTerrainOverviewChunk] = []
+		for row in values:
+			result.append(load("res://tools/large_map_wire_test.gd").typed_row(row, ContinuumTerrainOverviewChunk))
+		return result
+class ExtendedDb extends ContinuumModuleDb:
+	func _init(local: LocalDatabase) -> void:
+		super(local)
+		world_generation = GenerationRows.new()
+		terrain_column_chunk = SourceRows.new()
+		terrain_overview_chunk = OverviewRows.new()
+
 
 class Handle extends Node:
 	signal applied
@@ -331,6 +383,20 @@ func controller_route() -> void:
 	main._subscription.applied.emit()
 	owner.disconnected.emit()
 	check(not main._state_ready and main._menu.visible and not main._world_overlay.visible, "actual disconnect during generation exits loading and restores menu")
+	main._has_configured_client = false
+	main._menu._last_button.pressed.emit()
+	var expired: SpacetimeDBSubscription = main._subscription
+	main._on_bootstrap_timeout(expired, main._session_generation)
+	status.ready = true
+	status.phase = 5
+	expired.applied.emit()
+	main._on_table_changed("world_generation")
+	main._large_world.tick(0.1)
+	check(not main._state_ready and not main._large_world.loading.playable and not main.map.is_processing_input(),
+		"actual Menu late bootstrap ack/Ready cannot revive terminal timeout")
+	main._on_bootstrap_ended(expired, main._session_generation)
+	main._on_subscription_applied(expired, main._session_generation)
+	check(not main._state_ready and not main.map.is_processing_input(), "ended bootstrap remains terminal for its subscription")
 	main.free()
 	local.free()
 	SpacetimeDB.Continuum = old_client
