@@ -79,8 +79,10 @@ table-wide subscriptions or gameplay/reset calls occur. It disables token saving
 and uses the supplied private home. The parent's combined SDK/streaming/Main
 end-to-end gate remains separate.
 
-At regeneration time the unmodified SDK rejects negative signed representations
-of u64 during serialization. The strict offline test intentionally exits1 at
-that gate until the parallel SDK fix is integrated; all preceding schema/array/
-index/reducer checks and the actual bounded production wire smoke test pass.
-This is not a generated-binding workaround or a claim that Main E2E passed.
+The SDK preserves all U64 wire bits in Godot's signed64 `int`, including negative
+representations of high-bit seeds. The strict offline `world_bindings_test.gd`
+now passes, including decoding/re-encoding the high-bit seed and serializing
+`reset_world_large` with the same seed. `scripts/internal/test-sdk-u64-bitpatterns`
+also checks exact boundary bytes, non-integer rejection and unchanged smaller
+unsigned range guards. No generated-binding workaround is used. This offline SDK
+follow-up does not rerun the earlier private wire smoke or claim Main E2E passed.

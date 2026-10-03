@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+mkdir -p "$ROOT/build/sdk-u64-gates"
+LOG="$(mktemp "$ROOT/build/sdk-u64-gates/bitpatterns.XXXXXX.log")"
+timeout 120 "$GODOT" --headless --path "$ROOT/client/godot" \
+  --script res://tools/sdk_u64_bitpatterns_test.gd >"$LOG" 2>&1
+cat "$LOG"
+# Expected codec validation messages are intentional; runtime errors are not.
+if grep -Eq 'SCRIPT ERROR|^ERROR:|instances were leaked|resources still in use' "$LOG"; then
+  exit 1
+fi
+grep -q '^SDK_U64_BITPATTERNS_PASS:' "$LOG"

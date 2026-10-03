@@ -101,6 +101,8 @@ func read_u32_le(spb: StreamPeerBuffer) -> int:
 	spb.big_endian = false
 	return spb.get_u32()
 
+## Full U64 wire bits in Godot's signed i64; high-bit values return negative.
+## This is a bit-pattern representation, not a negative unsigned wire value.
 func read_u64_le(spb: StreamPeerBuffer) -> int:
 	if not _check_read(spb, 8): return 0
 	spb.big_endian = false

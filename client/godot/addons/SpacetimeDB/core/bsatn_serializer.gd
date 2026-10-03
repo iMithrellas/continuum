@@ -124,10 +124,12 @@ func write_u32_le(v: int) -> void:
 	_spb.put_u32(v)
 
 
-func write_u64_le(v: int) -> void:
-	if v < 0:
-		_set_error("Value %d out of range for u64" % v)
-		v = 0
+## Godot int is signed i64: negative integers represent U64's high-bit wire
+## patterns, matching read_u64_le(). Never coerce floats or other Variants.
+func write_u64_le(v: Variant) -> void:
+	if typeof(v) != TYPE_INT:
+		_set_error("Expected int bit pattern for u64, got %s" % type_string(typeof(v)))
+		return
 	_spb.put_u64(v)
 
 
