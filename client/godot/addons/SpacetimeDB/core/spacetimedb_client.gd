@@ -538,7 +538,10 @@ func discard_subscription(subscription: SpacetimeDBSubscription) -> void:
 	if is_instance_valid(subscription):
 		subscription.queue_free()
 
-func unsubscribe(query_id: int, send_deletes: UnsubscribeMessage.UnsubscribeFlags = UnsubscribeMessage.UnsubscribeFlags.Default) -> Error:
+## Request server-reported cache eviction by default. The server excludes rows
+## still owned by other live queries; do not evict locally before its ack.
+## Explicit Default preserves the protocol's opt-out (and retains cached rows).
+func unsubscribe(query_id: int, send_deletes: UnsubscribeMessage.UnsubscribeFlags = UnsubscribeMessage.UnsubscribeFlags.SendDroppedRows) -> Error:
 	if not is_connected_db():
 		printerr("SpacetimeDBClient: Cannot unsubscribe, not connected.")
 		return ERR_CONNECTION_ERROR

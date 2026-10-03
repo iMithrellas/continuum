@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+GODOT="${GODOT:-godot}"
+mkdir -p "$ROOT/build/sdk-cache-gates"
+LOG="$(mktemp "$ROOT/build/sdk-cache-gates/cache.XXXXXX.log")"
+timeout 120 "$GODOT" --headless --path "$ROOT/client/godot" \
+  --script res://tools/sdk_subscription_cache_test.gd >"$LOG" 2>&1
+cat "$LOG"
+# GDScript assert/runtime failures can still exit zero and reach a later PASS.
+if grep -Eq 'SCRIPT ERROR|^ERROR:|instances were leaked|resources still in use' "$LOG"; then
+  exit 1
+fi
+grep -q '^SDK_SUBSCRIPTION_CACHE_PASS:' "$LOG"

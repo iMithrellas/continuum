@@ -1,0 +1,5 @@
+# Continuum SDK fork
+
+Live `SpacetimeDBSubscription.unsubscribe()` and `SpacetimeDBClient.unsubscribe(query_id)` default to v2 `SendDroppedRows=1`, rather than protocol `Default=0`. The existing acknowledgment handler applies only server-reported dropped rows, preserving rows shared by other live queries; handles remain tracked until acknowledgment. Callers can explicitly pass `UnsubscribeMessage.UnsubscribeFlags.Default` to retain cached rows. Offline `discard_subscription(handle)` remains network-free and does not infer row ownership; session teardown must clear or destroy the old local database. Protocol reference: [v2 UnsubscribeFlags and UnsubscribeApplied](https://github.com/clockworklabs/SpacetimeDB/blob/master/crates/client-api-messages/src/websocket/v2.rs).
+
+Backend-free regression: run `scripts/internal/test-sdk-subscription-cache` from the repository. It captures outgoing serialized requests and parses acknowledgment payloads with generated terrain rows through the real SDK/cache. Server dropped-row sets are fixtures, not a live-server integration test.

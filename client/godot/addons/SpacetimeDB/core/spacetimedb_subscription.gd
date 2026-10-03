@@ -75,6 +75,9 @@ func wait_for_end(timeout_sec: float = 5) -> Error:
 		return ERR_TIMEOUT
 	return OK
 
+## End the live query and release its unshared cached rows on the server ack.
+## The handle stays tracked until then. Use client.discard_subscription() only
+## after transport loss; it does not send a request or infer row ownership.
 func unsubscribe() -> Error:
 	if _ended:
 		return ERR_DOES_NOT_EXIST
