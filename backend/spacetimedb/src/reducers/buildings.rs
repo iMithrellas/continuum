@@ -1,7 +1,9 @@
 use crate::auth::{authorize, RequiredRole};
 use crate::persistence;
 use crate::schema::*;
-use crate::sim::buildings::{plan_room, preflight_room, ROOM_THERMAL_RESISTANCE};
+use crate::sim::buildings::{
+    checked_room_wood_remainder, plan_room, preflight_room, ROOM_THERMAL_RESISTANCE,
+};
 use spacetimedb::{reducer, ReducerContext, Table};
 
 /// Construct a traversable insulation envelope, not voxel walls or a usage zone.
@@ -29,6 +31,7 @@ pub fn construct_room(
         clearance_height,
         colony.wood,
     )?;
+    let remaining_wood = checked_room_wood_remainder(colony.wood, cost)?;
     let building = ctx.db.building().insert(Building {
         id: 0,
         kind: BuildingKind::InsulatedRoom,
@@ -46,7 +49,7 @@ pub fn construct_room(
             building_id: building.id,
             thermal_resistance_m2_k_per_w: ROOM_THERMAL_RESISTANCE,
         });
-    colony.wood -= cost;
+    colony.wood = remaining_wood;
     ctx.db.colony().id().update(colony);
     Ok(())
 }

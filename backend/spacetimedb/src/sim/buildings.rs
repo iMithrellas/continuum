@@ -46,6 +46,20 @@ impl RoomEnvelope {
     }
 }
 
+/// Validate the actual persisted f32 debit, not merely nominal affordability.
+/// Widening both stored values is exact; compare their difference to the authored
+/// integer recipe cost. This rejects rounding in either direction without a cap.
+pub fn checked_room_wood_remainder(wood: f32, cost: f32) -> Result<f32, String> {
+    validate_cost(wood, cost)?;
+    let remainder = wood - cost;
+    if f64::from(wood) - f64::from(remainder) != f64::from(cost) {
+        return Err(format!(
+            "Cannot charge exactly {cost} stored wood at the current balance's precision; no wood was spent."
+        ));
+    }
+    Ok(remainder)
+}
+
 pub fn preflight_room(rect: BlockRect, height: u16, wood: f32) -> Result<f32, String> {
     let cells = rect.cells()?;
     if cells > MAX_ATOMIC_BUILD_CELLS {
@@ -57,7 +71,7 @@ pub fn preflight_room(rect: BlockRect, height: u16, wood: f32) -> Result<f32, St
         return Err("room requires at least four clear cells".into());
     }
     let cost = cells as f32 * ROOM_WOOD_PER_CELL;
-    validate_cost(wood, cost)?;
+    checked_room_wood_remainder(wood, cost)?;
     Ok(cost)
 }
 

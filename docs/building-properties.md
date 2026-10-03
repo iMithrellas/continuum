@@ -63,6 +63,14 @@ transactions provide rollback on failure. Rooms may overlap zones, goods and
 actors, but not another room volume. Demolition removes its capability rows,
 without goods loss, zone edits or wood refund.
 
+Room affordability also validates the actual persisted `f32` subtraction. If
+the balance cannot represent a remainder that debits exactly the authored cost,
+construction fails before any writes: "Cannot charge exactly {cost} stored wood
+at the current balance's precision; no wood was spent." Representable fractional
+balances and large balances remain supported; there is no arbitrary stock cap,
+silent rounding, overcharge or economy schema change. This guard applies to the
+new room construction seam, not the deprecated legacy charged-usage reducers.
+
 Designation is free for every non-Empty TileKind. It creates one-cell zones with
 four-cell clearance, preserving durable Empty anchors. Existing same-kind
 one-cell zones retain ID, clearance and enablement after geometry validation;
