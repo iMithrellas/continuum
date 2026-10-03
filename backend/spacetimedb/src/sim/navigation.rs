@@ -1,140 +1,97 @@
-//! Bounded derived navigation cache. It never owns authoritative terrain.
-//! Graphs contain only supported body positions; actor BFS and routes are reused
+//! Sparse derived navigation cache. Its shared terrain snapshot is immutable.
+//! Graphs discover only local supported positions; actor BFS and routes are reused
 //! within a valid material snapshot and discarded on EVERY actual voxel write.
 use super::geometry::{Body, Cell, Geometry};
 use super::World;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, VecDeque};
 use std::rc::Rc;
+mod ida;
+mod packed;
 mod terrain;
 
 pub const MAX_CACHED_BODIES: usize = 8;
 pub const MAX_CACHED_ACTORS: usize = 32;
-const UNREACHED: u32 = u32::MAX;
+const MAX_LOCAL_VISITS: usize = 4096;
+const MAX_CACHED_GRAPH_NODES: usize = 1024;
+const MAX_PACKED_ANSWERS: usize = 128;
 
 #[derive(Clone, Debug)]
 struct Graph {
-    width: i32,
-    height: i32,
-    min_z: i32,
-    max_z: i32,
-    at: Vec<u32>,
-    cells: Vec<Cell>,
-    components: Vec<u32>,
-    offsets: Vec<usize>,
-    edges: Vec<usize>,
+    terrain: terrain::Terrain,
+    body: Body,
+    edges: RefCell<BTreeMap<Cell, Vec<Cell>>>,
 }
 impl Graph {
-    fn offset(&self, p: Cell) -> Option<usize> {
-        if p.0 < 0
-            || p.0 >= self.width
-            || p.1 < 0
-            || p.1 >= self.height
-            || p.2 < self.min_z
-            || p.2 > self.max_z
-        {
-            return None;
-        }
-        Some((p.0 + self.width * (p.1 + self.height * (p.2 - self.min_z))) as usize)
+    fn node(&self, p: Cell) -> Option<Cell> {
+        self.terrain.supported(p, self.body).then_some(p)
     }
-    fn node(&self, p: Cell) -> Option<usize> {
-        let n = self.at[self.offset(p)?];
-        (n != UNREACHED).then_some(n as usize)
-    }
-    fn build(g: &Geometry, body: Body) -> Self {
-        let terrain = terrain::Terrain::build(g);
-        let mut graph = Self {
-            width: g.width,
-            height: g.height,
-            min_z: g.min_z,
-            max_z: g.max_z,
-            at: vec![UNREACHED; (g.width * g.height * (g.max_z - g.min_z + 1)) as usize],
-            cells: Vec::new(),
-            components: Vec::new(),
-            offsets: Vec::new(),
-            edges: Vec::new(),
-        };
-        graph.cells = terrain.positions(body);
-        for (node, &p) in graph.cells.iter().enumerate() {
-            let offset = graph.offset(p).unwrap();
-            graph.at[offset] = node as u32;
+    fn build(snapshot: Rc<Geometry>, body: Body) -> Self {
+        Self {
+            terrain: terrain::Terrain::new(snapshot),
+            body,
+            edges: RefCell::new(BTreeMap::new()),
         }
-        for &p in &graph.cells {
-            graph.offsets.push(graph.edges.len());
-            let step = i32::from(body.step).min(g.max_z - g.min_z);
-            for (dx, dy) in [(1, 0), (0, 1), (-1, 0), (0, -1)] {
-                for dz in -step..=step {
-                    let q = Cell(p.0 + dx, p.1 + dy, p.2 + dz);
-                    if let Some(n) = graph.node(q) {
-                        if terrain.step_clear(p, q, body) {
-                            graph.edges.push(n);
-                        }
-                    }
-                }
-            }
-        }
-        graph.offsets.push(graph.edges.len());
-        // Weak connectivity is a necessary condition for ANY route. Reject
-        // isolated supported positions without draining every actor's BFS. Union
-        // both ends, so this remains safe even if a future edge is directional.
-        let mut roots: Vec<_> = (0..graph.cells.len()).collect();
-        fn root(roots: &mut [usize], mut n: usize) -> usize {
-            while roots[n] != n {
-                roots[n] = roots[roots[n]];
-                n = roots[n];
-            }
-            n
-        }
-        for n in 0..graph.cells.len() {
-            for &q in &graph.edges[graph.offsets[n]..graph.offsets[n + 1]] {
-                let (a, b) = (root(&mut roots, n), root(&mut roots, q));
-                if a != b {
-                    roots[b] = a;
-                }
-            }
-        }
-        graph.components = (0..graph.cells.len())
-            .map(|n| root(&mut roots, n) as u32)
-            .collect();
-        graph
     }
     fn adjacent(&self, a: Cell, b: Cell) -> bool {
-        let (Some(a), Some(b)) = (self.node(a), self.node(b)) else {
-            return false;
-        };
-        self.edges[self.offsets[a]..self.offsets[a + 1]].contains(&b)
+        self.terrain.adjacent(a, b, self.body)
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Visit {
+    distance: u32,
+    parent: Cell,
+    first: Cell,
 }
 
 #[derive(Clone, Debug)]
 struct Search {
-    distances: Vec<u32>,
-    parents: Vec<usize>,
-    first: Vec<usize>,
-    queue: Vec<usize>,
+    seen: BTreeMap<Cell, Visit>,
+    queue: Vec<Cell>,
     head: usize,
+    packed: bool,
+    answers: BTreeMap<Cell, Option<(u32, Cell)>>,
 }
 impl Search {
     /// Resume the SAME cardinal BFS until the requested node is discovered.
     /// Query order affects work performed, never distances, parents or tie breaks.
     /// An unreachable query drains the connected component rather than truncating.
-    fn visit_until(&mut self, graph: &Graph, target: usize) {
-        while self.distances[target] == UNREACHED && self.head < self.queue.len() {
+    fn visit_until(&mut self, graph: &Graph, target: Cell) {
+        while !self.seen.contains_key(&target) && self.head < self.queue.len() {
+            if self.seen.len() >= MAX_LOCAL_VISITS && packed::fits(&graph.terrain.0) {
+                self.queue = Vec::new();
+                self.head = 0;
+                self.packed = true;
+                return;
+            }
             let n = self.queue[self.head];
             self.head += 1;
-            for &q in &graph.edges[graph.offsets[n]..graph.offsets[n + 1]] {
-                if self.distances[q] == UNREACHED {
-                    self.distances[q] = self.distances[n] + 1;
-                    self.parents[q] = n;
-                    self.first[q] = if self.distances[n] == 0 {
-                        q
-                    } else {
-                        self.first[n]
-                    };
+            let visit = self.seen[&n];
+            let mut edges = graph.edges.borrow_mut();
+            if edges.len() >= MAX_CACHED_GRAPH_NODES && !edges.contains_key(&n) {
+                edges.clear();
+            }
+            let neighbors = edges
+                .entry(n)
+                .or_insert_with(|| graph.terrain.neighbors(n, graph.body));
+            for &q in neighbors.iter() {
+                if let std::collections::btree_map::Entry::Vacant(entry) = self.seen.entry(q) {
+                    entry.insert(Visit {
+                        distance: visit.distance + 1,
+                        parent: n,
+                        first: if visit.distance == 0 { q } else { visit.first },
+                    });
                     self.queue.push(q);
                 }
             }
         }
+    }
+    fn cache_answer(&mut self, target: Cell, answer: Option<(u32, Cell)>) {
+        if self.answers.len() >= MAX_PACKED_ANSWERS && !self.answers.contains_key(&target) {
+            self.answers.clear();
+        }
+        self.answers.insert(target, answer);
     }
 }
 
@@ -142,41 +99,53 @@ impl Search {
 pub struct Reachability {
     graph: Rc<Graph>,
     start: Cell,
-    component: Option<u32>,
     search: RefCell<Search>,
 }
 impl Reachability {
     fn build(graph: Rc<Graph>, start: Cell) -> Self {
-        let count = graph.cells.len();
         let mut search = Search {
-            distances: vec![UNREACHED; count],
-            parents: vec![usize::MAX; count],
-            first: vec![usize::MAX; count],
+            seen: BTreeMap::new(),
             queue: Vec::new(),
             head: 0,
+            packed: false,
+            answers: BTreeMap::new(),
         };
-        let component = graph.node(start).map(|root| {
-            search.queue.push(root);
-            search.distances[root] = 0;
-            search.parents[root] = root;
-            search.first[root] = root;
-            graph.components[root]
-        });
+        if graph.node(start).is_some() {
+            search.queue.push(start);
+            search.seen.insert(
+                start,
+                Visit {
+                    distance: 0,
+                    parent: start,
+                    first: start,
+                },
+            );
+        }
         Self {
             graph,
             start,
-            component,
             search: RefCell::new(search),
         }
     }
     pub fn get(&self, p: &Cell) -> Option<(u32, Cell)> {
         let n = self.graph.node(*p)?;
-        if self.component != Some(self.graph.components[n]) {
-            return None;
-        }
         let mut s = self.search.borrow_mut();
-        s.visit_until(&self.graph, n);
-        (s.distances[n] != UNREACHED).then(|| (s.distances[n], self.graph.cells[s.first[n]]))
+        if !s.packed {
+            s.visit_until(&self.graph, n);
+        }
+        if s.packed {
+            if let Some(v) = s.seen.get(p) {
+                return Some((v.distance, v.first));
+            }
+            if let Some(answer) = s.answers.get(p) {
+                return *answer;
+            }
+            drop(s);
+            let answer = packed::get(&self.graph.terrain, self.graph.body, self.start, *p);
+            self.search.borrow_mut().cache_answer(*p, answer);
+            return answer;
+        }
+        s.seen.get(&n).map(|v| (v.distance, v.first))
     }
     pub fn contains_key(&self, p: &Cell) -> bool {
         self.get(p).is_some()
@@ -185,30 +154,52 @@ impl Reachability {
         self.get(&p).map(|(d, _)| d)
     }
     fn route(&self, p: Cell) -> Option<VecDeque<Cell>> {
-        self.get(&p)?;
+        self.graph.node(p)?;
+        let mut search = self.search.borrow_mut();
+        if !search.packed {
+            search.visit_until(&self.graph, p);
+        }
+        if search.packed && !search.seen.contains_key(&p) {
+            if search.answers.get(&p) == Some(&None) {
+                return None;
+            }
+            drop(search);
+            let path = packed::query(&self.graph.terrain, self.graph.body, self.start, p);
+            let answer = path
+                .as_ref()
+                .map(|path| ((path.len() - 1) as u32, *path.get(1).unwrap_or(&self.start)));
+            self.search.borrow_mut().cache_answer(p, answer);
+            return path;
+        }
+        if !search.seen.contains_key(&p) {
+            return None;
+        }
         let mut n = self.graph.node(p)?;
-        let s = self.search.borrow();
+        let s = search;
         let mut path = VecDeque::new();
         loop {
-            path.push_front(self.graph.cells[n]);
-            if s.parents[n] == n {
+            path.push_front(n);
+            if s.seen[&n].parent == n {
                 break;
             }
-            n = s.parents[n];
+            n = s.seen[&n].parent;
         }
         Some(path)
     }
     /// Preserve a legitimate saved next hop, including equally short alternate
     /// routes. The temporary alternate BFS is not retained by coordinate key.
     pub fn serves(&self, saved: Cell, target: Cell) -> bool {
+        if saved == self.start {
+            return target == self.start && self.get(&target).is_some();
+        }
+        if !self.graph.adjacent(self.start, saved) {
+            return false;
+        }
         let Some((distance, canonical)) = self.get(&target) else {
             return false;
         };
         if saved == canonical {
             return true;
-        }
-        if !self.graph.adjacent(self.start, saved) {
-            return false;
         }
         Self::build(self.graph.clone(), saved)
             .distance(target)
@@ -231,6 +222,7 @@ struct Route {
 #[derive(Clone, Debug, Default)]
 pub struct Navigation {
     stamp: Option<(i32, i32, i32, i32, u64)>,
+    snapshot: Option<Rc<Geometry>>,
     graphs: BTreeMap<Body, Rc<Graph>>,
     actors: BTreeMap<u64, ActorSearch>,
     routes: BTreeMap<u64, Route>,
@@ -251,6 +243,7 @@ impl Navigation {
             self.graphs.clear();
             self.actors.clear();
             self.routes.clear();
+            self.snapshot = None;
             self.stamp = Some(stamp);
         }
     }
@@ -270,7 +263,11 @@ impl Navigation {
         let graph = if let Some(graph) = self.graphs.get(&body) {
             graph.clone()
         } else {
-            let graph = Rc::new(Graph::build(g, body));
+            let snapshot = self
+                .snapshot
+                .get_or_insert_with(|| Rc::new(g.clone()))
+                .clone();
+            let graph = Rc::new(Graph::build(snapshot, body));
             if self.graphs.len() >= MAX_CACHED_BODIES {
                 self.graphs.clear();
                 self.actors.clear();
@@ -320,14 +317,18 @@ impl Navigation {
             path.push_front(start);
         }
         self.route_builds += 1;
-        self.routes.insert(
-            id,
-            Route {
-                body,
-                target,
-                path: path.clone(),
-            },
-        );
+        if path.len() <= MAX_LOCAL_VISITS {
+            self.routes.insert(
+                id,
+                Route {
+                    body,
+                    target,
+                    path: path.clone(),
+                },
+            );
+        } else {
+            self.routes.remove(&id);
+        }
         path
     }
     pub fn consume_route(&mut self, id: u64, count: usize) {
