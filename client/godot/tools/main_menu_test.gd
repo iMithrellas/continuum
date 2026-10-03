@@ -24,7 +24,7 @@ func _ready() -> void:
 	add_child(menu)
 	menu.setup(null, ClientSettings.new(), UiMetrics.new())
 	var buttons := menu.find_children("*", "Button", true, false)
-	var expected_buttons := ["Join last server", "Servers", "Settings", "Exit", "Reduce motion", "Show diagnostics", "Show frame/RTT graph", "100%"]
+	var expected_buttons := ["Join last server", "Disconnect", "Servers", "Settings", "Exit", "Reduce motion", "Show diagnostics", "Show frame/RTT graph", "100%"]
 	_assert(buttons.size() == expected_buttons.size(), "menu contains only navigation, join-last, and display/diagnostics controls")
 	for button: Button in buttons:
 		_assert(expected_buttons.has(button.text), "no direct join, local lifecycle, or autostart control: " + button.text)
@@ -98,6 +98,8 @@ func _ready() -> void:
 	_assert(not menu._last_button.disabled, "returning to the menu releases busy")
 	menu.queue_free()
 	await _test_layout()
+	await _test_controller_resume()
+	await _test_sdk_menu_route()
 
 	if failed:
 		get_tree().quit(1)
@@ -135,6 +137,203 @@ func _test_layout() -> void:
 		_assert(scroll.scroll_vertical > 0 and scroll.get_global_rect().encloses(menu._graph_toggle.get_global_rect()), "scrolling reaches the final settings control at font %d" % font_size)
 		menu.queue_free()
 		await get_tree().process_frame
+
+func _test_controller_resume() -> void:
+	var fixture = preload("res://tools/main_menu_controller_fixture.gd")
+	var previous := SpacetimeDB.Continuum
+	var client = fixture.ClientFixture.new()
+	SpacetimeDB.add_child(client)
+	SpacetimeDB.Continuum = client
+	var main = preload("res://scenes/main.tscn").instantiate()
+	main.set_script(fixture)
+	add_child(main)
+	main.set_process(false)
+	main._settings.server_host = "http://menu-fixture.test"
+	main._settings.database = "colony"
+	main._menu.show_menu()
+	main._menu._last_button.pressed.emit()
+	_assert(main.starts == 1 and client.connects == 1 and client.subscriptions == 1, "cold last-server join connects and subscribes once")
+	main._menu.show_menu()
+	_assert(main._menu._last_button.text == "Join last server" and not main._can_resume_colony(), "half-ready connection cannot resume")
+	var subscription: SpacetimeDBSubscription = main._subscription
+	subscription.applied.emit()
+	var generation: int = main._session_generation
+	var bindings: int = main._client_bindings.size()
+	var return_key: String = main._return_key
+	var snapshot: Dictionary = main._return_snapshot.duplicate(true)
+	var digest: Dictionary = main._return_digest.duplicate(true)
+	var ready_events := [0]
+	main.session_ready.connect(func() -> void: ready_events[0] += 1)
+	main._menu.show_menu()
+	_assert(main._menu._last_button.text == "Resume colony", "ready connected menu offers Resume colony")
+	main._menu._toggle_settings()
+	main._menu._ui_scale.item_selected.emit(1)
+	var layout: String = JSON.stringify(main.workspace.model.workspaces)
+	main._menu._last_button.pressed.emit()
+	_assert(not main._menu.visible and main.workspace.process_mode == Node.PROCESS_MODE_INHERIT, "settings scale then Resume restores existing game input")
+	_assert(main._session_generation == generation and SpacetimeDB.Continuum == client and main._subscription == subscription, "Resume preserves generation, client identity and subscription")
+	_assert(main.starts == 1 and client.connects == 1 and client.disconnects == 0 and client.subscriptions == 1 and client.discards == 0 and main._client_bindings.size() == bindings, "Resume does not reconnect, duplicate subscriptions or rebind signals")
+	_assert(client.token_save_path == "user://main_menu_fixture.token" and main._return_key == return_key and ready_events[0] == 0, "Resume preserves token/return context and does not trigger session-ready digest work")
+	_assert(main._return_snapshot == snapshot and main._return_digest == digest and JSON.stringify(main.workspace.model.workspaces) == layout, "Resume preserves digest and workspace layout payloads")
+	main._show_server_management()
+	main._hide_server_management()
+	_assert(main._menu._last_button.text == "Resume colony", "server browser Back retains ready Resume")
+	main._settings.server_host = "http://different.test"
+	main._menu._process(0)
+	_assert(main._menu._last_button.text == "Join last server" and not main._can_resume_colony(), "different remembered endpoint cannot resume old game")
+	main._settings.server_host = main._host
+	client.base_url = "http://stale.test"
+	_assert(not main._can_resume_colony(), "client transport endpoint mismatch fails closed")
+	client.base_url = main._host
+	subscription.end.emit()
+	_assert(not main._can_resume_colony(), "ended subscription cannot resume")
+	subscription.applied.emit()
+	main._session_generation += 1
+	_assert(not main._can_resume_colony(), "stale ready generation cannot resume")
+	main._session_generation = generation
+	var replacement = fixture.ClientFixture.new()
+	SpacetimeDB.Continuum = replacement
+	_assert(not main._can_resume_colony(), "replaced client cannot resume")
+	SpacetimeDB.Continuum = client
+	replacement.free()
+	main._menu.show_menu()
+	client.live = false
+	main._menu._last_button.pressed.emit()
+	_assert(main._menu.visible and main.starts == 1 and main._menu._last_button.text == "Join last server", "stale Resume click after socket close cannot join or expose game")
+	client.disconnected.emit()
+	_assert(not main._can_resume_colony() and not main._menu._last_button.disabled, "disconnect while settings open immediately offers cold retry")
+	main._menu._last_button.pressed.emit()
+	for _frame in 3: await get_tree().process_frame
+	_assert(main.starts == 2 and main._session_generation > generation and SpacetimeDB.Continuum != client, "disconnected retry uses real controller replacement epoch")
+	var retry_generation: int = main._session_generation
+	main._on_server_management_join_requested({"endpoint": "http://different.test", "database": "other-colony"})
+	for _frame in 3: await get_tree().process_frame
+	_assert(main.starts == 3 and main._session_generation > retry_generation and main._host == "http://different.test" and main._database == "other-colony", "explicit different-target Join configures a new session, never Resume")
+	main._session_requested = false
+	main._state_ready = false
+	main.queue_free()
+	await get_tree().process_frame
+	var final_client := SpacetimeDB.Continuum
+	SpacetimeDB.Continuum = previous
+	final_client.queue_free()
+	await get_tree().process_frame
+	client = fixture.ClientFixture.new()
+	SpacetimeDB.add_child(client)
+	SpacetimeDB.Continuum = client
+	main = preload("res://scenes/main.tscn").instantiate()
+	main.set_script(fixture)
+	add_child(main)
+	main.set_process(false)
+	main.configure_connection("http://menu-fixture.test", "colony")
+	main._subscription.applied.emit()
+	main._menu.show_menu()
+	generation = main._session_generation
+	_assert(main._can_resume_colony(), "explicit-target test begins with a live resumable colony")
+	main._on_server_management_join_requested({"endpoint": "http://different.test", "database": "other-colony"})
+	_assert(main._session_generation > generation and not main._can_resume_colony(), "explicit different-target Join invalidates live Resume synchronously")
+	for _frame in 3: await get_tree().process_frame
+	_assert(main.starts == 2 and SpacetimeDB.Continuum != client, "explicit different-target Join replaces the live client and starts the selected target")
+	main._session_requested = false
+	main._state_ready = false
+	main.queue_free()
+	await get_tree().process_frame
+	final_client = SpacetimeDB.Continuum
+	SpacetimeDB.Continuum = previous
+	final_client.queue_free()
+	get_window().content_scale_factor = 1.0
+
+func _test_sdk_menu_route() -> void:
+	var server := TCPServer.new()
+	_assert(server.listen(0, "127.0.0.1") == OK, "private SDK transport listens on an ephemeral port")
+	var peer := WebSocketPeer.new()
+	peer.supported_protocols = [SpacetimeDBConnection.BSATN_PROTOCOL]
+	var previous := SpacetimeDB.Continuum
+	var client := ContinuumModuleClient.new()
+	client._token = "private-menu-fixture-token"
+	SpacetimeDB.add_child(client)
+	SpacetimeDB.Continuum = client
+	var main = preload("res://scenes/main.tscn").instantiate()
+	main.set_script(preload("res://tools/main_menu_controller_fixture.gd"))
+	main.use_sdk_setup = true
+	add_child(main)
+	main.set_process(false)
+	var host := "http://127.0.0.1:%d/" % server.get_local_port()
+	main.configure_connection(host, "Menu-Colony", ContinuumClientProfile.NORMAL, true)
+	var accepted := false
+	for _frame in 240:
+		if not accepted and server.is_connection_available():
+			_assert(peer.accept_stream(server.take_connection()) == OK, "private WebSocket handshake accepts SDK")
+			accepted = true
+		if accepted:
+			peer.poll()
+		await get_tree().process_frame
+		if client.is_connected_db():
+			break
+	_assert(client.is_connected_db(), "actual SDK transport becomes live")
+	_assert(client.base_url == host.trim_suffix("/") and client.database_name == "menu-colony", "SDK strips one trailing slash and lowercases database, retaining HTTP client base_url")
+	_assert(client._connection._target_url.begins_with("ws://127.0.0.1:%d/v1/database/menu-colony/subscribe?" % server.get_local_port()), "SDK converts only the transport URL to WebSocket")
+	if not client.is_connected_db():
+		main.queue_free()
+		await get_tree().process_frame
+		SpacetimeDB.Continuum = previous
+		client.queue_free()
+		server.stop()
+		return
+	var identity := IdentityTokenMessage.new()
+	identity.identity = PackedByteArray([1, 2, 3])
+	identity.token = "private-menu-fixture-token"
+	client._handle_parsed_message(identity)
+	_assert(main._subscription != null and main._subscription.error == OK, "actual SDK creates and sends main subscription")
+	main._session_menu.get_popup().id_pressed.emit(2)
+	_assert(not main._can_resume_colony() and main._menu._last_button.text == "Join last server", "actual SDK half-ready transport is never resumable")
+	var applied := SubscribeAppliedMessage.new()
+	applied.query_id.id = main._subscription.query_id
+	client._handle_parsed_message(applied)
+	main._set_permissions("Viewer", false, false)
+	_assert(main._state_ready and main._subscription.active and main._role_name == "Viewer", "applied real SDK subscription is ready for read-only Viewer")
+	client.base_url = "ws://127.0.0.1:%d" % server.get_local_port()
+	_assert(not main._can_resume_colony(), "different client base_url scheme cannot masquerade as the configured HTTP endpoint")
+	client.base_url = host.trim_suffix("/")
+	main._settings.server_host = "http://localhost:%d/" % server.get_local_port()
+	_assert(not main._can_resume_colony(), "DNS/IP host equivalence is deliberately not accepted for Resume")
+	main._settings.server_host = host
+	client.database_name = "other-colony"
+	_assert(not main._can_resume_colony(), "actual SDK database mismatch fails closed")
+	client.database_name = "menu-colony"
+	var generation: int = main._session_generation
+	var subscription: SpacetimeDBSubscription = main._subscription
+	var token: StringName = client.get_token()
+	var token_path: String = client.token_save_path
+	var next_query: int = client._next_query_id
+	var next_request: int = client._next_request_id
+	var bindings: int = main._client_bindings.size()
+	var digest: Dictionary = main._return_digest.duplicate(true)
+	var snapshot: Dictionary = main._return_snapshot.duplicate(true)
+	main._session_menu.get_popup().id_pressed.emit(2)
+	_assert(main._menu.visible and main._menu._last_button.text == "Resume colony" and main._can_resume_colony(), "actual in-game menu signal preserves Viewer session and offers Resume")
+	_assert(main._menu._disconnect_button.visible, "connected menu exposes explicit Disconnect rather than disconnecting on navigation")
+	main._menu._toggle_settings()
+	main._menu._ui_scale.item_selected.emit(2)
+	main._menu._last_button.pressed.emit()
+	_assert(not main._menu.visible and main.workspace.process_mode == Node.PROCESS_MODE_INHERIT, "actual menu Settings-scale-Resume route restores game input")
+	_assert(SpacetimeDB.Continuum == client and main._session_generation == generation and main._subscription == subscription and client.is_connected_db(), "real SDK Resume retains ready generation/client/transport/subscription")
+	_assert(client._next_query_id == next_query and client._next_request_id == next_request and main.starts == 1 and main._client_bindings.size() == bindings, "real SDK Resume sends no subscription/reducer/reconnect or duplicate bindings")
+	_assert(client.get_token() == token and client.token_save_path == token_path and main._return_digest == digest and main._return_snapshot == snapshot, "real SDK Resume preserves token and digest payloads")
+	main._session_menu.get_popup().id_pressed.emit(2)
+	main._show_server_management()
+	main._hide_server_management()
+	_assert(main._menu._last_button.text == "Resume colony", "actual route browser Back still resumes Viewer")
+	main._menu._disconnect_button.pressed.emit()
+	_assert(not main._session_requested and main._session_generation > generation and main._subscription == null and main._menu._last_button.text == "Join last server", "explicit Disconnect ends session and restores cold join")
+	_assert(not main._menu._disconnect_button.visible and not main._menu._status.text.contains("Connected to"), "disconnected menu hides Disconnect and clears connected status")
+	main.queue_free()
+	await get_tree().process_frame
+	SpacetimeDB.Continuum = previous
+	client.queue_free()
+	await get_tree().process_frame
+	peer.close()
+	server.stop()
+	get_window().content_scale_factor = 1.0
 
 func _button(menu: ContinuumMainMenu, text: String) -> Button:
 	for button: Button in menu.find_children("*", "Button", true, false):

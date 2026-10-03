@@ -2,6 +2,8 @@ class_name ContinuumMainMenu
 extends Control
 
 signal join_requested(host: String, database: String)
+signal resume_requested
+signal disconnect_requested
 signal server_management_requested
 signal settings_changed(settings: ClientSettings)
 signal exit_requested
@@ -19,6 +21,9 @@ var _graph_toggle: CheckButton
 var _error: Label
 var _status_glyph: TextureRect
 var _error_glyph: TextureRect
+var resume_available: Callable
+var _busy := false
+var _disconnect_button: Button
 
 func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetrics) -> void:
 	main = owner
@@ -65,6 +70,8 @@ func _build() -> void:
 	_last_button = _button("Join last server", _join_last)
 	_last_button.theme_type_variation = "ButtonPrimary"
 	column.add_child(_last_button)
+	_disconnect_button = _button("Disconnect", func() -> void: disconnect_requested.emit())
+	column.add_child(_disconnect_button)
 	var servers_button := _button("Servers", _open_server_management)
 	column.add_child(servers_button)
 	var settings_button := _button("Settings", _toggle_settings)
@@ -130,7 +137,12 @@ func set_status(message: String, warning := false) -> void:
 	_status.add_theme_color_override("font_color", ThemeTokens.color("warn") if warning else ThemeTokens.color("ink-muted"))
 
 func set_busy(busy: bool) -> void:
-	_last_button.disabled = busy or not _has_last_server()
+	_busy = busy
+	_refresh_last_button()
+
+func _process(_delta: float) -> void:
+	if visible:
+		_refresh_last_button()
 
 func show_menu() -> void:
 	visible = true
@@ -138,6 +150,12 @@ func show_menu() -> void:
 	_refresh_last_button()
 
 func _join_last() -> void:
+	var offered_resume := _last_button.text == "Resume colony"
+	_refresh_last_button()
+	if offered_resume or _can_resume():
+		if not _last_button.disabled and _can_resume():
+			resume_requested.emit()
+		return
 	if _last_button.disabled or not _has_last_server():
 		return
 	var host := settings.server_host.strip_edges()
@@ -185,8 +203,14 @@ func apply_metrics(next_metrics: UiMetrics) -> void:
 	theme = DeckTheme.create(metrics)
 
 func _refresh_last_button() -> void:
-	_last_button.disabled = not _has_last_server()
+	var resumable := _can_resume()
+	_disconnect_button.visible = resumable
+	_last_button.text = "Resume colony" if resumable else "Join last server"
+	_last_button.disabled = _busy or not (resumable or _has_last_server())
 	_last_button.tooltip_text = "No successfully joined server yet." if _last_button.disabled else settings.server_host + " / " + settings.database
+
+func _can_resume() -> bool:
+	return resume_available.is_valid() and bool(resume_available.call())
 
 func _has_last_server() -> bool:
 	return not settings.server_host.is_empty() and not settings.database.is_empty()

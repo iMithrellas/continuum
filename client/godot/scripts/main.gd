@@ -87,6 +87,7 @@ var _meal_request_seconds := 0.0
 var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
+var _resume_context: Dictionary = {}
 var _selected_tile_id: int = -1
 var _selected_rect := Rect2i()
 var _selected_surface: Dictionary = {}
@@ -245,7 +246,10 @@ func _ready() -> void:
 	_menu = preload("res://scenes/main_menu.tscn").instantiate()
 	add_child(_menu)
 	_menu.setup(self, _settings, _metrics)
+	_menu.resume_available = _can_resume_colony
 	_menu.join_requested.connect(_on_menu_join_requested)
+	_menu.resume_requested.connect(_on_menu_resume_requested)
+	_menu.disconnect_requested.connect(leave_session)
 	_menu.server_management_requested.connect(_show_server_management)
 	_server_management.join_requested.connect(_on_server_management_join_requested)
 	_server_management.back_requested.connect(_hide_server_management)
@@ -612,6 +616,7 @@ func leave_session() -> void:
 	_state_ready = false
 	map.visible = true
 	workspace.visible = true
+	_menu.set_status("Offline · the colony keeps running without us")
 	_menu.show_menu()
 	_server_management.set_busy(false)
 	_hide_server_management()
@@ -620,6 +625,25 @@ func leave_session() -> void:
 
 func _on_menu_join_requested(host: String, database: String) -> void:
 	configure_connection(host, database, _profile, false)
+
+func _can_resume_colony() -> bool:
+	if _resume_context.is_empty() or not _session_epoch_current(int(_resume_context.generation)) or not _state_ready:
+		return false
+	if not is_instance_valid(_resume_context.client):
+		return false
+	var client: ContinuumModuleClient = _resume_context.client
+	return is_instance_valid(client) and client == SpacetimeDB.Continuum and client == _bound_client \
+		and client.is_connected_db() and _subscription != null and _subscription == _resume_context.subscription \
+		and _subscription.active and not _subscription.ended and _subscription.error == OK \
+		and _host == _resume_context.host and _database == _resume_context.database \
+		and _settings.server_host.strip_edges() == _host and _settings.database.strip_edges() == _database \
+		and client.base_url == _host.trim_suffix("/") and client.database_name == _database.to_lower()
+
+func _on_menu_resume_requested() -> void:
+	if not _can_resume_colony():
+		_menu.set_busy(_manual_connection_busy())
+		return
+	_menu.visible = false
 
 func _show_server_management() -> void:
 	_menu.visible = false
@@ -811,6 +835,7 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 
 
 func _release_main_subscription() -> void:
+	_resume_context.clear()
 	if _subscription == null:
 		return
 	var subscription := _subscription
@@ -822,6 +847,8 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 	if _subscription != subscription or not _session_epoch_current(generation):
 		return
 	_state_ready = true
+	_resume_context = {"client": SpacetimeDB.Continuum, "generation": generation,
+		"subscription": subscription, "host": _host, "database": _database}
 	_full_ui_refresh = true
 	_dirty = true
 	_map_dirty = true
@@ -1869,7 +1896,7 @@ func _session_menu_action(id: int) -> void:
 		0: _show_away_digest()
 		1:
 			if not _authenticated_identity.is_empty(): DisplayServer.clipboard_set(_authenticated_identity)
-		2: leave_session()
+		2: _menu.show_menu()
 
 
 func _build_map_toolbar() -> void:
