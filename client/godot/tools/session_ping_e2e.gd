@@ -35,6 +35,7 @@ func _ready() -> void:
 	options.compression = SpacetimeDBConnection.CompressionPreference.NONE
 	options.debug_mode = false
 	options.threading = false
+	options.one_time_token = false
 	client.token_save_path = _cli_option("--token-path", "user://session_ping.token")
 	client.connect_db(_cli_option("--stdb-host", "http://127.0.0.1:3303"),
 			_cli_option("--stdb-db", "session_ping"), options)
@@ -46,7 +47,7 @@ func _process(delta: float) -> void:
 	if shutdown_requested:
 		if disconnect_seen:
 			_assert(client._pending_reducer_call.size() == 0, "SDK pending reducer map is empty after disconnect")
-			_assert(role_verified, "Viewer role was verified")
+			_assert(role_verified, "sender-scoped expected role was verified")
 			finished = true
 			print("SESSION_PING_E2E replies=%d latest_ms=%.3f smoothed_ms=%.3f" % [
 				final_replies, final_latest_ms, final_smoothed_ms])
@@ -76,7 +77,7 @@ func _process(delta: float) -> void:
 		_assert(snapshot.timed_out == 0 and snapshot.rejected == 0, "real echo replies are not failures")
 		_assert(client.get_local_identity().size() > 0, "connected identity is nonempty")
 		_assert(_token_file_is_nonempty(), "authenticated token file is nonempty")
-		_assert(role_verified, "authenticated client is a Viewer")
+		_assert(role_verified, "authenticated client has the expected effective role")
 		_finish(not failed)
 		return
 	# Completion is checked before this launch so the response just observed cannot
@@ -99,8 +100,19 @@ func _on_disconnected() -> void:
 
 
 func _on_role_subscription_applied() -> void:
-	# The public sender-filtered view has no row for a Viewer (role NONE).
-	role_verified = client.db.my_role.iter().is_empty()
+	var expected := _cli_option("--expected-role", "Operator")
+	_assert(expected in ["Operator", "Viewer"], "expected role is configured")
+	var rows: Array[ContinuumMembership] = client.db.my_role.iter()
+	_assert(rows.size() == 1, "effective role view has exactly one sender row")
+	if rows.size() != 1:
+		return
+	var row := rows[0]
+	var ordinal := ContinuumRole.Options.viewer if expected == "Viewer" else ContinuumRole.Options.operator
+	role_verified = row.identity == client.get_local_identity() and row.role != null and row.role.value == ordinal
+	_assert(role_verified, "role ordinal and row identity match the authenticated sender")
+	if role_verified:
+		print("SESSION_PING_ROLE=%s TAG=%d" % [expected, ordinal])
+		print("SESSION_PING_IDENTITY=" + row.identity.hex_encode())
 
 
 func _assert(condition: bool, message: String) -> void:

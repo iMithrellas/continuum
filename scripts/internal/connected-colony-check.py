@@ -199,8 +199,7 @@ class Gate:
             raise RuntimeError(self.clean(str(error))) from None
         if reject:
             error = (result.stderr + result.stdout).lower()
-            expected = ("this command requires a colony admin" if user == "operator"
-                        else "caller is not an authorized colony member")
+            expected = "caller lacks the required colony role"
             assert result.returncode and expected in error, self.clean(error)
             self.record("authorization_rejected", reducer=args[5] if len(args) > 5 else "unknown",
                         user=user, expected_reason=expected)
@@ -246,10 +245,11 @@ class Gate:
     def baseline(self, wasm):
         self.identity("admin")
         operator = self.identity("operator")
-        self.identity("viewer")
+        viewer = self.identity("viewer")
         self.command("publish", "--yes", "-s", self.host, "-b", wasm, self.db)
         self.call("set_time_scale", 0)
         self.call("set_speed_change_cooldown", 0)
+        self.call("set_operator", json.dumps(viewer), False)
         tiles = self.rows("tile")
         forest = next(tile for tile in tiles if tile["kind"][0] == 2)
         before = self.snapshot()

@@ -20,7 +20,7 @@ DB = "production-test"
 OWNER = uuid.uuid4().hex
 HOST = None
 COMMAND_TIMEOUT = 45
-AUTH_ERROR = "caller is not an authorized colony member"
+AUTH_ERROR = "caller lacks the required colony role"
 VALIDATION_ERROR = "Production target must be finite and in (0, 1000000]"
 
 
@@ -177,15 +177,33 @@ def run_gate():
         "/baseline.wasm" if baseline else "/module/continuum_module.wasm", DB)
     call("set_time_scale", 0)
     if baseline:
-        legacy = {name: rows(name) for name in ("config", "colony", "work_order", "tile", "colonist", "item_stack")}
+        old_operator = json.loads(request("/v1/identity", b""))
+        call("set_operator", old_operator["identity"], True)
+        legacy = {name: rows(name) for name in ("membership", "config", "colony", "work_order", "tile", "colonist", "item_stack")}
         cli("publish", "--yes", "--delete-data=never", "-s", "http://127.0.0.1:3000",
             "-b", "/module/continuum_module.wasm", DB)
         assert legacy == {name: rows(name) for name in legacy}, "additive migration changed existing save"
     assert rows("production_policy") == []
     # SQL encodes Identity as its one-field hex product; audit uses bare hex.
-    admin = rows("membership")[0]["identity"][0].removeprefix("0x")
+    admin = next(row for row in rows("membership") if row["role"][0] == 0)["identity"][0].removeprefix("0x")
     identity = json.loads(request("/v1/identity", b""))
     token = identity["token"]
+    user_call(token, "set_production_policy", {"stone": []}, 7)
+    user_call(token, "remove_production_policy", {"stone": []})
+    user_call(token, "set_meal_policy", {"rationed": []})
+    user_call(token, "set_meal_policy", {"normal": []})
+    user_call(token, "set_haul_policy", {"dedicatedHaulers": []})
+    user_call(token, "set_haul_policy", {"selfHaul": []})
+    forest = next(row for row in rows("tile") if row["kind"][0] == 2)
+    user_call(token, "set_work_order", forest["id"], {"logging": []}, 3, True)
+    user_call(token, "set_tile_enabled", forest["id"], False)
+    user_call(token, "set_tile_enabled", forest["id"], True)
+    user_call(token, "set_time_scale", 0, expected_error=AUTH_ERROR)
+    user_call(token, "reset_colony", expected_error=AUTH_ERROR)
+    user_call(token, "expand_world", 25, 25, expected_error=AUTH_ERROR)
+    user_call(token, "set_operator", ["0x" + identity["identity"]], True, expected_error=AUTH_ERROR)
+    user_call(token, "grant_admin", ["0x" + identity["identity"]], expected_error=AUTH_ERROR)
+    call("set_operator", identity["identity"], False)
     before = {name: rows(name) for name in ("production_policy", "work_order", "event_log")}
     for reducer, args in (("set_production_policy", ({"wood": []}, 10)),
                           ("remove_production_policy", ({"wood": []},))):
@@ -236,9 +254,21 @@ def run_gate():
     user_call(token, "remove_production_policy", {"wood": []})
     assert rows("event_log") == events
     call("set_operator", identity["identity"], False)
+    assert next(row for row in rows("membership")
+                if row["identity"][0].removeprefix("0x") == identity["identity"])["role"][0] == 2
     before = {name: rows(name) for name in ("production_policy", "work_order", "event_log", "config")}
+    call("set_operator", identity["identity"], False)
     user_call(token, "remove_production_policy", {"meat": []}, expected_error=AUTH_ERROR)
+    user_call(token, "build_facility", forest["id"], {"recreation": []}, expected_error=AUTH_ERROR)
+    user_call(token, "set_meal_policy", {"rationed": []}, expected_error=AUTH_ERROR)
+    user_call(token, "set_work_order", forest["id"], {"logging": []}, 1, False, expected_error=AUTH_ERROR)
+    user_call(token, "set_tile_enabled", forest["id"], False, expected_error=AUTH_ERROR)
     assert before == {name: rows(name) for name in before}
+    memberships = rows("membership")
+    cli("publish", "--yes", "--delete-data=never", "-s", "http://127.0.0.1:3000",
+        "-b", "/module/continuum_module.wasm", DB)
+    assert rows("membership") == memberships
+    user_call(token, "remove_production_policy", {"meat": []}, expected_error=AUTH_ERROR)
     call("reset_colony")
     assert rows("production_policy") == []
     return bool(baseline)
@@ -274,7 +304,7 @@ def main():
                 signal.signal(sig, handler)
     if result == 0:
         print("PASS: production policy authorization, atomic validation, exact audits, idempotence, persistence, reset and verified cleanup"
-              + (", additive migration preserves six legacy table snapshots" if migration else ""))
+              + (", additive migration preserves seven legacy table snapshots including Admin/Operator membership" if migration else ""))
     return result
 
 

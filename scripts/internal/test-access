@@ -34,7 +34,8 @@ HOST="http://127.0.0.1:$PORT"
 docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
 docker exec "$CONTAINER" spacetime publish --yes --delete-data=always --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB"
 probe() { godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- --stdb-host="$HOST" --stdb-db="$DB" --profile="$1" --expected="$2"; }
-viewer="$(probe normal Viewer)"; [[ "$viewer" == *$'ACCESS_ROLE=Viewer OPERATE=false ADMIN=false\nACCESS_PASS'* ]] || fail "absent member was not Viewer"
+godot --headless --path "$ROOT/client/godot" --script res://tools/operator_access_test.gd
+viewer="$(probe normal Operator)"; [[ "$viewer" == *$'ACCESS_ROLE=Operator OPERATE=true ADMIN=false\nACCESS_PASS'* ]] || fail "joining player was not Operator"
 operator_id="$(printf '%s\n' "$viewer" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2}')"; [[ -n "$operator_id" ]] || fail "operator identity missing"
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$operator_id\"" true >/dev/null
 watch_file="/tmp/continuum-access-watch-$$"
@@ -47,7 +48,8 @@ watch_pid=$!
 for _ in {1..30}; do awk '/CLIENT_IDENTITY=/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
 for _ in {1..30}; do awk '/ACCESS_ROLE=Operator OPERATE=true ADMIN=false/{found=1} END{exit !found}' "$watch_file" && break || sleep 1; done
 awk '/ACCESS_ROLE=Operator OPERATE=true ADMIN=false/{found=1} END{exit !found}' "$watch_file" || fail "operator role discovery did not refresh"
-admin="$(probe admin Viewer)"; admin_id="$(printf '%s\n' "$admin" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2}')"; [[ -n "$admin_id" ]] || fail "admin identity missing"
+admin="$(probe admin Operator)"; admin_id="$(printf '%s\n' "$admin" | awk -F= '$1 == "CLIENT_IDENTITY" {print $2}')"; [[ -n "$admin_id" ]] || fail "admin identity missing"
+developer="$(probe developer Operator)"; [[ "$developer" == *$'ACCESS_ROLE=Operator OPERATE=true ADMIN=false\nACCESS_PASS'* ]] || fail "developer profile self-claimed admin or failed player default"
 if docker exec "$CONTAINER" spacetime call --anonymous --server http://127.0.0.1:3000 "$DB" grant_admin "\"$admin_id\"" >/dev/null 2>&1; then fail "anonymous grant was accepted"; fi
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" grant_admin "\"$admin_id\"" >/dev/null
 sleep 1

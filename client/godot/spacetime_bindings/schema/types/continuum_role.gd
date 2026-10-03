@@ -5,15 +5,17 @@ class_name ContinuumRole extends RustEnum
 enum Options {
 	admin,
 	operator,
+	viewer,
 }
 
-const enum_options: Array[StringName] = ['', '']
+const enum_options: Array[StringName] = ['', '', '']
 const bsatn_enum_type: StringName = &'ContinuumRole'
 
 static func parse_enum_name(i: int) -> String:
 	match i:
 		0: return &'admin'
 		1: return &'operator'
+		2: return &'viewer'
 		_:
 			printerr("Enum does not have value for %d. This is out of bounds." % i)
 			return &'Unknown'
@@ -29,3 +31,6 @@ static func create_admin() -> ContinuumRole:
 
 static func create_operator() -> ContinuumRole:
 	return create(Options.operator)
+
+static func create_viewer() -> ContinuumRole:
+	return create(Options.viewer)

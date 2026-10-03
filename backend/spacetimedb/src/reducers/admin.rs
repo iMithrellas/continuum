@@ -143,18 +143,24 @@ pub fn set_operator(
     {
         return Err("admin membership cannot be changed with `set_operator`".into());
     }
-    let changed = if authorized {
-        if existing.is_some() {
+    let role = if authorized {
+        Role::Operator
+    } else {
+        Role::Viewer
+    };
+    let changed = if let Some(member) = existing {
+        if member.role == role {
             false
         } else {
-            ctx.db.membership().insert(Membership {
-                identity,
-                role: Role::Operator,
-            });
+            ctx.db
+                .membership()
+                .identity()
+                .update(Membership { identity, role });
             true
         }
     } else {
-        ctx.db.membership().identity().delete(identity)
+        ctx.db.membership().insert(Membership { identity, role });
+        true
     };
     if changed {
         log_event(

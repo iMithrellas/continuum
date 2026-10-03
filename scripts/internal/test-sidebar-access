@@ -38,7 +38,7 @@ HOST="http://127.0.0.1:$PORT"
 docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
 docker exec "$CONTAINER" spacetime publish --yes --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
 
-printf '%s\n' '#!/usr/bin/env bash' 'shift' "exec docker exec \"$CONTAINER\" spacetime call --server http://127.0.0.1:3000 \"\$@\"" >"$PUBLISHER_WRAPPER"
+printf '%s\n' '#!/usr/bin/env bash' 'shift 3 # call --server HOST; use the private container endpoint below' "exec docker exec \"$CONTAINER\" spacetime call --server http://127.0.0.1:3000 \"\$@\"" >"$PUBLISHER_WRAPPER"
 chmod +x "$PUBLISHER_WRAPPER"
 printf '%s\n' '#!/usr/bin/env bash' 'case "$*" in *res://scenes/admin_bootstrap.tscn*|*res://tools/access_probe.gd*) exec godot "$@";; esac' "printf '%s\\n' \"\$*\" >\"$LAUNCH_ARGS\"" >"$GODOT_WRAPPER"
 chmod +x "$GODOT_WRAPPER"

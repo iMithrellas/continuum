@@ -10,8 +10,12 @@ The probe is an authenticated call to the permission-independent
 application acknowledgement for the client's own WebSocket session. The reducer
 does not require an Operator role and does not mutate world state. This measures
 the active application's request/acknowledgement path, not HTTP health RTT.
-The test subscribes only to the sender-filtered `my_role` view and verifies that
-the connected client is a Viewer with no operator membership.
+The test subscribes only to the sender-filtered `my_role` view. It first verifies
+the joining identity's default Operator row (tag 1), then privately assigns Viewer
+and reconnects with the same token to verify its persisted sender row (tag 2).
+Both roles must receive twelve authenticated echo replies. Real HTTP reducer
+checks additionally prove Operator management access, Admin-only speed denial,
+and Viewer mutation denial without changing colony state.
 
 RTT is measured from the timestamp immediately after the client WebSocket send
 returns to the timestamp when `WebSocketPeer` first observes the response

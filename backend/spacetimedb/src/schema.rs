@@ -10,6 +10,8 @@ use spacetimedb::{table, Identity};
 pub enum Role {
     Admin,
     Operator,
+    /// Wire ordinal 2; existing Admin/Operator ordinals must remain unchanged.
+    Viewer,
 }
 
 /// Private authorization state. The publishing identity is the sole initial admin.

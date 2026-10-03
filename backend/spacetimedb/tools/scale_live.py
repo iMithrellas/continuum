@@ -58,7 +58,7 @@ def check_scale(cli, host, wasm, root, repo, wait):
         assert result.returncode != 0, (name, args, "unexpected success")
         if authorization:
             error = (result.stdout + result.stderr).lower()
-            assert any(word in error for word in ("admin", "not an authorized", "unauthorized", "permission")), result
+            assert "caller lacks the required colony role" in error, result
 
     from profile_live import CLI as cli_path
     cli("publish", "--yes", "-s", host, "-b",
@@ -85,6 +85,7 @@ def check_scale(cli, host, wasm, root, repo, wait):
         viewer = json.load(response)
     subprocess.run([str(cli_path), "--root-dir", str(root / "scale-viewer"), "login",
                     "--token", viewer["token"]], capture_output=True, text=True, check=True)
+    call("set_operator", json.dumps(viewer["identity"]), False)
     for operator in (False, True):
         if operator:
             call("set_operator", json.dumps(viewer["identity"]), True)

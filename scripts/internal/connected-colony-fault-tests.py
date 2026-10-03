@@ -168,8 +168,8 @@ class FaultTests(unittest.TestCase):
         self.assertEqual(self.events(), [])
 
     def test_specific_semantic_authorization_errors_are_accepted(self):
-        for user, reason in (("viewer", "caller is not an authorized colony member"),
-                             ("operator", "this command requires a colony admin")):
+        for user, reason in (("viewer", "caller lacks the required colony role"),
+                             ("operator", "caller lacks the required colony role")):
             with patch.object(self.gate, "run", return_value=self.result(1, err=reason)):
                 self.gate.call("set_time_scale", 600, user=user, reject=True)
         self.assertEqual(len(self.events()), 2)

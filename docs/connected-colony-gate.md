@@ -43,8 +43,8 @@ retained if runtime exit cannot be verified. SIGKILL cannot be handled.
 
 1. Create three local authenticated identities. Publish as administrator; reject
    viewer speed, policy and work-order writes with the exact server authorization
-   reason `caller is not an authorized colony member`. The operator's admin-only
-   speed rejection must say `this command requires a colony admin`. Generic
+   reason `caller lacks the required colony role` after explicit Viewer assignment.
+   The operator's admin-only speed rejection has that same role-denial reason. Generic
    transport/parser errors or mentions of "admin" do not satisfy these assertions.
    Compare the named public-table snapshot while paused to detect mutation.
 2. Grant the separate operator identity. Reject its administrator-only speed write;

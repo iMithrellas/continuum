@@ -173,7 +173,7 @@ Rust signatures and the generated binding types.
 | `set_time_scale` | `(time_scale: f64)` | Admin only. Baseline accepts finite `0..=100000` (the cooldown worker explicitly rejects NaN/infinity); missing config errors; unchanged value is a no-op with no timestamp update. `0` pauses the clock. |
 | `reset_colony` | `()` | Admin only. Destructive reseed; no input no-op exists. It increments `config.generation`, deletes public world rows and event history, then logs the reset event. |
 | `expand_world` | `(width: i32, height: i32)` | Admin only. Each dimension must be positive, at most `256`, and no smaller than the current dimension. Equal dimensions are an idempotent no-op. Expansion preserves the existing colony and geometry; it never resets or shrinks the world. |
-| `set_operator` | `(identity: Identity, authorized: bool)` | Admin only. Zero/database identities and admin membership error. `authorized=true` for an existing operator and `false` for a missing operator are idempotent no-ops; otherwise it adds/removes the operator. |
+| `set_operator` | `(identity: Identity, authorized: bool)` | Admin only. Zero/database identities and admin membership error. Persists Operator for `true` and read-only Viewer for `false`, including previously unassigned players; never deletes revocation rows. Repeating an identical persisted assignment is an idempotent no-op. |
 | `set_speed_change_cooldown`* | `(cooldown_seconds: u32)` | Admin only. Cooldown worker only; values above `3600` error, equal value is a no-op, and changing it does not alter `last_changed_at`. |
 
 ### Elevation-aware commands
@@ -298,10 +298,14 @@ identity. Clients must not invoke either as part of normal operation.
 
 ## Authorization And Identity
 
-There are two authorization roles: `Operator` and `Admin`. Admins inherit
-operator permissions. An absent member is `Viewer`. The publishing identity becomes
+There are three authorization roles: `Admin`, `Operator`, and `Viewer` (in that
+wire ordinal order). Admins inherit operator permissions. Authenticated joining
+players without a membership assignment default to `Operator`; an explicit `Viewer`
+assignment is read-only. Anonymous/database senders have no player authority.
+The publishing identity becomes
 the sole initial admin; only an admin can call `set_operator(identity, authorized)`,
-which adds or removes an operator, or `grant_admin(identity)`, which promotes/adds a
+which persists `Operator` when true and `Viewer` when false (never deletes a
+revocation), or `grant_admin(identity)`, which promotes/adds a
 distinct admin. The target identity is a SpacetimeDB `Identity` value, not the
 colonist ID or a display name.
 
@@ -312,10 +316,22 @@ telemetry. Treat an identity and its token as credentials; use the persistent
 publishing identity only for administration.
 
 The public `my_role` view is the only client role-discovery surface. It is evaluated
-with the authenticated `ViewContext` sender and returns at most that sender's private
-`Membership` row; `None` means Viewer. Clients must treat the role as `Unknown` while
+with the authenticated `ViewContext` sender and explicitly returns that sender's
+effective `Membership`, including default Operator when no assignment exists.
+Clients must not infer permission from an empty reply (it remains read-only), and
+must treat the role as `Unknown` while
 disconnected or before the view subscription is applied, and should refresh it after
 reconnect. The server still enforces every reducer independently.
+
+Appending Viewer preserves Admin=0 and Operator=1 (Viewer=2). SpacetimeDB 2.10
+accepts this additive enum update: the private upgrade gate publishes the old
+module, creates an Operator alongside its Admin, and upgrades with
+`--delete-data=never`, comparing membership and six legacy public table snapshots.
+Existing explicit Admin/Operator assignments remain unchanged; previously
+unassigned authenticated identities intentionally gain Operator. Historical
+revocations deleted by the old module cannot be distinguished from new players;
+admins must explicitly assign Viewer again where needed. Deploy matching bindings
+with the module; do not reset colony data for this policy change.
 
 `grant_admin(identity)` is admin-only, rejects zero/database identities and
 self-promotion, promotes an existing operator or adds a new admin, and is idempotent

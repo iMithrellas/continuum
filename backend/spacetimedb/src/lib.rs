@@ -24,10 +24,19 @@ const TICK_INTERVAL_MICROS: i64 = 1_000_000;
 /// 4 real hours = 1 in-game day: 6 in-game seconds per real second.
 pub const DEFAULT_TIME_SCALE: f64 = 6.0;
 
-/// Authenticated, sender-filtered role discovery. Missing membership is Viewer.
+/// Sender-filtered role discovery explicitly reports the default player role.
 #[view(accessor = my_role, public)]
 pub fn my_role(ctx: &ViewContext) -> Option<Membership> {
-    ctx.db.membership().identity().find(ctx.sender())
+    let stored = ctx.db.membership().identity().find(ctx.sender());
+    Some(Membership {
+        identity: ctx.sender(),
+        role: auth::effective_role(
+            stored.map(|member| member.role),
+            ctx.sender(),
+            // ViewContext lacks database_identity(); use ReducerContext's host call.
+            Identity::from_byte_array(spacetimedb::sys::identity()),
+        ),
+    })
 }
 
 #[reducer(init)]

@@ -22,8 +22,10 @@ server does not reset its colony.
 
 ## Roles
 
-Your normal client profile joins as a viewer. An existing colony admin can
-promote a player to operator; operators can control the colony. Developer and
+Authenticated players join as operators and can manage the colony. An existing
+admin can assign explicit read-only Viewer access with `set_operator(identity,
+false)` and restore Operator with `true`. Speed/pause and server administration
+remain Admin-only. Developer and
 admin are separate local client profiles, not server permissions.
 
 To bootstrap the first admin on a local server, first start it from the normal

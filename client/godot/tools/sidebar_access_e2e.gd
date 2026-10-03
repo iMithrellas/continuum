@@ -19,10 +19,10 @@ func _ready() -> void:
 		get_tree().quit(0)
 
 func _test_operator_lifecycle() -> void:
-	await _wait_role("Viewer")
-	_assert(not main.workspace.authorized["policies"] and
-			not main.workspace.authorized["operations"] and
-			not main._build_menu.visible, "viewer mutation and admin controls are hidden")
+	await _wait_role("Operator")
+	_assert(main.workspace.authorized["policies"] and
+			main.workspace.authorized["operations"] and
+			not main._is_admin, "joining player operates without self-claiming admin")
 	_write_identity(_option("--identity-file", ""))
 	await _wait_file(_option("--operator-granted-file", ""))
 	await _wait_role("Operator")

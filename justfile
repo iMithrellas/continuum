@@ -202,12 +202,14 @@ test-gameplay-client:
     {{ quote(godot) }} --headless --path client/godot --script res://tools/enum_key_cache_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/unit_enum_key_contract_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/production_policy_bindings_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/operator_access_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/colony_operations_model_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/production_suitability_test.gd
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/colony_guidance_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_targets_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_wiring_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/map_feedback_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/map_inspector_test.tscn
     {{ quote(godot) }} --headless --path client/godot --script res://tools/ux_panels_test.gd
 
 # Offline timeout, redaction, interruption, and owned-resource disposal regressions.

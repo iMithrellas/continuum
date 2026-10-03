@@ -10,6 +10,9 @@ the shared simulation for everyone, not just the local client's animation.
 
 ## Roles and controls
 
+- Joining authenticated players default to **Operator**. An admin can explicitly
+  assign read-only **Viewer** with `set_operator(identity, false)`; this persists
+  across reconnects. Restoring `true` restores Operator, not Admin.
 - **Viewer:** can read replicated colony state, select colonists, inspect the map,
   see destination markers/work badges, and use reversible Overview guidance.
 - **Operator:** has viewer access plus the `Operations` and `Policies` panels and

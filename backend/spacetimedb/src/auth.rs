@@ -22,13 +22,23 @@ pub(crate) fn authorize(ctx: &ReducerContext, required: RequiredRole) -> Result<
         .membership()
         .identity()
         .find(ctx.sender())
-        .map(|member| member.role)
-        .ok_or_else(|| "caller is not an authorized colony member".to_string())?;
+        .map(|member| member.role);
+    let role = effective_role(role, ctx.sender(), ctx.database_identity());
 
     if role_allows(role, required) {
         Ok(role)
     } else {
-        Err("this command requires a colony admin".to_string())
+        Err("caller lacks the required colony role".to_string())
+    }
+}
+
+/// Joining authenticated players operate; only a persisted assignment can revoke
+/// that default. Anonymous/database senders never inherit player permissions.
+pub(crate) fn effective_role(stored: Option<Role>, sender: Identity, database: Identity) -> Role {
+    if sender == Identity::ZERO || sender == database {
+        Role::Viewer
+    } else {
+        stored.unwrap_or(Role::Operator)
     }
 }
 
@@ -55,5 +65,22 @@ mod tests {
         assert!(!role_allows(Role::Operator, RequiredRole::Admin));
         assert!(!role_allows(Role::Admin, RequiredRole::Scheduler));
         assert!(!role_allows(Role::Operator, RequiredRole::Scheduler));
+        assert!(!role_allows(Role::Viewer, RequiredRole::Operator));
+        assert!(!role_allows(Role::Viewer, RequiredRole::Admin));
+        assert!(!role_allows(Role::Viewer, RequiredRole::Scheduler));
+    }
+
+    #[test]
+    fn default_players_operate_but_explicit_assignments_and_invalid_senders_are_preserved() {
+        use super::effective_role;
+        use spacetimedb::Identity;
+        let player = Identity::from_byte_array([1; 32]);
+        let database = Identity::from_byte_array([2; 32]);
+        assert_eq!(effective_role(None, player, database), Role::Operator);
+        for role in [Role::Admin, Role::Operator, Role::Viewer] {
+            assert_eq!(effective_role(Some(role), player, database), role);
+        }
+        assert_eq!(effective_role(None, Identity::ZERO, database), Role::Viewer);
+        assert_eq!(effective_role(None, database, database), Role::Viewer);
     }
 }

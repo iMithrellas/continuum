@@ -129,10 +129,11 @@ def check_construction(cli, host, wasm, root, module, wait, cpu_seconds):
         viewer = json.load(response)
     subprocess.run([CLI, "--root-dir", str(root / "construction-viewer"), "login",
                     "--token", viewer["token"]], capture_output=True, text=True, check=True)
+    call(db, "set_operator", json.dumps(viewer["identity"]), False)
     saved = snapshot(db)
     for name in ("build_tile_block", "build_tile_block_at"):
         args = (24, 24, 87, 87) + ((0,) if name.endswith("_at") else ())
-        call(db, name, *args, '{"farm":{}}', expected="not an authorized", viewer=True)
+        call(db, name, *args, '{"farm":{}}', expected="caller lacks the required colony role", viewer=True)
         assert snapshot(db) == saved
     call(db, "set_operator", json.dumps(viewer["identity"]), True)
     before = rows(db, "tile")

@@ -28,8 +28,7 @@ def cli(*args, viewer=False, fail=False):
         assert result.returncode != 0, (args, "unexpected success")
         if viewer:
             error = (result.stderr + result.stdout).lower()
-            assert any(word in error for word in ("operator", "admin", "permission", "unauthorized",
-                                                  "not an authorized", "not authorized")), (
+            assert "caller lacks the required colony role" in error, (
                 "viewer rejection was not an authorization check", args, error
             )
     else:
@@ -164,11 +163,11 @@ def total_stone():
             + sum(body["carried_amount"] for body in rows("SELECT * FROM colonist")
                   if body["carried_kind"][0] == 2))
 
-# A new token is a genuine viewer, rather than an accidentally misnamed reducer.
 request = urllib.request.Request(HOST + "/v1/identity", method="POST")
 with urllib.request.urlopen(request, timeout=5) as response:
     viewer = json.load(response)
 cli("login", "--token", viewer["token"], viewer=True)
+call("set_operator", json.dumps(viewer["identity"]), False)
 for name, args in (
     ("designate_excavation", (0, 0, 0, 0, -1, 1, 1)),
     ("set_excavation_enabled", (1, False)),

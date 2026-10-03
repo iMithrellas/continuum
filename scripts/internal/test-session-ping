@@ -65,12 +65,14 @@ docker exec "$CONTAINER" spacetime server set-default local
 # Standalone servers issue local identities during publish; the hosted CLI-login
 # endpoint does not exist on this server and must not be used as an auth host.
 timeout 30 docker exec "$CONTAINER" spacetime publish --server http://127.0.0.1:3000 --yes -b /module.wasm "$DB" </dev/null
+docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_time_scale 0 >/dev/null
 
 mkdir -p "$TMP/tokens"
+for expected_role in Operator Viewer; do
 set +e
 "$GODOT" --headless --path "$ROOT/client/godot" --scene res://tools/session_ping_e2e.tscn -- \
 	--stdb-host="http://127.0.0.1:${HOST_PORT}" --stdb-db="$DB" \
-	--token-path="$TMP/tokens/session.token" >"$GODOT_LOG" 2>&1
+	--token-path="$TMP/tokens/session.token" --expected-role="$expected_role" >"$GODOT_LOG" 2>&1
 godot_rc=$?
 set -e
 cat "$GODOT_LOG"
@@ -86,3 +88,41 @@ if ! rg -Fxq 'SESSION_PING_E2E_PASS' "$GODOT_LOG"; then
 	printf 'session ping pass marker missing\n' >&2
 	exit 1
 fi
+identity="$(awk -F= '$1 == "SESSION_PING_IDENTITY" {print $2}' "$GODOT_LOG")"
+[[ "$identity" =~ ^[0-9a-f]{64}$ ]] || { printf 'sender identity missing\n' >&2; exit 1; }
+python3 - "http://127.0.0.1:${HOST_PORT}" "$DB" "$TMP/tokens/session.token" "$expected_role" "$CONTAINER" <<'PY'
+import json, pathlib, subprocess, sys, urllib.error, urllib.request
+host, db, token_path, role, container = sys.argv[1:]
+token = pathlib.Path(token_path).read_text().strip()
+def snapshot():
+    result = []
+    for table in ("config", "event_log"):
+        raw = subprocess.check_output([
+            "docker", "exec", container, "spacetime", "sql", "--format", "json",
+            "--server", "http://127.0.0.1:3000", db, "SELECT * FROM " + table])
+        result.append([(entry["schema"], sorted(entry["rows"],
+            key=lambda row: json.dumps(row, sort_keys=True))) for entry in json.loads(raw)])
+    return result
+def call(reducer, args, denied):
+    request = urllib.request.Request(host + f"/v1/database/{db}/call/{reducer}",
+        json.dumps(args).encode(), {"Authorization": "Bearer " + token,
+                                   "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(request, timeout=10):
+            assert not denied, "read-only caller unexpectedly mutated state"
+    except urllib.error.HTTPError as error:
+        assert denied and error.code == 530 and error.read().decode().strip() == \
+            "caller lacks the required colony role", "not an exact reducer authorization denial"
+before = snapshot()
+call("set_meal_policy", [{"normal": []} if role == "Operator" else {"rationed": []}], role == "Viewer")
+call("set_time_scale", [0], True)
+assert snapshot() == before, "permission checks changed colony state"
+print("SESSION_PING_PERMISSION_PASS " + role)
+PY
+if [[ "$expected_role" == Operator ]]; then
+    operator_identity="$identity"
+    docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_operator "\"$identity\"" false >/dev/null
+else
+    [[ "$identity" == "$operator_identity" ]] || { printf 'Viewer reconnected with a different identity\n' >&2; exit 1; }
+fi
+done

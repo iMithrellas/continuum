@@ -71,6 +71,9 @@ func _on_connection_error(_code: int, _reason: String) -> void:
 	_set_unknown()
 
 func _on_view_applied() -> void:
+	if _stopped:
+		_set_unknown()
+		return
 	_view_applied = true
 	_refresh_from_view()
 
@@ -139,7 +142,7 @@ func _on_role_row_change(table_name: String, _row: Resource) -> void:
 		_refresh_from_view()
 
 func _refresh_from_view() -> void:
-	if not _view_applied or _client == null or not _client.is_connected_db():
+	if _stopped or not _view_applied or _client == null or not _client.is_connected_db():
 		_set_unknown()
 		return
 	var rows: Array[ContinuumMembership] = _client.db.my_role.iter()
@@ -155,6 +158,8 @@ func _refresh_from_view() -> void:
 			_set_role(ROLE_ADMIN, true, true)
 		ContinuumRole.Options.operator:
 			_set_role(ROLE_OPERATOR, true, false)
+		ContinuumRole.Options.viewer:
+			_set_role(ROLE_VIEWER, false, false)
 		_:
 			_set_unknown()
 
