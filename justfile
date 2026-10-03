@@ -210,6 +210,9 @@ test-gameplay-client:
     {{ quote(godot) }} --headless --path client/godot --script res://tools/operator_access_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/colony_operations_model_test.gd
     {{ quote(godot) }} --headless --path client/godot --script res://tools/production_suitability_test.gd
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/large_map_foundations_test.gd
+    {{ quote(godot) }} --headless --path client/godot --scene res://tools/large_map_wire_test.tscn
+    {{ quote(godot) }} --headless --path client/godot --script res://tools/sdk_subscription_cache_test.gd
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/colony_guidance_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_targets_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/production_wiring_test.tscn
@@ -223,6 +226,10 @@ test-gate-safety:
     python3 scripts/internal/connected-colony-fault-tests.py
     python3 scripts/internal/test-production-automation-faults.py
     python3 scripts/internal/test-world-ready.py
+
+# Exercise fresh server-authoritative world generation with default settings.
+test-world-generation: wasm
+    python3 scripts/internal/test-world-generation.py
 
 # Measure native population scaling independently of map expansion.
 profile-population *args:

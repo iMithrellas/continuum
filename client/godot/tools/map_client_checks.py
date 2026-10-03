@@ -61,6 +61,7 @@ for name, scene, marker in [
     ("diagnostics-ui", "diagnostics_integration_test", "DIAGNOSTICS_INTEGRATION_PASS"),
     ("planning", "planning_test", "PLANNING_TEST "),
     ("world-art", "world_art_test", "WORLD_ART_TEST_PASS"),
+    ("world-art-review", "world_art_review_test", "WORLD_ART_REVIEW_PASS"),
 ]:
     run(name, ["--scene", f"res://tools/{scene}.tscn"], marker)
 run("legacy-map-ui", ["--scene", "res://tools/map_client_legacy_ui_test.tscn", "--", "--settings-file=res://build/map-client/checks-legacy.cfg"], "MAP_UI_PASS")
@@ -76,6 +77,9 @@ if options.gpu:
     for name, marker in [("terrain_render_test", "TERRAIN_RENDER_PASS"), ("terrain_composed_test", "TERRAIN_COMPOSED_PASS")]:
         run(name, ["--scene", f"res://tools/{name}.tscn"], marker, gpu=True)
     run("world-art-render", ["--scene", "res://tools/world_art_test.tscn"], "WORLD_ART_TEST_PASS", gpu=True)
+    run("world-art-review-render", ["--scene", "res://tools/world_art_review_test.tscn"], "WORLD_ART_REVIEW_PASS", gpu=True)
+    run("large-map-wire-render", ["--scene", "res://tools/large_map_wire_test.tscn"], "LARGE_MAP_WIRE_PASS:", gpu=True)
+    run("legacy-surface-stream-render", ["--scene", "res://tools/legacy_surface_stream_test.tscn"], "LEGACY_SURFACE_STREAM_PASS", gpu=True)
     for edge in (24, 128, 256):
         run(f"camera-render-{edge}", ["--scene", "res://tools/map_client_render_test.tscn", "--", f"--edge={edge}"], "MAP_CLIENT_RENDER_PASS", gpu=True)
 if options.profile:
