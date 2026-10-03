@@ -3,6 +3,9 @@ class_name LayeredTerrainModel
 extends RefCounted
 
 const EDGE := 16
+const MAX_SELECTION_CELLS := 4096
+const MAX_CACHED_COLUMNS := 65536
+const MAX_FRAME_SAMPLES := 65536
 const METRES_PER_LAYER := 0.5
 var width := 24
 var height := 24
@@ -20,11 +23,27 @@ var signature := ""
 ## A solid or unknown voxel terminates exposure; neither is inferred as air.
 var _exposed_bottom: Dictionary = {}
 var revision := 0
+## Source encoding is supplied by a backend adapter, never generated here.
+var source_edge := 64
+var source_chunks: Dictionary = {}
+var _source_reader := Callable()
+var _complete_sources: Dictionary = {}
+var _resolved_columns: Dictionary = {}
+var query_count := 0
+var voxel_query_count := 0
+var presentation_mode: StringName = &"detail"
+var overview_frame_provider := Callable()
 
 func reset() -> void:
 	chunks.clear()
 	surfaces.clear()
 	_exposed_bottom.clear()
+	_resolved_columns.clear()
+	source_chunks.clear()
+	_complete_sources.clear()
+	_source_reader = Callable()
+	presentation_mode = &"detail"
+	overview_frame_provider = Callable()
 	revision += 1
 	materials = {0: {"name": "air", "opaque": false}}
 	_opaque_materials = {0: false}
@@ -32,18 +51,33 @@ func reset() -> void:
 	cut = 0
 
 func capture_selection(rect: Rect2i) -> Dictionary:
+	if rect.get_area() <= 0 or rect.get_area() > MAX_SELECTION_CELLS or rect.intersection(bounds()) != rect:
+		return {}
 	var cells := {}
+	var cell_materials := {}
+	var ready := true
 	for y in range(rect.position.y, rect.end.y):
 		for x in range(rect.position.x, rect.end.x):
 			var xy := Vector2i(x, y)
-			cells[xy] = surface_at(xy)
-	return {"cells": cells, "base": uniform_base(rect)}
+			var surface: Variant = surface_at(xy)
+			if surface == null:
+				ready = false
+			cells[xy] = surface
+			cell_materials[xy] = material_at(surface) if surface != null else -1
+	return {"cells": cells, "base": uniform_base(rect), "cut": cut, "signature": signature,
+		"materials": materials.duplicate(true), "cell_materials": cell_materials, "ready": ready, "revision": revision}
 
 func selection_valid(selection: Dictionary) -> bool:
 	if selection.is_empty():
 		return false
+	if selection.get("cut", cut) != cut or selection.get("materials", materials) != materials:
+		return false
+	if not selection.get("ready", true) and selection.get("revision", -1) != revision:
+		return false
 	for xy in selection.cells:
 		if not bounds().has_point(xy) or surface_at(xy) != selection.cells[xy]:
+			return false
+		if selection.cells[xy] != null and selection.get("cell_materials", {}).get(xy, material_at(selection.cells[xy])) != material_at(selection.cells[xy]):
 			return false
 	return true
 
@@ -107,6 +141,25 @@ func sync(geometry: Variant, chunk_rows: Array, material_rows: Array) -> bool:
 	rebuild()
 	return true
 
+func set_geometry(geometry: Variant) -> void:
+	width = maxi(1, int(field(geometry, "width", 24)))
+	height = maxi(1, int(field(geometry, "height", 24)))
+	min_x = int(field(geometry, "min_x", 0))
+	min_y = int(field(geometry, "min_y", 0))
+	min_z = int(field(geometry, "min_z", -16))
+	max_z = maxi(min_z, int(field(geometry, "max_z", 15)))
+	cut = clampi(cut, min_z, max_z)
+	rebuild()
+
+func set_materials(rows: Array) -> void:
+	materials = {0: {"name": "air", "opaque": false}}
+	_opaque_materials = {0: false}
+	for row in rows:
+		var id := int(field(row, "id", 0))
+		materials[id] = row
+		_opaque_materials[id] = bool(field(row, "opaque", false))
+	rebuild()
+
 func set_cut(layer: int) -> bool:
 	var next := clampi(layer, min_z, max_z)
 	if next == cut:
@@ -119,10 +172,17 @@ func bounds() -> Rect2i:
 	return Rect2i(min_x, min_y, width, height)
 
 func material_at(cell: Vector3i) -> int:
+	voxel_query_count += 1
 	if not bounds().has_point(Vector2i(cell.x, cell.y)) or cell.z < min_z or cell.z > max_z:
 		return -1
 	var chunk := Vector3i(floori(cell.x / float(EDGE)), floori(cell.y / float(EDGE)), floori(cell.z / float(EDGE)))
 	var local := cell - chunk * EDGE
+	if not source_chunks.is_empty() or _source_reader.is_valid():
+		var source := Vector2i(floori(cell.x / float(source_edge)), floori(cell.y / float(source_edge)))
+		if not _complete_sources.get(source, false) or not source_chunks.has(source):
+			return -1
+		if not chunks.has(chunk):
+			return int(_source_reader.call(source_chunks[source].payload, cell)) if _source_reader.is_valid() else -1
 	var values: Variant = chunks.get(chunk, [])
 	var index := local.x + EDGE * (local.y + EDGE * local.z)
 	return int(values[index]) if index < values.size() else -1
@@ -132,36 +192,169 @@ func opaque(cell: Vector3i) -> bool:
 	return id >= 0 and bool(_opaque_materials.get(id, false))
 
 func surface_at(xy: Vector2i) -> Variant:
+	_resolve_column(xy)
 	return surfaces.get(xy)
 
 func rebuild() -> void:
 	surfaces.clear()
 	_exposed_bottom.clear()
+	_resolved_columns.clear()
 	revision += 1
-	for y in range(min_y, min_y + height):
-		for x in range(min_x, min_x + width):
+
+func _resolve_column(xy: Vector2i) -> void:
+	if _resolved_columns.has(xy) or not bounds().has_point(xy):
+		return
+	if surfaces.has(xy) and _exposed_bottom.has(xy):
+		_resolved_columns[xy] = true
+		return
+	if not _opaque_materials.has(material_at(Vector3i(xy.x, xy.y, cut))):
+		query_count += 1
+		return
+	if _resolved_columns.size() >= MAX_CACHED_COLUMNS:
+		surfaces.clear()
+		_exposed_bottom.clear()
+		_resolved_columns.clear()
+	query_count += 1
+	var bottom := min_z
+	var known := true
+	for z in range(cut, min_z - 1, -1):
+		var material := material_at(Vector3i(xy.x, xy.y, z))
+		if not _opaque_materials.has(material):
+			bottom = z + 1
+			known = false
+			break
+		if _opaque_materials[material]:
+			surfaces[xy] = Vector3i(xy.x, xy.y, z)
+			bottom = z + 1
+			break
+	_exposed_bottom[xy] = bottom
+	_resolved_columns[xy] = known
+
+func column_state(xy: Vector2i) -> StringName:
+	_resolve_column(xy)
+	if not _resolved_columns.get(xy, false):
+		return &"pending"
+	return &"surface" if surfaces.has(xy) else &"resolved_empty"
+
+func coverage_ready(rect: Rect2i) -> bool:
+	if rect.get_area() <= 0 or rect.get_area() > MAX_SELECTION_CELLS or rect.intersection(bounds()) != rect:
+		return false
+	if _source_reader.is_valid():
+		for y in range(floori(rect.position.y / float(source_edge)), ceili(rect.end.y / float(source_edge))):
+			for x in range(floori(rect.position.x / float(source_edge)), ceili(rect.end.x / float(source_edge))):
+				var coordinate := Vector2i(x, y)
+				if not source_chunks.has(coordinate) or not _complete_sources.get(coordinate, false):
+					return false
+		return true
+	for z in range(floori(min_z / 16.0), floori(max_z / 16.0) + 1):
+		for y in range(floori(rect.position.y / 16.0), ceili(rect.end.y / 16.0)):
+			for x in range(floori(rect.position.x / 16.0), ceili(rect.end.x / 16.0)):
+				if chunks.get(Vector3i(x, y, z), []).size() != 4096:
+					return false
+	return true
+
+func configure_sources(edge: int, reader: Callable) -> void:
+	assert(edge > 0)
+	source_edge = edge
+	_source_reader = reader
+	source_chunks.clear()
+	_complete_sources.clear()
+	rebuild()
+
+func apply_source_chunk(coordinate: Vector2i, payload: Variant, version: int) -> void:
+	source_chunks[coordinate] = {"payload": payload, "revision": version}
+	rebuild()
+
+func set_chunk_complete(coordinate: Vector2i, complete: bool) -> void:
+	_complete_sources[coordinate] = complete
+	rebuild()
+
+func apply_edit_chunk(coordinate: Vector3i, values: Variant) -> void:
+	chunks[coordinate] = values
+	rebuild()
+
+func remove_edit_chunk(coordinate: Vector3i) -> void:
+	chunks.erase(coordinate)
+	rebuild()
+
+func evict_source_chunk(coordinate: Vector2i) -> void:
+	source_chunks.erase(coordinate)
+	_complete_sources.erase(coordinate)
+	var area := Rect2i(coordinate * source_edge, Vector2i.ONE * source_edge)
+	for edit: Vector3i in chunks.keys():
+		if area.intersects(Rect2i(Vector2i(edit.x, edit.y) * EDGE, Vector2i.ONE * EDGE)):
+			chunks.erase(edit)
+	rebuild()
+
+## Renderer contract. Samples are exact physical rays; overview is a separate
+## server-authored payload and must never enter this model's picking queries.
+func frame_samples(rect: Rect2i, stride := 1, budget := MAX_FRAME_SAMPLES) -> Dictionary:
+	if presentation_mode == &"overview" and overview_frame_provider.is_valid():
+		return overview_frame_provider.call(rect, cut, budget)
+	var area := rect.intersection(bounds())
+	var step := maxi(1, stride)
+	var limit := clampi(budget, 0, MAX_FRAME_SAMPLES)
+	var samples: Array[Dictionary] = []
+	for y in range(area.position.y, area.end.y, step):
+		for x in range(area.position.x, area.end.x, step):
+			if samples.size() >= limit:
+				return {"rect": area, "stride": step, "cut": cut, "revision": revision, "mode": &"detail", "samples": samples, "truncated": true}
 			var xy := Vector2i(x, y)
-			var column_chunk := Vector3i(floori(x / float(EDGE)), floori(y / float(EDGE)), 0)
-			var column_index := posmod(x, EDGE) + EDGE * posmod(y, EDGE)
-			var chunk_z := 2147483647
-			var values: Variant = []
-			var bottom := min_z
-			for z in range(cut, min_z - 1, -1):
-				var cz := floori(z / float(EDGE))
-				if cz != chunk_z:
-					chunk_z = cz
-					column_chunk.z = cz
-					values = chunks.get(column_chunk, [])
-				var index := column_index + EDGE * EDGE * (z - cz * EDGE)
-				var material := int(values[index]) if index < values.size() else -1
-				if not _opaque_materials.has(material):
-					bottom = z + 1
-					break # unresolved ray: no inferred floor, base, or hit target
-				if _opaque_materials[material]:
-					surfaces[xy] = Vector3i(x, y, z)
-					bottom = z + 1
-					break
-			_exposed_bottom[xy] = bottom
+			var surface: Variant = surface_at(xy)
+			var state: StringName = &"surface" if surface != null else (&"resolved_empty" if _resolved_columns.get(xy, false) else &"pending")
+			var sample := {"xy": xy, "surface": surface, "state": state,
+				"material": material_at(surface) if surface != null else -1}
+			var source := Vector2i(floori(x / float(source_edge)), floori(y / float(source_edge)))
+			if source_chunks.has(source) and _complete_sources.get(source, false):
+				var index := posmod(x, source_edge) + source_edge * posmod(y, source_edge)
+				for key in ["soil_fertility", "forest_density", "moisture"]:
+					var values: Variant = field(source_chunks[source].payload, key, [])
+					if values.size() == source_edge * source_edge:
+						sample[key] = float(values[index]) / 255.0
+			samples.append(sample)
+	return {"rect": area, "stride": step, "cut": cut, "revision": revision, "mode": &"detail", "samples": samples, "truncated": false}
+
+func visible_surfaces(rect: Rect2i, stride := 1, budget := MAX_FRAME_SAMPLES) -> Dictionary:
+	return frame_samples(rect, stride, budget)
+
+## Exact art API: keys are footprint origins, not overview representative points.
+func render_frame(rect: Rect2i, budget := MAX_FRAME_SAMPLES) -> Dictionary:
+	var data := frame_samples(rect, 1, budget)
+	var stride: int = data.stride
+	var start := Vector2i((Vector2(data.rect.position) / stride).floor()) * stride
+	var finish := Vector2i((Vector2(data.rect.end) / stride).ceil()) * stride
+	var samples := {}
+	for sample: Dictionary in data.samples:
+		var xy: Vector2i = sample.xy
+		if data.mode == &"overview":
+			xy -= Vector2i.ONE * (stride / 2)
+		var surface: Variant = sample.surface
+		samples[xy] = {"known": sample.state != &"pending", "surface_z": surface.z if surface != null else min_z - 1,
+			"material": sample.material if surface != null else 0}
+	return {"region": Rect2i(start, finish - start), "stride": stride, "cut": cut,
+		"revision": data.revision, "mode": String(data.mode), "samples": samples}
+
+## Legacy renderers enumerate exposed cells. Warm only a bounded camera crop,
+## never the world's logical dimensions, and publish one cache revision.
+func warm_region(rect: Rect2i) -> void:
+	var before := query_count
+	var horizontal := {}
+	var queried := 0
+	for chunk: Vector3i in chunks:
+		var coordinate := Vector2i(chunk.x, chunk.y)
+		if horizontal.has(coordinate):
+			continue
+		horizontal[coordinate] = true
+		var area := Rect2i(coordinate * EDGE, Vector2i.ONE * EDGE).intersection(rect).intersection(bounds())
+		for y in range(area.position.y, area.end.y):
+			for x in range(area.position.x, area.end.x):
+				if queried >= MAX_FRAME_SAMPLES:
+					if query_count != before: revision += 1
+					return
+				_resolve_column(Vector2i(x, y))
+				queried += 1
+	if query_count != before:
+		revision += 1
 
 func base_at(xy: Vector2i) -> Variant:
 	var surface: Variant = surface_at(xy)
@@ -183,8 +376,11 @@ func entity_visible(row: Variant) -> bool:
 	var y := int(field(row, "y", 0))
 	var w := maxi(1, int(field(row, "width", field(row, "body_width", 1))))
 	var d := maxi(1, int(field(row, "depth", field(row, "body_depth", 1))))
+	if w * d > MAX_SELECTION_CELLS:
+		return false
 	for yy in range(y, y + d):
 		for xx in range(x, x + w):
+			_resolve_column(Vector2i(xx, yy))
 			if not bounds().has_point(Vector2i(xx, yy)):
 				return false
 			if base < int(_exposed_bottom.get(Vector2i(xx, yy), cut + 1)):
@@ -192,15 +388,20 @@ func entity_visible(row: Variant) -> bool:
 	return true
 
 func position_visible(position: Vector3, body_width := 1, body_depth := 1) -> bool:
+	if (body_width + 1) * (body_depth + 1) > MAX_SELECTION_CELLS:
+		return false
 	if position.z > cut or position.z < min_z or body_width < 1 or body_depth < 1:
 		return false
 	for y in range(floori(position.y), ceili(position.y + body_depth)):
 		for x in range(floori(position.x), ceili(position.x + body_width)):
+			_resolve_column(Vector2i(x, y))
 			if not bounds().has_point(Vector2i(x, y)) or floori(position.z) < int(_exposed_bottom.get(Vector2i(x, y), cut + 1)):
 				return false
 	return true
 
 func uniform_base(rect: Rect2i) -> Variant:
+	if rect.get_area() <= 0 or rect.get_area() > MAX_SELECTION_CELLS:
+		return null
 	var base: Variant = base_at(rect.position)
 	if base == null:
 		return null
@@ -211,11 +412,15 @@ func uniform_base(rect: Rect2i) -> Variant:
 	return base
 
 func excavation_payload(rect: Rect2i, bottom: int, extent: int, priority := 2) -> Array:
+	if rect.get_area() <= 0 or rect.get_area() > MAX_SELECTION_CELLS or rect.intersection(bounds()) != rect:
+		return []
 	if extent < 1 or bottom < min_z or bottom + extent - 1 > max_z:
 		return []
 	return [rect.position.x, rect.position.y, rect.end.x - 1, rect.end.y - 1, bottom, extent, priority]
 
 func placement_clear(rect: Rect2i, base: int, clearance: int) -> bool:
+	if rect.get_area() <= 0 or rect.get_area() > MAX_SELECTION_CELLS:
+		return false
 	if clearance < 1 or base < min_z or base + clearance - 1 > max_z:
 		return false
 	for y in range(rect.position.y, rect.end.y):

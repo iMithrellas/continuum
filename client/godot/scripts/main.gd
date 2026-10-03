@@ -89,6 +89,8 @@ var _meal_request_seconds := 0.0
 var _state_ready := false
 
 var _subscription: SpacetimeDBSubscription
+var _large_world: LargeWorldSession
+var _world_overlay: WorldLoadingOverlay
 var _resume_context: Dictionary = {}
 var _selected_tile_id: int = -1
 var _selected_rect := Rect2i()
@@ -309,6 +311,21 @@ func _ready() -> void:
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
 	_setup_native_controller()
+	_large_world = LargeWorldSession.new()
+	_large_world.attach(map)
+	_large_world.ready.connect(func() -> void:
+		if _subscription != null and _session_requested and _large_world.client == SpacetimeDB.Continuum and _large_world.epoch == _session_generation:
+			_finish_subscription_ready(_subscription, _session_generation))
+	_large_world.failed.connect(func(message: String) -> void:
+		_state_ready = false
+		_set_connection_text(message, ThemeTokens.color("critical")))
+	_large_world.loading.changed.connect(func() -> void:
+		if _large_world.client != null and not _large_world.loading.playable:
+			_state_ready = false
+		map.set_process_input(_large_world.client == null or _large_world.loading.playable))
+	_large_world.loading.cancel_requested.connect(leave_session)
+	_world_overlay = WorldLoadingOverlay.new()
+	_world_overlay.attach(self, _large_world.loading)
 
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_bind_client(client)
@@ -754,6 +771,8 @@ func _create_access(client: ContinuumModuleClient) -> ContinuumAccess:
 
 
 func _process(delta: float) -> void:
+	if _large_world != null:
+		_large_world.tick(delta)
 	if _exit_requested:
 		if _native_controller == null or _native_controller.finish_shutdown():
 			get_tree().quit()
@@ -842,16 +861,35 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	for table: String in ["building", "building_thermal_property"]:
 		if LayeredTerrainModel.field(SpacetimeDB.Continuum.db, table) != null:
 			queries.append("SELECT * FROM " + table)
-	_subscription = SpacetimeDB.Continuum.subscribe(queries)
+	_subscription = SpacetimeDB.Continuum.subscribe(LargeWorldSession.bootstrap_queries(SpacetimeDB.Continuum.db, queries))
 	if _subscription.error != OK:
 		_set_connection_text("Subscription failed · %d" % _subscription.error, ThemeTokens.color("critical"))
 		if not _direct_launch:
 			_fail_manual_session("Subscription failed (%d)." % _subscription.error)
 		return
 	_subscription.applied.connect(_on_subscription_applied.bind(_subscription, _session_generation))
+	_subscription.end.connect(_on_bootstrap_ended.bind(_subscription, _session_generation))
+	get_tree().create_timer(15.0).timeout.connect(_on_bootstrap_timeout.bind(_subscription, _session_generation))
+
+func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int) -> void:
+	if _subscription != subscription or not _session_epoch_current(generation):
+		return
+	_state_ready = false
+	_set_connection_text("World subscription ended; reconnect required.", ThemeTokens.color("critical"))
+	if _large_world != null:
+		_large_world.loading.fail("World subscription ended; reconnect required.")
+	_menu.set_busy(false)
+	_menu.set_status("World subscription failed or ended. You can retry.", true)
+	_server_management.set_busy(false)
+
+func _on_bootstrap_timeout(subscription: SpacetimeDBSubscription, generation: int) -> void:
+	if _subscription == subscription and _session_epoch_current(generation) and is_instance_valid(subscription) and not subscription.active:
+		_on_bootstrap_ended(subscription, generation)
 
 
 func _release_main_subscription() -> void:
+	if _large_world != null:
+		_large_world.stop()
 	_resume_context.clear()
 	if _subscription == null:
 		return
@@ -861,6 +899,18 @@ func _release_main_subscription() -> void:
 
 
 func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation: int) -> void:
+	if _subscription != subscription or not _session_epoch_current(generation):
+		return
+	if _large_world != null and _large_world.start(SpacetimeDB.Continuum, generation):
+		visible = true
+		_menu.set_busy(false)
+		_menu.visible = false
+		_server_management.set_busy(false)
+		_server_management.visible = false
+		return
+	_finish_subscription_ready(subscription, generation)
+
+func _finish_subscription_ready(subscription: SpacetimeDBSubscription, generation: int) -> void:
 	if _subscription != subscription or not _session_epoch_current(generation):
 		return
 	_state_ready = true
@@ -1055,6 +1105,8 @@ func _process_diagnostics() -> void:
 
 
 func _on_table_changed(table_name: String) -> void:
+	if _large_world != null and table_name in ["world_generation", "terrain_column_chunk", "terrain_overview_chunk", "terrain_chunk", "terrain_material", "world_geometry"]:
+		_large_world.mark_changed(table_name)
 	_dirty = true
 	_ui_tables_changed[table_name] = true
 	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config",
@@ -1252,6 +1304,9 @@ func _set_mode(mode: StringName) -> void:
 
 
 func _dispatch_vertical(reducer: String, payload: Array, description: String) -> void:
+	if map.terrain_model.presentation_mode == &"overview":
+		_set_feedback(_intent_feedback, "Zoom into terrain", "Overview samples are not physical editing targets.")
+		return
 	if not _planning_allowed():
 		_set_feedback(_intent_feedback, "Request blocked", "Operator permission, ready subscription, and no pending request are required.")
 		return
@@ -1269,6 +1324,9 @@ func _on_excavation_requested(rect: Rect2i, bottom: int, height: int) -> void:
 	if _planning_system != &"excavate" or not _planning_allowed(): return
 	if not map.layered:
 		_set_feedback(_intent_feedback, "Terrain unavailable", "Excavation needs authoritative voxel terrain.")
+		return
+	if not map.terrain_model.coverage_ready(rect):
+		_set_feedback(_intent_feedback, "Terrain pending", "Waiting for authoritative terrain and edit snapshots.")
 		return
 	var payload := map.terrain_model.excavation_payload(rect, bottom, height)
 	if payload.is_empty():

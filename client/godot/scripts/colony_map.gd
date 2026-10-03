@@ -18,6 +18,9 @@ signal tool_cancelled
 var planning_preview: Callable
 
 var terrain_model := LayeredTerrainModel.new()
+## Physical subscription/model ownership is external in compact mode.
+var streamed_terrain := false
+var _stream_camera_focus: Variant = null
 var terrain_view := LayeredTerrainView.new()
 var layered := false
 var excavation_height := 6
@@ -125,6 +128,8 @@ func _ready() -> void:
 
 
 func _on_map_resized() -> void:
+	if _stream_camera_focus != null and _fit_cell_size() > 0:
+		prepare_stream_camera(_stream_camera_focus)
 	cancel_gestures()
 	_layout_terrain()
 	if layered and has_world_snapshot():
@@ -133,6 +138,8 @@ func _on_map_resized() -> void:
 
 func _layout_terrain() -> void:
 	has_world_snapshot()
+	if layered and not streamed_terrain:
+		terrain_model.warm_region(visible_grid_rect())
 	terrain_view.layout(_origin(), Vector2(_grid) * _cell_size())
 	if _hover_cell != null:
 		_hover_cell = _cell_at(_hover_point)
@@ -197,6 +204,26 @@ func reset_camera() -> void:
 	if _fit_cell_size() > 0:
 		zoom_at(ThemeTokens.number("tile") / _fit_cell_size(), size * 0.5)
 
+func prepare_stream_camera(focus: Vector2i) -> void:
+	_grid = Vector2i(terrain_model.width, terrain_model.height)
+	layered = true
+	_has_state = true
+	if _fit_cell_size() <= 0:
+		_stream_camera_focus = focus
+		return
+	_stream_camera_focus = null
+	_zoom = ThemeTokens.number("tile") / maxf(_fit_cell_size(), 0.0001)
+	_pan = (Vector2(grid_bounds().get_center()) - Vector2(focus)) * _cell_size()
+	_layout_terrain()
+
+func focus_detail_at(point: Vector2) -> void:
+	var world := screen_to_world(point)
+	cancel_gestures()
+	_zoom = ThemeTokens.number("tile") / maxf(_fit_cell_size(), 0.0001)
+	_pan = (Vector2(grid_bounds().get_center()) - world) * _cell_size()
+	terrain_model.presentation_mode = &"detail"
+	_layout_terrain()
+
 
 func pan_by(offset: Vector2) -> void:
 	if not has_world_snapshot():
@@ -242,7 +269,9 @@ func set_cut(layer: int) -> void:
 	_selection_rect = Rect2i()
 	_frozen_selection = {}
 	if layered:
-		terrain_view.rebuild(terrain_model)
+		if not streamed_terrain:
+			terrain_model.warm_region(visible_grid_rect())
+			terrain_view.rebuild(terrain_model)
 		_invalidate_terrain_entities()
 		terrain_view.update_entities(entity_descriptors())
 	_sync_regions()
@@ -260,6 +289,7 @@ func row_visible(row: Variant) -> bool:
 
 
 func reset_world() -> void:
+	_stream_camera_focus = null
 	_source_db = null
 	terrain_model.reset()
 	terrain_view.reset()
@@ -525,11 +555,13 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 		selected_colonist_id = -1
 		_visual_feet.clear()
 		_visual_motion.clear()
-		terrain_model.reset()
+		if not streamed_terrain:
+			terrain_model.reset()
 		clear_selection()
 		cancel_gestures()
-		_zoom = 1.0
-		_pan = Vector2.ZERO
+		if not streamed_terrain:
+			_zoom = 1.0
+			_pan = Vector2.ZERO
 		full = true
 	if full or changed_tables.has("tile"):
 		_cache_tiles()
@@ -560,14 +592,15 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 	layered = not geometry_rows.is_empty()
 	if layered:
 		var changed := false
-		if full or changed_tables.has("world_geometry") or changed_tables.has("terrain_chunk") or changed_tables.has("terrain_material"):
+		if not streamed_terrain and (full or changed_tables.has("world_geometry") or changed_tables.has("terrain_chunk") or changed_tables.has("terrain_material")):
 			changed = terrain_model.sync(geometry_rows[0], table_rows(SpacetimeDB.Continuum.db, "terrain_chunk"),
 				table_rows(SpacetimeDB.Continuum.db, "terrain_material"))
 		_grid = Vector2i(terrain_model.width, terrain_model.height)
 		_has_state = true
 		_layout_terrain()
 		if changed:
-			terrain_view.rebuild(terrain_model)
+			if not streamed_terrain:
+				terrain_view.rebuild(terrain_model)
 			if not _frozen_selection.is_empty() and not terrain_model.selection_valid(_frozen_selection):
 				clear_selection()
 		if full or changed or changed_tables.has("tile") or changed_tables.has("item_stack"):
@@ -1222,6 +1255,10 @@ func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed \
 			and event.button_index == MOUSE_BUTTON_LEFT:
 		var point := (event as InputEventMouseButton).position
+		if terrain_model.presentation_mode == &"overview":
+			focus_detail_at(point)
+			accept_event()
+			return
 		var grid_pos: Variant = _cell_at(point)
 		if grid_pos == null:
 			clear_selection()
