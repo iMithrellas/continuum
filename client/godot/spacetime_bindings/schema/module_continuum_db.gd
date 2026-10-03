@@ -2,41 +2,41 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumModuleDb extends RefCounted
 
-const table_names : Array[String] = ["colony", "excavation_designation", "speed_control", "world_geometry", "production_policy", "terrain", "terrain_material", "event_log", "item_stack", "colonist", "terrain_chunk", "tile", "work_order", "config", "alert", "world_seed", "my_role"]
+const table_names : Array[String] = ["excavation_designation", "production_policy", "alert", "colonist", "terrain_material", "event_log", "colony", "speed_control", "terrain", "terrain_chunk", "tile", "world_geometry", "world_seed", "item_stack", "work_order", "config", "my_role"]
 
-var colony: ContinuumColonyTable
 var excavation_designation: ContinuumExcavationDesignationTable
-var speed_control: ContinuumSpeedControlTable
-var world_geometry: ContinuumWorldGeometryTable
 var production_policy: ContinuumProductionPolicyTable
-var terrain: ContinuumTerrainTable
+var alert: ContinuumAlertTable
+var colonist: ContinuumColonistTable
 var terrain_material: ContinuumTerrainMaterialTable
 var event_log: ContinuumEventLogTable
-var item_stack: ContinuumItemStackTable
-var colonist: ContinuumColonistTable
+var colony: ContinuumColonyTable
+var speed_control: ContinuumSpeedControlTable
+var terrain: ContinuumTerrainTable
 var terrain_chunk: ContinuumTerrainChunkTable
 var tile: ContinuumTileTable
+var world_geometry: ContinuumWorldGeometryTable
+var world_seed: ContinuumWorldSeedTable
+var item_stack: ContinuumItemStackTable
 var work_order: ContinuumWorkOrderTable
 var config: ContinuumConfigTable
-var alert: ContinuumAlertTable
-var world_seed: ContinuumWorldSeedTable
 var my_role: ContinuumMyRoleTable
 
 func _init(p_local_db: LocalDatabase) -> void:
-	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
 	excavation_designation = preload('res://spacetime_bindings/schema/tables/continuum_excavation_designation_table.gd').create(p_local_db)
-	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
-	world_geometry = preload('res://spacetime_bindings/schema/tables/continuum_world_geometry_table.gd').create(p_local_db)
 	production_policy = preload('res://spacetime_bindings/schema/tables/continuum_production_policy_table.gd').create(p_local_db)
-	terrain = preload('res://spacetime_bindings/schema/tables/continuum_terrain_table.gd').create(p_local_db)
+	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
+	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
 	terrain_material = preload('res://spacetime_bindings/schema/tables/continuum_terrain_material_table.gd').create(p_local_db)
 	event_log = preload('res://spacetime_bindings/schema/tables/continuum_event_log_table.gd').create(p_local_db)
-	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
-	colonist = preload('res://spacetime_bindings/schema/tables/continuum_colonist_table.gd').create(p_local_db)
+	colony = preload('res://spacetime_bindings/schema/tables/continuum_colony_table.gd').create(p_local_db)
+	speed_control = preload('res://spacetime_bindings/schema/tables/continuum_speed_control_table.gd').create(p_local_db)
+	terrain = preload('res://spacetime_bindings/schema/tables/continuum_terrain_table.gd').create(p_local_db)
 	terrain_chunk = preload('res://spacetime_bindings/schema/tables/continuum_terrain_chunk_table.gd').create(p_local_db)
 	tile = preload('res://spacetime_bindings/schema/tables/continuum_tile_table.gd').create(p_local_db)
+	world_geometry = preload('res://spacetime_bindings/schema/tables/continuum_world_geometry_table.gd').create(p_local_db)
+	world_seed = preload('res://spacetime_bindings/schema/tables/continuum_world_seed_table.gd').create(p_local_db)
+	item_stack = preload('res://spacetime_bindings/schema/tables/continuum_item_stack_table.gd').create(p_local_db)
 	work_order = preload('res://spacetime_bindings/schema/tables/continuum_work_order_table.gd').create(p_local_db)
 	config = preload('res://spacetime_bindings/schema/tables/continuum_config_table.gd').create(p_local_db)
-	alert = preload('res://spacetime_bindings/schema/tables/continuum_alert_table.gd').create(p_local_db)
-	world_seed = preload('res://spacetime_bindings/schema/tables/continuum_world_seed_table.gd').create(p_local_db)
 	my_role = preload('res://spacetime_bindings/schema/tables/continuum_my_role_table.gd').create(p_local_db)

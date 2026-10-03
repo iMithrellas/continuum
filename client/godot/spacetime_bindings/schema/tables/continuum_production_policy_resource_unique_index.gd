@@ -2,7 +2,7 @@
 # FILE WILL NOT BE SAVED. MODIFY TABLES IN YOUR MODULE SOURCE CODE INSTEAD.
 class_name ContinuumProductionPolicyResourceUniqueIndex extends _ModuleTableUniqueIndex
 
-var _cache: Dictionary[ContinuumResourceKind, ContinuumProductionPolicy] = {}
+var _cache: Dictionary[PackedByteArray, ContinuumProductionPolicy] = {}
 
 func _init() -> void:
 	set_meta("table_name", "production_policy")
@@ -14,4 +14,6 @@ static func create(p_local_db: LocalDatabase) -> ContinuumProductionPolicyResour
 	return index
 
 func find(col_val: ContinuumResourceKind) -> ContinuumProductionPolicy:
-	return _cache.get(col_val, null)
+	var key: Variant = _key(col_val)
+	if key == null: return null
+	return _cache.get(key, null)

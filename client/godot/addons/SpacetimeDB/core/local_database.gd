@@ -134,6 +134,7 @@ func apply_database_update(db_update: DatabaseUpdateData):
 
 func emit_db_callbacks(changes:Array[Dictionary]):
 	for change in changes:
+		if change.has("invalid_key_only"): continue
 		var table_name = change.get("table_name", ["__null__"])[0]
 		if table_name == "__null__":
 			continue
@@ -212,11 +213,14 @@ func apply_table_update(table_update: TableUpdateData) -> Dictionary[String,Arra
 	var inserts_to_emit: Array
 	var updates_to_emit: Array
 	var deletes_to_emit: Array
+	var rejected_key := false
+	var accepted_key := false
 	for inserted_row: _ModuleTableType in table_update.inserts:
-		var pk_value = inserted_row.get(pk_field)
+		var pk_value = column_key(table_name_original, pk_field, inserted_row.get(pk_field))
 		if pk_value == null:
-			push_error("LocalDatabase: Inserted row for table '", table_name_original, "' has null PK value for field '", pk_field, "'. Skipping.")
+			rejected_key = true
 			continue
+		accepted_key = true
 		inserted_pks_set[pk_value] = true
 		var prev_row_resource: _ModuleTableType = table_dict.get(pk_value, null)
 		table_dict[pk_value] = inserted_row
@@ -228,10 +232,11 @@ func apply_table_update(table_update: TableUpdateData) -> Dictionary[String,Arra
 				inserts_to_emit.append([inserted_row])
 
 	for deleted_row: _ModuleTableType in table_update.deletes:
-		var pk_value = deleted_row.get(pk_field)
+		var pk_value = column_key(table_name_original, pk_field, deleted_row.get(pk_field))
 		if pk_value == null:
-			push_warning("LocalDatabase: Deleted row for table '", table_name_original, "' has null PK value for field '", pk_field, "'. Skipping.")
+			rejected_key = true
 			continue
+		accepted_key = true
 		if not inserted_pks_set.has(pk_value):
 			if table_dict.erase(pk_value):
 				if _delete_listeners_by_table.has(table_name_original):
@@ -241,6 +246,7 @@ func apply_table_update(table_update: TableUpdateData) -> Dictionary[String,Arra
 				"inserts": inserts_to_emit,
 				"updates": updates_to_emit,
 				"deletes": deletes_to_emit}
+	if rejected_key and not accepted_key: changes["invalid_key_only"] = [true]
 	return changes
 
 func clear_local_db():
@@ -269,10 +275,52 @@ func clear_role_view() -> void:
 		emit_db_callbacks([{"table_name": ["my_role"], "inserts": [], "updates": [], "deletes": deletes}])
 
 # --- Access Methods ---
+## Only schema-registered, entirely unit-valued enums are supported as value keys.
+## Null is the invalid-key sentinel. Payload enums never enter the generic encoder.
+## Primitive keys keep their original representation and lookup semantics.
+func stable_key(value: Variant) -> Variant:
+	if value is RustEnum:
+		var script: GDScript = value.get_script()
+		var constants := script.get_script_constant_map()
+		var type_name: Variant = constants.get("bsatn_enum_type")
+		if not type_name is StringName or _schema.get_type_script(type_name) != script:
+			return null
+		var options: Variant = constants.get("enum_options")
+		var tags: Variant = constants.get("Options")
+		if not options is Array or not tags is Dictionary or options.is_empty() \
+			or options.size() > 256 or tags.size() != options.size():
+			return null
+		for candidate: Variant in tags.values():
+			if not candidate is int: return null
+		for tag: int in range(options.size()):
+			if not options[tag] is StringName or options[tag] != &"" or not tags.values().has(tag):
+				return null
+		if value.value < 0 or value.value >= options.size() or value.data != null:
+			return null
+		return PackedByteArray([value.value])
+	if value is Object:
+		return null
+	return value
+
+
+## Column validation prevents a different enum type from aliasing a valid unit tag.
+func column_key(table_name: StringName, field_name: StringName, value: Variant) -> Variant:
+	var table_type := _schema.get_type_script(_schema.get_type_of_table_name(table_name))
+	if table_type == null: return null
+	var types: Dictionary = table_type.get_script_constant_map().get("BSATN_TYPES", {})
+	var field_type := _schema.get_type_script(types.get(field_name, &""))
+	if field_type != null and field_type.get_script_constant_map().has("enum_options"):
+		if not value is RustEnum or value.get_script() != field_type: return null
+	elif value is RustEnum:
+		return null
+	return stable_key(value)
+
+
 func get_row_by_pk(table_name: String, primary_key_value) -> _ModuleTableType:
 	var table_name_lower: String = table_name
 	if _tables.has(table_name_lower):
-		return _tables[table_name_lower].get(primary_key_value)
+		var key: Variant = column_key(table_name_lower, _get_primary_key_field(table_name_lower), primary_key_value)
+		if key != null: return _tables[table_name_lower].get(key)
 	return null
 
 func get_all_rows(table_name: String) -> Array[_ModuleTableType]:
