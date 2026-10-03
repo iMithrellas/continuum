@@ -17,8 +17,15 @@ existing server.
    local persistent colony. To join an existing server instead, choose **Join**
    and enter its host and database (the default database is `continuum`).
 
-Local server data persists after the client closes. Starting or joining a
-server does not reset its colony.
+Local server data persists after the client closes. Fresh worlds target
+2048 × 2048 cells with the starter colony near the centre. The server prepares
+the full world before play; the client shows its current generation phase and
+progress. Disconnecting leaves the client session but does not cancel
+server-side generation. Once the new world is ready, ordinary restarts preserve
+it and do not regenerate it. This development release may replace an older
+colony with a fresh world; backward compatibility with old saves is not
+promised. Larger production worlds remain a future direction; performance at
+those scales is not established.
 
 ## Roles
 
@@ -70,6 +77,11 @@ then export with Godot using the Linux or Windows preset in
 
 For a first run through the current connected gameplay loop, see
 [Playing the slice](docs/playing-the-slice.md).
+For the player workflow around rooms, Zones, world preparation, and map zoom,
+see [World, rooms, and work areas](docs/world-and-construction.md). The
+[large-map client guide](docs/large-map-client.md) describes the map's overview
+and detail behavior. For the corresponding implementation references, see
+[building properties](docs/building-properties.md) and [world art](docs/world-art.md).
 
 See [docs/simulation-architecture.md](docs/simulation-architecture.md) for the
 simulation overview, [docs/API.md](docs/API.md) for reducers and authorization,

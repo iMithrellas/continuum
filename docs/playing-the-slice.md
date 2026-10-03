@@ -15,16 +15,23 @@ the shared simulation for everyone, not just the local client's animation.
   across reconnects. Restoring `true` restores Operator, not Admin.
 - **Viewer:** can read replicated colony state, select colonists, inspect the map,
   see destination markers/work badges, and use reversible Overview guidance.
-- **Operator:** has viewer access plus the `Operations` and `Policies` panels and
+- **Operator:** has viewer access plus the `Zones`, `Construction`, and `Policies` panels and
   may change facilities, work orders, hauling/meal policy, production targets,
-  excavation intent, and acknowledge alerts.
+  excavation intent, construction and Zones, and acknowledge alerts.
 - **Admin:** inherits operator permissions and additionally controls simulation
   speed, reset, world expansion, and membership. Local Developer/Admin profiles
   are not server roles; server authorization is decisive.
 
-Open **Panels** in the upper-right, beside **Menu**, to show `Overview`/`Operations`,
-`People`, `Policies`, `Inspector`, or `Trends`. `Ctrl+P` opens the panel chooser;
-its view presets arrange panels and do not change permissions. The floating
+Open **Panels** in the upper-right, beside **Menu**, to show `Overview`, `Zones`,
+`Construction`, `People`, `Policies`, `Inspector`, or `Trends`. F4 opens Zones;
+F11 opens Construction. Existing F1–F10 panel shortcuts are unchanged. Panels
+can be moved by dragging an unpinned header, pinned to lock position and size,
+and collapsed to their headers; restoring a panel keeps it within the window.
+The panel chooser's view presets arrange panels and do not change permissions.
+Saved panel layouts keep their choices and placements; Construction starts
+closed in layouts that do not yet contain it. Restored panels stay within the
+visible window.
+The floating
 `Inspector` examines the map's physical terrain, including beyond the starter
 legacy Tile area: material and elevation may be available there, while ecology
 can be unavailable (shown as unavailable, not guessed). Map tools select, build,
@@ -32,10 +39,34 @@ excavate, and configure facilities/orders. Overview suggestions are reversible
 navigation and inspection guidance; they issue no reducers and are not a safety
 system or promise of recovery.
 
+At distant zoom, some map labels are hidden. Click an area in the overview, then
+zoom in to inspect or edit detail. See the [large-map client guide](large-map-client.md)
+for more on overview and detail map behavior.
+
+For the room and zone workflow, see [World, rooms, and work areas](world-and-construction.md).
+Room envelopes cost 5 wood per cell and record thermal resistance of 2 m²K/W;
+zone usage is free and remains separate from productive work orders. Room and
+zone creation can happen in either order. Clearing a zone does not demolish a
+room; demolishing a room does not clear its zone or refund wood. Rooms are a
+traversable property abstraction, not voxel walls or active temperature or food
+spoilage simulation.
+
+Fresh worlds target 2048 × 2048 cells with the starter colony near the centre.
+The server prepares the whole world before play and reports its current
+generation phase and completed/total work. Exploring does not generate another
+area. Map labels are reduced at distant zoom; click an area in the overview,
+then zoom in for detail. Disconnecting cancels only the client session, not
+server-side generation. Once a new world is ready, ordinary server restarts
+preserve it and do not regenerate it. This development release may replace an
+older colony with a fresh world; backward compatibility or migration of old
+saves is not promised. Reset is a separate explicit destructive action. Larger
+production worlds remain a future direction and their performance is not
+established.
+
 | Task | Required server role | Where |
 | --- | --- | --- |
 | Inspect public state, select actors, use Overview suggestions | Viewer or higher | Map, `Overview`, `People`, `Inspector`, `Trends` |
-| Build/enable facilities, edit work orders, designate/pause excavation | Operator or Admin | Map tools and `Operations` |
+| Build/enable facilities, edit work orders, designate/pause excavation | Operator or Admin | Map tools, `Zones`, and `Construction` |
 | Set/remove production targets | Operator or Admin | `Overview` → expand `Stabilization` → `Production targets` |
 | Change meal/haul policies | Operator or Admin | `Policies` |
 | Change time scale, reset/expand world, manage members | Admin only | F9 admin panel / server administration controls |
@@ -117,10 +148,9 @@ multiplayer testing. [Integration evidence](gameplay-slice-verification.md#integ
 records the separate live Godot smoke check. `just profile-population` measures native simulation only;
 it is not a server capacity or supported-population claim.
 
-Deploy matching backend and client/generated bindings together. The new
-`production_policy` table is additive and preserves old saves with no targets;
-normal publish with regenerated bindings is the intended schema migration. Do
-not publish the backend against an incompatible client build, recommend fresh
-publishes to erase state, or use destructive reset as a routine upgrade. Managed
-installed-module automatic upgrade/backup flow is not implemented: changed
-installed module digests currently require explicit future upgrade handling.
+Deploy matching backend and client/generated bindings together. This development
+release does not promise migration or backward compatibility for old colony
+saves; a fresh colony may replace one when changing to this release. This is
+separate from normal restarts of the new world, which preserve it. Existing
+native installations may require their documented explicit module-upgrade flow;
+do not assume that restarting the server migrates an old save.
