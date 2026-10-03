@@ -37,6 +37,8 @@ PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
 HOST="http://127.0.0.1:$PORT"
 docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
 docker exec "$CONTAINER" spacetime publish --yes --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
+python3 "$ROOT/scripts/internal/world_ready.py" -- \
+    docker exec "$CONTAINER" spacetime sql --format json --server http://127.0.0.1:3000 "$DB"
 
 printf '%s\n' '#!/usr/bin/env bash' 'shift 3 # call --server HOST; use the private container endpoint below' "exec docker exec \"$CONTAINER\" spacetime call --server http://127.0.0.1:3000 \"\$@\"" >"$PUBLISHER_WRAPPER"
 chmod +x "$PUBLISHER_WRAPPER"

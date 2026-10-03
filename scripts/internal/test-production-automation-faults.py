@@ -24,6 +24,19 @@ spec.loader.exec_module(gate)
 
 
 class GateFaults(unittest.TestCase):
+    def test_world_readiness_adapter_bounds_sql_and_propagates_failure(self):
+        def wait(sql, **_kwargs):
+            sql("SELECT table_name FROM st_table", 0.75)
+            raise gate.WorldReadyError("world generation Failed")
+
+        with patch.object(gate, "wait_world_ready", side_effect=wait), \
+                patch.object(gate, "command", return_value="[]") as command:
+            with self.assertRaisesRegex(gate.GateFailure, "world generation Failed"):
+                gate.wait_ready()
+        self.assertEqual(command.call_args.kwargs["timeout"], 0.75)
+        self.assertEqual(command.call_args.args[0][:4], ["docker", "exec", gate.NAME, "spacetime"])
+        self.assertEqual(command.call_args.args[0][-1], "SELECT table_name FROM st_table")
+
     def test_timeout_is_bounded_secret_free_and_process_is_reaped(self):
         with tempfile.TemporaryDirectory(dir="/tmp/opencode") as tmp:
             pidfile = pathlib.Path(tmp) / "pid"
@@ -100,6 +113,7 @@ class GateFaults(unittest.TestCase):
                 child_code = f"import os,time,pathlib; pathlib.Path({str(pidfile)!r}).write_text(str(os.getpid())); time.sleep(60)"
                 harness = f"""import importlib.util,pathlib,sys
 sys.dont_write_bytecode=True
+sys.path.insert(0, {str(SCRIPT.parent)!r})
 s=importlib.util.spec_from_file_location('gate', {str(SCRIPT)!r})
 g=importlib.util.module_from_spec(s); s.loader.exec_module(g)
 g.run_gate=lambda: g.command([sys.executable, '-c', {child_code!r}, 'SECRET'])

@@ -50,6 +50,9 @@ echo "==> publishing disposable database $DB on port $PORT"
 docker exec "$CONTAINER" spacetime publish --yes --anonymous \
     --server http://127.0.0.1:3000 \
     -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB" >/dev/null
+ORIGIN="$(python3 "$ROOT/scripts/internal/world_ready.py" --starter-origin -- \
+    docker exec "$CONTAINER" spacetime sql --format json --server http://127.0.0.1:3000 "$DB")"
+read -r STARTER_X STARTER_Y <<< "$ORIGIN"
 
 echo "==> importing Godot project and registering script classes"
 godot --headless --path "$ROOT/client/godot" --editor --quit
@@ -58,7 +61,8 @@ godot --headless --path "$ROOT/client/godot" --script res://tools/subscription_l
 echo "==> running scene-backed UI gate"
 if ! timeout 90s godot --headless --path "$ROOT/client/godot" \
     --scene res://tools/map_ui_test.tscn \
-    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB" >"$LOG" 2>&1; then
+    -- --stdb-host="http://127.0.0.1:$PORT" --stdb-db="$DB" \
+    --starter-x="$STARTER_X" --starter-y="$STARTER_Y" >"$LOG" 2>&1; then
     cat "$LOG"
     exit 1
 fi

@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from world_ready import WorldReadyError, wait_world_ready
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NAME = "continuum-production-it-" + uuid.uuid4().hex[:12]
@@ -118,6 +119,18 @@ def rows(table):
                   key=lambda row: json.dumps(row, sort_keys=True))
 
 
+def wait_ready():
+    try:
+        wait_world_ready(
+            lambda statement, budget: command([
+                "docker", "exec", NAME, "spacetime", "--root-dir", "/tmp/production-cli",
+                "sql", "--format", "json", "-s", "http://127.0.0.1:3000", DB, statement],
+                timeout=min(COMMAND_TIMEOUT, budget)),
+            report=lambda message: print("WORLD_READY: " + message, flush=True))
+    except WorldReadyError as error:
+        raise GateFailure(str(error)) from None
+
+
 def request(path, data=None, token=None, timeout=30):
     headers = {"Content-Type": "application/json"}
     if token:
@@ -175,6 +188,7 @@ def run_gate():
         raise GateFailure("private server readiness deadline exceeded")
     cli("publish", "--yes", "-s", "http://127.0.0.1:3000", "-b",
         "/baseline.wasm" if baseline else "/module/continuum_module.wasm", DB)
+    wait_ready()
     call("set_time_scale", 0)
     if baseline:
         old_operator = json.loads(request("/v1/identity", b""))
@@ -182,6 +196,7 @@ def run_gate():
         legacy = {name: rows(name) for name in ("membership", "config", "colony", "work_order", "tile", "colonist", "item_stack")}
         cli("publish", "--yes", "--delete-data=never", "-s", "http://127.0.0.1:3000",
             "-b", "/module/continuum_module.wasm", DB)
+        wait_ready()
         assert legacy == {name: rows(name) for name in legacy}, "additive migration changed existing save"
     assert rows("production_policy") == []
     # SQL encodes Identity as its one-field hex product; audit uses bare hex.
@@ -234,6 +249,7 @@ def run_gate():
     assert rows("config") == clock
     cli("publish", "--yes", "--delete-data=never", "-s", "http://127.0.0.1:3000",
         "-b", "/module/continuum_module.wasm", DB)
+    wait_ready()
     assert rows("production_policy") == saved
     call("set_time_scale", 1)
     for attempt in range(100):
@@ -267,9 +283,11 @@ def run_gate():
     memberships = rows("membership")
     cli("publish", "--yes", "--delete-data=never", "-s", "http://127.0.0.1:3000",
         "-b", "/module/continuum_module.wasm", DB)
+    wait_ready()
     assert rows("membership") == memberships
     user_call(token, "remove_production_policy", {"meat": []}, expected_error=AUTH_ERROR)
     call("reset_colony")
+    wait_ready()
     assert rows("production_policy") == []
     return bool(baseline)
 

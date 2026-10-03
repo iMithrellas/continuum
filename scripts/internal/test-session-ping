@@ -65,6 +65,8 @@ docker exec "$CONTAINER" spacetime server set-default local
 # Standalone servers issue local identities during publish; the hosted CLI-login
 # endpoint does not exist on this server and must not be used as an auth host.
 timeout 30 docker exec "$CONTAINER" spacetime publish --server http://127.0.0.1:3000 --yes -b /module.wasm "$DB" </dev/null
+python3 "$ROOT/scripts/internal/world_ready.py" -- \
+    docker exec "$CONTAINER" spacetime sql --format json --server http://127.0.0.1:3000 "$DB"
 docker exec "$CONTAINER" spacetime call --server http://127.0.0.1:3000 "$DB" set_time_scale 0 >/dev/null
 
 mkdir -p "$TMP/tokens"

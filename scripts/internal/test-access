@@ -33,6 +33,8 @@ PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
 HOST="http://127.0.0.1:$PORT"
 docker exec "$CONTAINER" spacetime login --no-browser --auth-host http://127.0.0.1:3000 </dev/null >/dev/null 2>&1 || true
 docker exec "$CONTAINER" spacetime publish --yes --delete-data=always --server http://127.0.0.1:3000 -b /project/target/wasm32-unknown-unknown/release/continuum_module.wasm "$DB"
+python3 "$ROOT/scripts/internal/world_ready.py" -- \
+    docker exec "$CONTAINER" spacetime sql --format json --server http://127.0.0.1:3000 "$DB"
 probe() { godot --headless --path "$ROOT/client/godot" --script res://tools/access_probe.gd -- --stdb-host="$HOST" --stdb-db="$DB" --profile="$1" --expected="$2"; }
 godot --headless --path "$ROOT/client/godot" --script res://tools/operator_access_test.gd
 viewer="$(probe normal Operator)"; [[ "$viewer" == *$'ACCESS_ROLE=Operator OPERATE=true ADMIN=false\nACCESS_PASS'* ]] || fail "joining player was not Operator"

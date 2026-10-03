@@ -121,6 +121,15 @@ docker exec "$CONTAINER" spacetime publish --yes --delete-data=always \
         exit 1
     }
 rm -f "/tmp/continuum-blocks-it-publish-$$"
+ORIGIN="$(python3 "$ROOT/scripts/internal/world_ready.py" --starter-origin -- \
+    docker exec "$CONTAINER" spacetime sql --format json --server http://127.0.0.1:3000 "$DB")"
+read -r STARTER_X STARTER_Y <<< "$ORIGIN"
+# Translate fixture positions, never tile IDs: the original 576 IDs survive
+# centered founding unchanged and are not x + y * world_width.
+for offset in 0 1 2 3 16 20 22 23; do
+    printf -v "X$offset" '%d' "$((STARTER_X + offset))"
+    printf -v "Y$offset" '%d' "$((STARTER_Y + offset))"
+done
 
 printf '==> obtaining deterministic wood reserve\n'
 call set_time_scale 100000 >/dev/null
@@ -143,9 +152,10 @@ food_before="$(scalar 'SELECT food FROM colony')"
 stone_before="$(scalar 'SELECT stone FROM colony')"
 meat_before="$(scalar 'SELECT meat FROM colony')"
 HOST_PORT="$(docker port "$CONTAINER" 3000/tcp | awk -F: '{print $NF}')"
-python3 - "http://127.0.0.1:$HOST_PORT" "$DB" "$CONTAINER" <<'PY'
+python3 - "http://127.0.0.1:$HOST_PORT" "$DB" "$CONTAINER" "$STARTER_X" "$STARTER_Y" <<'PY'
 import json, subprocess, sys, urllib.error, urllib.request
-host, db, container = sys.argv[1:]
+host, db, container = sys.argv[1:4]
+starter_x, starter_y = map(int, sys.argv[4:])
 with urllib.request.urlopen(urllib.request.Request(host + "/v1/identity", method="POST"), timeout=10) as response:
     player = json.load(response)
 def player_call(args, denied=False):
@@ -168,18 +178,18 @@ def snapshot():
         result.append([(entry["schema"], sorted(entry["rows"],
             key=lambda row: json.dumps(row, sort_keys=True))) for entry in value])
     return result
-player_call([1, 1, 0, 0, {"farm": []}])
+player_call([starter_x + 1, starter_y + 1, starter_x, starter_y, {"farm": []}])
 subprocess.run(["docker", "exec", container, "spacetime", "call", "--server",
     "http://127.0.0.1:3000", db, "set_operator", json.dumps(player["identity"]), "false"], check=True,
     stdout=subprocess.DEVNULL)
 before = snapshot()
-player_call([0, 2, 0, 2, {"farm": []}], denied=True)
+player_call([starter_x, starter_y + 2, starter_x, starter_y + 2, {"farm": []}], denied=True)
 assert snapshot() == before, "denied build changed durable state"
 print("BLOCK_AUTHORIZATION_PASS default Operator builds; explicit Viewer actual build_tile_block denied: HTTP 530 exact role error; ten tables unchanged")
 PY
 wood_after="$(scalar 'SELECT wood FROM colony')"
 assert_eq "$(awk "BEGIN { printf \"%.0f\", $wood_before - $wood_after }")" "80" "2x2 build cost"
-assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= 0 AND x <= 1 AND y >= 0 AND y <= 1" farm)" "4" "2x2 reversed build tiles"
+assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= $X0 AND x <= $X1 AND y >= $Y0 AND y <= $Y1" farm)" "4" "2x2 reversed build tiles"
 assert_eq "$(matching_events 'Built ')" "$((events_before + 1))" "build audit count"
 assert_eq "$(scalar 'SELECT COUNT(*) AS count FROM colonist')" "$colonists_before" "colonist preservation"
 assert_eq "$(scalar 'SELECT COUNT(*) AS count FROM item_stack')" "$stacks_before" "pile preservation"
@@ -189,39 +199,39 @@ assert_eq "$(scalar 'SELECT meat FROM colony')" "$meat_before" "meat preservatio
 
 events_before="$(matching_events 'Built ')"
 wood_before_failed_build="$(scalar 'SELECT wood FROM colony')"
-assert_call_fails build_tile_block 2 2 3 3 '{"mine":{}}'
+assert_call_fails build_tile_block "$X2" "$Y2" "$X3" "$Y3" '{"mine":{}}'
 assert_eq "$(matching_events 'Built ')" "$events_before" "occupied build has no audit"
 assert_eq "$(scalar 'SELECT wood FROM colony')" "$wood_before_failed_build" "occupied build does not spend wood"
 world_width="$(scalar 'SELECT width FROM world_geometry')"
-assert_call_fails build_tile_block "$((world_width - 1))" 23 "$world_width" 23 '{"storage":{}}'
-assert_call_fails build_tile_block 0 0 0 0 '{"sleep":{}}'
-assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= 2 AND x <= 3 AND y >= 2 AND y <= 3" mine)" "0" "failed build rollback"
+assert_call_fails build_tile_block "$((world_width - 1))" "$Y23" "$world_width" "$Y23" '{"storage":{}}'
+assert_call_fails build_tile_block "$X0" "$Y0" "$X0" "$Y0" '{"sleep":{}}'
+assert_eq "$(kind_count "SELECT x, y, kind FROM tile WHERE x >= $X2 AND x <= $X3 AND y >= $Y2 AND y <= $Y3" mine)" "0" "failed build rollback"
 
 printf '==> enable block, no-op, empty skipping, and empty rejection\n'
 events_before="$(matching_events 'Tile block ')"
-call set_tile_block_enabled 1 1 0 0 false >/dev/null
-assert_eq "$(scalar "SELECT COUNT(*) AS count FROM tile WHERE x >= 0 AND x <= 1 AND y >= 0 AND y <= 1 AND enabled = false")" "4" "block disable"
+call set_tile_block_enabled "$X1" "$Y1" "$X0" "$Y0" false >/dev/null
+assert_eq "$(scalar "SELECT COUNT(*) AS count FROM tile WHERE x >= $X0 AND x <= $X1 AND y >= $Y0 AND y <= $Y1 AND enabled = false")" "4" "block disable"
 assert_eq "$(matching_events 'Tile block ')" "$((events_before + 1))" "disable audit count"
-call set_tile_block_enabled 0 0 1 1 false >/dev/null
+call set_tile_block_enabled "$X0" "$Y0" "$X1" "$Y1" false >/dev/null
 assert_eq "$(matching_events 'Tile block ')" "$((events_before + 1))" "disable no-op audit count"
 events_before="$(matching_events 'Tile block ')"
-call set_tile_block_enabled 0 0 2 2 true >/dev/null
+call set_tile_block_enabled "$X0" "$Y0" "$X2" "$Y2" true >/dev/null
 assert_eq "$(matching_events 'Tile block ')" "$((events_before + 1))" "empty skip audit count"
-assert_call_fails set_tile_block_enabled 22 22 23 23 true
+assert_call_fails set_tile_block_enabled "$X22" "$Y22" "$X23" "$Y23" true
 assert_eq "$(matching_events 'Tile block ')" "$((events_before + 1))" "all-empty rejection audit count"
 
 printf '==> Forest dual orders and unrelated order preservation\n'
 mining_before="$(mining_orders)"
-call set_block_work_order 16 20 20 16 '{"logging":{}}' 1 false >/dev/null
-call set_block_work_order 16 16 20 20 '{"hunting":{}}' 3 false >/dev/null
+call set_block_work_order "$X16" "$Y20" "$X20" "$Y16" '{"logging":{}}' 1 false >/dev/null
+call set_block_work_order "$X16" "$Y16" "$X20" "$Y20" '{"hunting":{}}' 3 false >/dev/null
 assert_eq "$(order_count 'SELECT tile_id, work, priority, enabled FROM work_order' logging 1)" "25" "logging block orders"
 assert_eq "$(order_count 'SELECT tile_id, work, priority, enabled FROM work_order' hunting 3)" "25" "hunting block orders"
 assert_eq "$(mining_orders)" "$mining_before" "unrelated mining orders"
 work_events_before="$(matching_events 'Work order block ')"
-call set_block_work_order 16 20 20 16 '{"logging":{}}' 1 false >/dev/null
+call set_block_work_order "$X16" "$Y20" "$X20" "$Y16" '{"logging":{}}' 1 false >/dev/null
 assert_eq "$(matching_events 'Work order block ')" "$work_events_before" "work-order no-op audit count"
-assert_call_fails set_block_work_order 16 16 20 20 '{"logging":{}}' 0 true
-assert_call_fails set_block_work_order 0 0 1 1 '{"mining":{}}' 2 true
+assert_call_fails set_block_work_order "$X16" "$Y16" "$X20" "$Y20" '{"logging":{}}' 0 true
+assert_call_fails set_block_work_order "$X0" "$Y0" "$X1" "$Y1" '{"mining":{}}' 2 true
 
 printf 'PASS: isolated block reducer integration coverage\n'
 printf '    container=%s database=%s\n' "$CONTAINER" "$DB"

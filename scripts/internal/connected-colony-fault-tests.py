@@ -49,6 +49,17 @@ class FaultTests(unittest.TestCase):
     def events(self):
         return [json.loads(line) for line in (self.root / "evidence.jsonl").read_text().splitlines()]
 
+    def test_publish_success_without_world_readiness_never_consumes_state(self):
+        with patch.object(self.gate, "identity", return_value="identity"), \
+                patch.object(self.gate, "command", side_effect=["published", RuntimeError(TOKEN)]) as command, \
+                patch.object(self.gate, "call") as call, patch.object(self.gate, "rows") as rows:
+            self.assert_secret_safe(lambda: self.gate.baseline(Path("/owned/module.wasm")))
+        self.assertEqual(command.call_args_list[0].args[0], "publish")
+        self.assertEqual(command.call_args_list[1].args[-1], "SELECT table_name FROM st_table")
+        self.assertLessEqual(command.call_args_list[1].kwargs["timeout"], 30)
+        call.assert_not_called()
+        rows.assert_not_called()
+
     def assert_secret_safe(self, operation):
         try:
             operation()

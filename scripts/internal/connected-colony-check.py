@@ -18,6 +18,7 @@ import tempfile
 import time
 import urllib.request
 import uuid
+from world_ready import wait_world_ready
 
 ROOT = Path(__file__).resolve().parents[2]
 IMAGE = "clockworklabs/spacetime@sha256:3e3645a3ada6f77a64343fb062a06df4b5185816e145c8f1b57eaa9f2a37eb25"
@@ -247,6 +248,10 @@ class Gate:
         operator = self.identity("operator")
         viewer = self.identity("viewer")
         self.command("publish", "--yes", "-s", self.host, "-b", wasm, self.db)
+        wait_world_ready(
+            lambda statement, budget: self.command("sql", "--format", "json", "-s", self.host,
+                                                    self.db, statement, timeout=min(30, budget)),
+            report=lambda message: self.record("world_readiness", status=message))
         self.call("set_time_scale", 0)
         self.call("set_speed_change_cooldown", 0)
         self.call("set_operator", json.dumps(viewer), False)
