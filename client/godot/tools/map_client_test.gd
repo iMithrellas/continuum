@@ -158,6 +158,7 @@ func run() -> void:
 	local.free()
 	test_provider_transitions()
 	test_resize_camera()
+	test_large_resize_anchor()
 	await test_sparse_cells()
 	for edge in [128, 256]:
 		test_large_map(edge)
@@ -335,6 +336,77 @@ func test_provider_transitions() -> void:
 	SpacetimeDB.Continuum.db = previous
 	first.free()
 	second.free()
+
+func test_large_resize_anchor() -> void:
+	var previous := SpacetimeDB.Continuum.db
+	var local := Fixture.database()
+	var map := ColonyMap.new()
+	map.size = Vector2(1920, 982)
+	add_child(map)
+	map.set_process(false)
+	map.bind_world_source(SpacetimeDB.Continuum.db)
+	map.streamed_terrain = true
+	var events: Array = []
+	map.camera_changed.connect(func() -> void: events.append(map.size))
+	for origin: Vector2i in [Vector2i.ZERO, Vector2i(-2048, -1024)]:
+		map.terrain_model.set_geometry({"width": 2048, "height": 2048, "min_x": origin.x,
+			"min_y": origin.y, "min_z": -16, "max_z": 15})
+		for offset: Vector2 in [Vector2(512, 512), Vector2(8, 8), Vector2(2040, 8), Vector2(8, 2040), Vector2(2040, 2040)]:
+			map.size = Vector2(1920, 982)
+			map.prepare_stream_camera(origin + Vector2i(1024, 1024))
+			var target := Vector2(origin) + offset
+			map.pan_by(map.size * 0.5 - map.world_to_screen(target))
+			var zoom := map._zoom
+			var revision := map.terrain_model.revision
+			var selected := Rect2i(Vector2i(target), Vector2i.ONE)
+			map.set_selected_rect(selected)
+			for dimensions: Vector2 in [Vector2(1280, 622), Vector2(1280, 720) / 1.5 - Vector2(0, 97.999),
+				Vector2.ZERO, Vector2(900, 0), Vector2(853.333, 382.001), Vector2(400, 382.001), Vector2(1920, 982)]:
+				map.visible = dimensions.x != 853.333
+				map._dragging = true
+				map._panning = true
+				var count := events.size()
+				map.size = dimensions
+				check(events.size() == count + 1, "large resize emits exactly one camera event: %s" % dimensions)
+				check(not map._dragging and not map._panning and map.selected_rect() == selected, "resize cancels gestures but retains selection")
+				check(map._zoom == zoom and map.terrain_model.revision == revision, "resize retains relative fit zoom and never rebuilds physical world")
+				if dimensions.x > 0 and dimensions.y > 0:
+					check(map.screen_to_world(map.size * 0.5).distance_to(target) < 0.002, "2048 corner/negative-origin world center survives100->150 and zero layouts")
+					check(map.visible_grid_rect().has_point(Vector2i(target)), "resized streamed frustum retains distant physical target")
+			map.show()
+			var cursor := map.size * Vector2(0.31, 0.63)
+			var under_cursor := map.screen_to_world(cursor)
+			map.zoom_at(1.2, cursor)
+			check(map.screen_to_world(cursor).distance_to(under_cursor) < 0.002, "cursor-anchored zoom remains exact after resize")
+			var center := map.screen_to_world(map.size * 0.5)
+			map.size = Vector2(1280, 622)
+			check(map.screen_to_world(map.size * 0.5).distance_to(center) < 0.002, "resize uses the latest zoom/pan layout anchor")
+		map.fit_camera()
+		check(map._pan == Vector2.ZERO and map._zoom == 1.0, "Fit still resets pan and relative zoom")
+		map.size = Vector2(1920, 982)
+		map.reset_camera()
+		check(is_equal_approx(map._cell_size(), ThemeTokens.number("tile")), "1:1 restores native cell size after resizes")
+		map.pan_by(Vector2(100000, 100000))
+		var outside := map.screen_to_world(map.size * 0.5)
+		map.size = Vector2(1280, 622)
+		check(map.screen_to_world(map.size * 0.5).distance_to(outside) < 0.002, "resize preserves intentional off-world pan rather than clamping it")
+	map.reset_world()
+	map.bind_world_source(SpacetimeDB.Continuum.db)
+	map.streamed_terrain = true
+	map.terrain_model.set_geometry({"width": 2048, "height": 2048, "min_z": -16, "max_z": 15})
+	map.size = Vector2.ZERO
+	map.prepare_stream_camera(Vector2i(1024, 1024))
+	var count := events.size()
+	map.size = Vector2(1279, 621)
+	check(events.size() == count + 1, "deferred stream startup performs one resize layout")
+	check(map.screen_to_world(map.size * 0.5).distance_to(Vector2(1024, 1024)) < 0.002 and is_equal_approx(map._cell_size(), 16), "fresh centered starter survives zero-size and odd viewport dimensions")
+	var stable := counts(map)
+	count = events.size()
+	for frame in 120: map._process(1.0 / 60)
+	check(events.size() == count and counts(map) == stable, "stationary resize anchor adds no idle camera/render work")
+	map.free()
+	SpacetimeDB.Continuum.db = previous
+	local.free()
 
 func test_resize_camera() -> void:
 	var previous := SpacetimeDB.Continuum.db

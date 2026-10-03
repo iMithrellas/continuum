@@ -50,6 +50,9 @@ var _static_camera_dirty := true
 var _static_entity_serial := 0
 var _zoom := 1.0
 var _pan := Vector2.ZERO
+## Last laid-out world anchor, not reconstructed from an already-resized Control.
+## Keep it through zero-size intermediate layouts; world/camera resets discard it.
+var _resize_world_center: Variant = null
 var _panning := false
 var _pan_pointer := Vector2.ZERO
 
@@ -129,16 +132,23 @@ func _ready() -> void:
 
 
 func _on_map_resized() -> void:
-	if _stream_camera_focus != null and _fit_cell_size() > 0:
-		prepare_stream_camera(_stream_camera_focus)
+	var ready := has_world_snapshot()
 	cancel_gestures()
+	if ready and _fit_cell_size() > 0:
+		if _stream_camera_focus != null:
+			_zoom = ThemeTokens.number("tile") / _fit_cell_size()
+			_center_camera_at(Vector2(_stream_camera_focus))
+			_stream_camera_focus = null
+		elif _resize_world_center != null:
+			_center_camera_at(_resize_world_center)
 	_layout_terrain()
 	if layered and has_world_snapshot():
 		terrain_view.update_entities(entity_descriptors())
 
 
 func _layout_terrain() -> void:
-	has_world_snapshot()
+	if has_world_snapshot() and _cell_size() > 0:
+		_resize_world_center = screen_to_world(size * 0.5)
 	if layered and not streamed_terrain:
 		terrain_model.warm_region(visible_grid_rect())
 	terrain_view.layout(_origin(), Vector2(_grid) * _cell_size())
@@ -146,6 +156,12 @@ func _layout_terrain() -> void:
 		_hover_cell = _cell_at(_hover_point)
 	queue_redraw()
 	camera_changed.emit()
+
+
+func _center_camera_at(world: Vector2) -> void:
+	var cell := _cell_size()
+	var centred := ((size - Vector2(_grid) * cell) * 0.5).floor()
+	_pan = size * 0.5 - (world - Vector2(grid_bounds().position)) * cell - centred
 
 
 ## Streaming owner supplies an epoch-checked frame after exact cache updates.
@@ -195,6 +211,7 @@ func fit_camera() -> void:
 	cancel_gestures()
 	_zoom = 1.0
 	_pan = Vector2.ZERO
+	_resize_world_center = null
 	_layout_terrain()
 	if layered:
 		terrain_view.update_entities(entity_descriptors())
@@ -209,19 +226,20 @@ func prepare_stream_camera(focus: Vector2i) -> void:
 	_grid = Vector2i(terrain_model.width, terrain_model.height)
 	layered = true
 	_has_state = true
+	_resize_world_center = null
 	if _fit_cell_size() <= 0:
 		_stream_camera_focus = focus
 		return
 	_stream_camera_focus = null
 	_zoom = ThemeTokens.number("tile") / maxf(_fit_cell_size(), 0.0001)
-	_pan = (Vector2(grid_bounds().get_center()) - Vector2(focus)) * _cell_size()
+	_center_camera_at(Vector2(focus))
 	_layout_terrain()
 
 func focus_detail_at(point: Vector2) -> void:
 	var world := screen_to_world(point)
 	cancel_gestures()
 	_zoom = ThemeTokens.number("tile") / maxf(_fit_cell_size(), 0.0001)
-	_pan = (Vector2(grid_bounds().get_center()) - world) * _cell_size()
+	_center_camera_at(world)
 	terrain_model.presentation_mode = &"detail"
 	_layout_terrain()
 
@@ -291,6 +309,7 @@ func row_visible(row: Variant) -> bool:
 
 func reset_world() -> void:
 	_stream_camera_focus = null
+	_resize_world_center = null
 	_source_db = null
 	terrain_model.reset()
 	terrain_view.reset()
@@ -563,6 +582,7 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 		if not streamed_terrain:
 			_zoom = 1.0
 			_pan = Vector2.ZERO
+			_resize_world_center = null
 		full = true
 	if full or changed_tables.has("tile"):
 		_cache_tiles()
