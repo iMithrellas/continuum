@@ -15,6 +15,10 @@ const PANEL_NAMES := {
 	"admin": "Admin",
 	"developer": "Developer",
 	"construction": "Construction",
+	"status": "Colony status",
+	"resources": "Resources",
+	"session": "Session / connection",
+	"performance": "Performance",
 }
 const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
@@ -29,6 +33,7 @@ var workspaces: Dictionary = defaults()
 var active := "daily"
 var show_panel_headers := true
 var last_load_status := "missing"
+var saved_workspaces: Dictionary = defaults()
 
 
 static func panel(rect: Array, opened := true) -> Dictionary:
@@ -36,55 +41,91 @@ static func panel(rect: Array, opened := true) -> Dictionary:
 
 
 static func defaults() -> Dictionary:
-	var result := {}
+	var base := {
+		"status": ["center", 0, "top", 12, 360, 30],
+		"session": ["right", 16, "bottom", 12, 220, 30],
+		"performance": ["right", 248, "bottom", 12, 224, 30],
+		"resources": ["right", 16, "top", 12, 296, 156],
+		"alerts": ["right", 16, "top", 168, 296, 190],
+		"people": ["left", 16, "bottom", 16, 330, 326],
+		"activity": ["center", 0, "bottom", 12, 340, 246],
+		"overview": ["left", 16, "top", 12, 280, 240],
+		"policies": ["right", 328, "top", 12, 300, 280],
+		"construction": ["left", 16, "top", 12, 300, 400],
+		"operations": ["left", 16, "bottom", 16, 300, 280],
+		"inspector": ["right", 328, "top", 12, 280, 300],
+		"trends": ["right", 16, "bottom", 56, 440, 120],
+		"admin": ["center", 0, "top", 60, 480, 250],
+		"developer": ["center", 0, "top", 330, 480, 450],
+	}
 	var presets := {
 		"daily":
-		[
-			"Daily operations",
-			{
-				"people": [0.01, 0.02, 0.235, 0.65],
-				"overview": [0.755, 0.02, 0.235, 0.44],
-				"alerts": [0.755, 0.65, 0.235, 0.33],
-				"activity": [0.01, 0.69, 0.235, 0.29]
-			}
-		],
+		["Daily operations", ["status", "resources", "alerts", "people", "activity", "session"]],
 		"build":
 		[
 			"Construction & zones",
-			{"construction": [0.01, 0.02, 0.265, 0.96], "operations": [0.725, 0.02, 0.265, 0.96]}
+			["status", "construction", "operations", "inspector", "resources", "session"]
 		],
-		"welfare":
-		[
-			"Colonist welfare",
-			{
-				"people": [0.01, 0.02, 0.255, 0.96],
-				"policies": [0.755, 0.02, 0.235, 0.47],
-				"trends": [0.705, 0.54, 0.285, 0.44]
-			}
-		],
-		"diagnostics":
-		[
-			"Diagnostics",
-			{
-				"inspector": [0.01, 0.02, 0.235, 0.52],
-				"alerts": [0.755, 0.02, 0.235, 0.42],
-				"trends": [0.01, 0.58, 0.29, 0.40],
-				"activity": [0.65, 0.52, 0.34, 0.46]
-			}
-		],
+		"welfare": ["Colonist welfare", ["status", "overview", "people", "policies", "alerts"]],
+		"diagnostics": ["Diagnostics", ["status", "performance", "session", "trends", "activity"]],
 	}
+	var result := {}
 	for id: String in presets:
 		var panels := {}
 		for key: String in PANEL_NAMES:
-			panels[key] = panel(
-				presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key)
+			var design: Array = base[key].duplicate()
+			if id == "build" and key == "inspector":
+				design = ["right", 16, "top", 12, 300, 300]
+			if id == "build" and key == "resources":
+				design[3] = 200
+			if id == "welfare":
+				if key == "people":
+					design = ["right", 16, "top", 12, 380, 420]
+				elif key == "policies":
+					design = ["right", 16, "bottom", 16, 380, 280]
+				elif key == "alerts":
+					design = ["left", 16, "bottom", 16, 296, 190]
+			if id == "diagnostics":
+				if key == "performance":
+					design = ["right", 16, "top", 12, 224, 30]
+				elif key == "session":
+					design = ["right", 16, "top", 52, 220, 30]
+				elif key == "trends":
+					design = ["left", 16, "bottom", 16, 520, 120]
+				elif key == "activity":
+					design = ["right", 16, "bottom", 16, 360, 326]
+			var anchor := {
+				"x": design[0],
+				"dx": design[1],
+				"y": design[2],
+				"dy": design[3],
+				"width": design[4],
+				"height": design[5]
+			}
+			var rect := design_rect(anchor, Vector2(1440, 900))
+			panels[key] = panel(to_normalized(rect, Vector2(1440, 900)), key in presets[id][1])
+			panels[key].design = anchor
+			panels[key].minimized = (
+				(id == "daily" and key == "activity")
+				or (id == "build" and key == "resources")
+				or (id == "diagnostics" and key == "performance")
 			)
-		if id != "build":
-			panels.construction = panel([0.01, 0.02, 0.265, 0.96], false)
-		panels.admin = panel([0.30, 0.04, 0.40, 0.28])
-		panels.developer = panel([0.30, 0.34, 0.40, 0.62])
 		result[id] = {"name": presets[id][0], "panels": panels}
 	return result
+
+
+static func design_rect(anchor: Dictionary, area: Vector2, extent := Vector2.ZERO) -> Rect2:
+	var dimensions := Vector2(anchor.width, anchor.height) if extent == Vector2.ZERO else extent
+	var origin := Vector2(anchor.dx, anchor.dy)
+	if anchor.x == "right":
+		origin.x = area.x - dimensions.x - anchor.dx
+	elif anchor.x == "center":
+		origin.x = (area.x - dimensions.x) / 2 + anchor.dx
+	if anchor.y == "bottom":
+		origin.y = area.y - dimensions.y - anchor.dy
+	return Rect2(
+		origin.clamp(Vector2.ZERO, (area - dimensions).max(Vector2.ZERO)), dimensions.min(area)
+	)
 
 
 ## A collapsed frame supplies its header minimum without changing expanded limits.
@@ -223,16 +264,18 @@ func create_workspace(title: String, selected: Array[String], copy_current := tr
 		panels[key].open = key in selected
 		panels[key].minimized = false
 	workspaces[id] = {"name": clean, "panels": panels}
+	saved_workspaces[id] = workspaces[id].duplicate(true)
 	active = id
 	return id
 
 
 func remove_workspace(id: String) -> bool:
-	if defaults().has(id) or not workspaces.has(id):
+	if workspaces.size() <= 1 or not workspaces.has(id):
 		return false
 	workspaces.erase(id)
+	saved_workspaces.erase(id)
 	if active == id:
-		active = "daily"
+		active = workspaces.keys()[0]
 	return true
 
 
@@ -244,6 +287,7 @@ func reset_active() -> void:
 		for key: String in workspaces[active].panels:
 			var state: Dictionary = workspaces[active].panels[key]
 			state.rect = presets.daily.panels[key].rect.duplicate()
+			state.design = presets.daily.panels[key].design.duplicate()
 			state.pinned = false
 			state.minimized = false
 
@@ -252,14 +296,21 @@ func save_to(path := SAVE_PATH) -> Error:
 	var file := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
-	file.store_string(
-		JSON.stringify(
-			{
-				"version": 3,
-				"active": active,
-				"show_panel_headers": show_panel_headers,
-				"workspaces": workspaces
-			}
+	(
+		file
+		. store_string(
+			(
+				JSON
+				. stringify(
+					{
+						"version": 4,
+						"active": active,
+						"show_panel_headers": show_panel_headers,
+						"workspaces": workspaces,
+						"saved_workspaces": saved_workspaces,
+					}
+				)
+			)
 		)
 	)
 	file.flush()
@@ -281,16 +332,44 @@ func load_from(path := SAVE_PATH) -> bool:
 	var data: Variant = JSON.parse_string(file.get_as_text())
 	if (
 		not data is Dictionary
-		or (data.get("version") != 1 and data.get("version") != 2 and data.get("version") != 3)
+		or (
+			data.get("version") != 1
+			and data.get("version") != 2
+			and data.get("version") != 3
+			and data.get("version") != 4
+		)
 		or not data.get("workspaces") is Dictionary
 	):
 		last_load_status = "corrupt"
 		return false
-	var loaded := defaults()
-	for id: Variant in data.workspaces:
+	var migrate: bool = data.version != 4
+	workspaces = _read_workspaces(data.workspaces, migrate)
+	if workspaces.is_empty():
+		workspaces = defaults()
+	saved_workspaces = workspaces.duplicate(true)
+	if data.get("saved_workspaces") is Dictionary:
+		var baselines := _read_workspaces(data.saved_workspaces, migrate)
+		for id: String in workspaces:
+			if data.saved_workspaces.has(id) and baselines.has(id):
+				saved_workspaces[id] = baselines[id]
+	show_panel_headers = (
+		data.get("show_panel_headers", true)
+		if data.get("show_panel_headers", true) is bool
+		else true
+	)
+	active = str(data.get("active", "daily"))
+	if not workspaces.has(active):
+		active = workspaces.keys()[0]
+	last_load_status = "loaded"
+	return true
+
+
+func _read_workspaces(entries: Dictionary, migrate := false) -> Dictionary:
+	var loaded := defaults() if migrate else {}
+	for id: Variant in entries:
 		if not id is String or loaded.size() >= 24:
 			continue
-		var entry: Variant = data.workspaces[id]
+		var entry: Variant = entries[id]
 		if (
 			not entry is Dictionary
 			or not entry.get("name") is String
@@ -299,7 +378,10 @@ func load_from(path := SAVE_PATH) -> bool:
 			continue
 		if entry.name.strip_edges().is_empty():
 			continue
-		var panels: Dictionary = loaded.get(id, defaults().daily).panels.duplicate(true)
+		var presets := defaults()
+		var panels: Dictionary = loaded.get(id, presets.get(id, presets.daily)).panels.duplicate(
+			true
+		)
 		if not entry.panels.has("construction"):
 			panels.construction.open = false
 		for key: String in PANEL_NAMES:
@@ -323,18 +405,45 @@ func load_from(path := SAVE_PATH) -> bool:
 			for flag: String in ["open", "minimized", "pinned"]:
 				if saved.get(flag) is bool:
 					panels[key][flag] = saved[flag]
+			if _valid_design(saved.get("design")):
+				panels[key].design = saved.design.duplicate()
 			var z: Variant = saved.get("z", 0)
 			if (z is int or z is float) and is_finite(float(z)):
 				panels[key].z = clampi(int(z), 0, 10000)
 		loaded[id] = {"name": entry.name.left(40), "panels": panels}
-	workspaces = loaded
-	show_panel_headers = (
-		data.get("show_panel_headers", true)
-		if data.get("show_panel_headers", true) is bool
-		else true
-	)
-	active = str(data.get("active", "daily"))
-	if not workspaces.has(active):
-		active = "daily"
-	last_load_status = "loaded"
-	return true
+	return loaded
+
+
+func _valid_design(value: Variant) -> bool:
+	if not value is Dictionary:
+		return false
+	if value.get("x") not in ["left", "right", "center"] or value.get("y") not in ["top", "bottom"]:
+		return false
+	for key: String in ["dx", "dy", "width", "height"]:
+		var number: Variant = value.get(key)
+		if not (number is int or number is float) or not is_finite(float(number)):
+			return false
+		if absf(float(number)) > 10000:
+			return false
+	return value.width > 0 and value.height > 0
+
+
+func save_active() -> void:
+	saved_workspaces[active] = workspaces[active].duplicate(true)
+
+
+func revert_active() -> void:
+	if saved_workspaces.has(active):
+		workspaces[active] = saved_workspaces[active].duplicate(true)
+
+
+func is_active_dirty() -> bool:
+	if not saved_workspaces.has(active):
+		return false
+	for key: String in workspaces[active].panels:
+		var current: Dictionary = workspaces[active].panels[key]
+		var baseline: Dictionary = saved_workspaces[active].panels[key]
+		for property: String in ["rect", "design", "open", "minimized", "pinned"]:
+			if current.get(property) != baseline.get(property):
+				return true
+	return false

@@ -4,6 +4,8 @@ extends Control
 
 signal workspace_changed
 signal header_layout_changed
+signal layout_changed
+signal command_action_requested(action: String)
 
 var model := WorkspaceLayout.new()
 var windows: Dictionary = {}
@@ -45,10 +47,14 @@ var _header_rows: VBoxContainer
 var _utilities: PanelContainer
 var _status_viewport: ScrollContainer
 var _diagnostics_graph := false
+var command_card: CommandCard
+var _command_keyboard := false
+var _edge_elapsed := 0.0
+var _close_elapsed := 0.0
 
 
 func setup(
-	map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()
+	map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, _ui_metrics := UiMetrics.new()
 ) -> void:
 	_save_path = save_path
 	metrics = UiMetrics.new()
@@ -61,6 +67,7 @@ func setup(
 	add_child(stack)
 	header = PanelContainer.new()
 	header.name = "GlobalHeader"
+	header.hide()
 	var surface := DeckTheme.box(ThemeTokens.color("bg-000"), ThemeTokens.color("line-100"), 12)
 	surface.content_margin_top = 8
 	surface.content_margin_bottom = 4
@@ -106,7 +113,7 @@ func setup(
 	diagnostics_host.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	diagnostics_host.clip_contents = true
 	diagnostics_host.visible = false
-	utility_row.add_child(diagnostics_host)
+	add_child(diagnostics_host)
 	_telemetry_header.resized.connect(_resize_diagnostics_host)
 	_status_viewport.resized.connect(func() -> void: header_layout_changed.emit())
 	var workspace_row := _scroll_row(_header_rows, ThemeTokens.number("panel-header"))
@@ -147,9 +154,20 @@ func setup(
 	add_child(_panel_nav)
 	_panel_nav.hide()
 	_build_dialog()
+	command_card = CommandCard.new()
+	command_card.name = "CommandCard"
+	command_card.z_index = 100
+	add_child(command_card)
+	command_card.setup(self)
+	command_card.action_requested.connect(
+		func(action: String) -> void: command_action_requested.emit(action)
+	)
+	command_card.hide()
+	resized.connect(_fit_command)
+	_fit_command()
 
 
-func apply_metrics(ui_metrics: UiMetrics) -> void:
+func apply_metrics(_ui_metrics: UiMetrics) -> void:
 	metrics = UiMetrics.new()
 	_resize_diagnostics_host()
 	for window: WorkspaceWindow in windows.values():
@@ -164,27 +182,24 @@ func set_diagnostics_visible(enabled: bool, graph := false) -> void:
 	diagnostics_host.visible = enabled
 	_diagnostics_graph = enabled and graph
 	_resize_diagnostics_host()
+	if _ready_layout and windows.has("performance"):
+		var value := "collapsed" if state("performance").minimized else "open"
+		set_panel_state("performance", value if enabled else "closed")
 
 
 func _resize_diagnostics_host() -> void:
 	if not is_instance_valid(diagnostics_host):
 		return
+	var collapsed: bool = (
+		_ready_layout and windows.has("performance") and state("performance").minimized
+	)
 	diagnostics_host.custom_minimum_size = Vector2(
-		(
-			(
-				(360 if _diagnostics_graph else 224)
-				if size.x >= 1280
-				else (112 if size.x >= 900 else 0)
-			)
-			if diagnostics_host.visible
-			else 0
-		),
-		0
+		100 if collapsed else (360 if _diagnostics_graph else 224), 0
 	)
 
 
 func status_width() -> float:
-	return maxf(1, _status_viewport.size.x)
+	return maxf(1, status_content.size.x if status_content.is_visible_in_tree() else area.size.x)
 
 
 func _fit_header() -> void:
@@ -232,6 +247,11 @@ func add_panel(key: String) -> VBoxContainer:
 	area.add_child(window)
 	window.metrics = metrics
 	window.setup(WorkspaceLayout.PANEL_NAMES[key])
+	if key in ["status", "session", "performance"]:
+		window.set_micro_mode(true)
+		window.micro_content.minimum_size_changed.connect(
+			func() -> void: _apply_layout.call_deferred()
+		)
 	window.scroll.resized.connect(_queue_body_focus_reveal)
 	windows[key] = window
 	authorized[key] = true
@@ -282,9 +302,13 @@ func add_panel(key: String) -> VBoxContainer:
 						)
 			var snapped: Rect2
 			var minimum := (
-				Vector2(WorkspaceLayout.minimum_size(metrics).x, window.chrome_height())
-				if window.collapsed
-				else Vector2.ZERO
+				window.micro_size()
+				if key in ["status", "session", "performance"]
+				else (
+					Vector2(window.tab_width(), window.chrome_height())
+					if window.collapsed
+					else Vector2.ZERO
+				)
 			)
 			if unsnapped:
 				snapped = (
@@ -305,10 +329,16 @@ func add_panel(key: String) -> VBoxContainer:
 	)
 	window.interaction_finished.connect(
 		func() -> void:
-			_drag_origins.erase(key)
-			if not compact:
+			var original := _floating_rect(key)
+			var moved := window.position.distance_to(original.position.round()) > 0.01
+			var resized := window.size.distance_to(original.size.round()) > 0.01
+			if not compact and (moved or resized):
 				state(key).rect = _remembered_geometry(key)
+				state(key).erase("design")
+			_drag_origins.erase(key)
 			save_layout()
+			_refresh_command()
+			layout_changed.emit()
 	)
 	window.minimize_requested.connect(toggle_panel.bind(key))
 	window.close_requested.connect(
@@ -329,7 +359,7 @@ func add_panel(key: String) -> VBoxContainer:
 func _remembered_geometry(key: String) -> Array:
 	var window: WorkspaceWindow = windows[key]
 	var rect := WorkspaceLayout.to_normalized(Rect2(window.position, window.size), area.size)
-	if window.collapsed:
+	if window.collapsed or key in ["status", "session", "performance"]:
 		rect[2] = state(key).rect[2]
 		rect[3] = state(key).rect[3]
 	return rect
@@ -339,13 +369,19 @@ func _remembered_geometry(key: String) -> Array:
 ## Read the saved anchor before expanded clamping, including after viewport changes.
 func _floating_rect(key: String) -> Rect2:
 	var saved := state(key)
+	var window: WorkspaceWindow = windows[key]
 	var rect := WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
-	if saved.minimized:
-		var minimum := Vector2(
-			WorkspaceLayout.minimum_size(metrics).x, windows[key].chrome_height()
+	var micro := key in ["status", "session", "performance"]
+	if saved.has("design"):
+		rect = WorkspaceLayout.design_rect(saved.design, area.size)
+	if micro or saved.minimized:
+		var minimum := (
+			window.micro_size() if micro else Vector2(window.tab_width(), window.chrome_height())
 		)
 		rect.position = Vector2(saved.rect[0], saved.rect[1]) * area.size
-		rect.size.y = minimum.y
+		rect.size = minimum
+		if saved.has("design"):
+			rect = WorkspaceLayout.design_rect(saved.design, area.size, minimum)
 		rect = WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
 	return rect
 
@@ -390,6 +426,8 @@ func state(key: String) -> Dictionary:
 
 
 func blocks_map_input(point: Vector2) -> bool:
+	if is_command_open() and command_card.get_global_rect().has_point(point):
+		return true
 	if (
 		_dialog.visible
 		or _menu.get_popup().visible
@@ -400,7 +438,7 @@ func blocks_map_input(point: Vector2) -> bool:
 	for window: WorkspaceWindow in windows.values():
 		if (
 			window.visible
-			and (not window._gesture.is_empty() or window.get_global_rect().has_point(point))
+			and (not window._gesture.is_empty() or window.contains_global_point(point))
 		):
 			return true
 	return false
@@ -462,6 +500,20 @@ func focus_panel(key: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _ready_layout and event is InputEventKey and event.pressed and not event.echo:
+		if event.ctrl_pressed and event.keycode in [KEY_K, KEY_P]:
+			if is_command_open():
+				close_command()
+			else:
+				open_command(true)
+			get_viewport().set_input_as_handled()
+			return
+	if (
+		is_command_open()
+		and event is InputEventMouseButton
+		and command_card.get_global_rect().has_point(event.position)
+	):
+		return
 	if (
 		not _ready_layout
 		or not event is InputEventMouseButton
@@ -478,7 +530,7 @@ func _input(event: InputEvent) -> void:
 	)
 	for key: String in order:
 		var child: WorkspaceWindow = windows[key]
-		if child.is_visible_in_tree() and _visible_control_rect(child).has_point(event.position):
+		if child.is_visible_in_tree() and child.contains_global_point(event.position):
 			focus_panel(child.name)
 			if (
 				event.alt_pressed
@@ -507,7 +559,12 @@ func toggle_panel(key: String) -> void:
 		or state(key).minimized
 		or (compact and _compact_panel != key)
 	):
-		if state(key).minimized and not compact:
+		if (
+			state(key).minimized
+			and not compact
+			and not state(key).has("design")
+			and key not in ["status", "session", "performance"]
+		):
 			var restored := WorkspaceLayout.to_pixels(state(key).rect, area.size, metrics)
 			var saved_anchor := Vector2(state(key).rect[0], state(key).rect[1]) * area.size
 			if restored.position.distance_to(saved_anchor) > 0.01:
@@ -524,6 +581,8 @@ func toggle_panel(key: String) -> void:
 
 
 func _visible_control_rect(control: Control) -> Rect2:
+	if control is WorkspaceWindow:
+		return control.get_visible_global_rect()
 	var rect := control.get_global_rect()
 	var parent := control.get_parent()
 	while parent != null:
@@ -607,8 +666,6 @@ func _apply_layout() -> void:
 		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
 		var rect := Rect2(Vector2.ZERO, area.size) if compact else _floating_rect(key)
-		if saved.minimized:
-			rect.size.y = window.chrome_height()
 		if not compact:
 			rect.position = rect.position.round()
 			rect.size = rect.size.round()
@@ -620,6 +677,8 @@ func _apply_layout() -> void:
 	_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_map.queue_redraw()
 	_queue_body_focus_reveal()
+	_resize_diagnostics_host()
+	layout_changed.emit()
 
 
 func _queue_body_focus_reveal() -> void:
@@ -694,55 +753,141 @@ func _reveal_retained_body_focus(control_ref: WeakRef, settling_frames: int, epo
 
 
 func _rebuild_navigation() -> void:
-	var focused := get_viewport().gui_get_focus_owner()
-	var workspace_focus := str(focused.get_meta("workspace_id", "")) if focused != null else ""
-	var panel_focus := str(focused.get_meta("panel_id", "")) if focused != null else ""
-	_tab_buttons.clear()
-	_tab_alert_nodes.clear()
-	_panel_buttons.clear()
-	for parent: HBoxContainer in [_tabs, _panel_nav]:
-		for child: Node in parent.get_children():
-			parent.remove_child(child)
-			child.queue_free()
-	for id: String in model.workspaces:
-		var tab := VBoxContainer.new()
-		tab.add_theme_constant_override("separation", 0)
-		_tabs.add_child(tab)
-		var row := HBoxContainer.new()
-		tab.add_child(row)
-		var name: String = model.workspaces[id].name
-		var button := _button(
-			row,
-			name if name.length() <= 28 else name.left(27) + "…",
-			name + " · personal view preset; colony state is unchanged",
-			switch_workspace.bind(id)
+	_refresh_command()
+
+
+func _refresh_command() -> void:
+	if is_instance_valid(command_card) and command_card.has_method("refresh"):
+		command_card.call("refresh")
+
+
+func _fit_command() -> void:
+	if not is_instance_valid(command_card):
+		return
+	command_card.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	command_card.position = Vector2(8, 8)
+	command_card.custom_minimum_size.x = minf(272, maxf(1, size.x - 16))
+	command_card.size = Vector2(minf(272, maxf(1, size.x - 16)), maxf(1, size.y - 16))
+
+
+func is_command_open() -> bool:
+	return is_instance_valid(command_card) and command_card.visible
+
+
+func open_command(keyboard := true) -> void:
+	_cancel_gestures()
+	_command_keyboard = keyboard
+	_edge_elapsed = 0
+	_close_elapsed = 0
+	command_card.show()
+	_fit_command()
+	_refresh_command()
+	if keyboard and command_card.has_method("focus_search"):
+		command_card.call("focus_search")
+
+
+func close_command() -> void:
+	if not is_command_open():
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus != null and command_card.is_ancestor_of(focus):
+		focus.release_focus()
+	command_card.hide()
+	_command_keyboard = false
+	_edge_elapsed = 0
+	_close_elapsed = 0
+
+
+func _process(delta: float) -> void:
+	if (
+		not _ready_layout
+		or _dialog.visible
+		or (is_instance_valid(_confirmation) and _confirmation.visible)
+	):
+		return
+	var point := get_local_mouse_position()
+	if not is_command_open():
+		_edge_elapsed = (
+			_edge_elapsed + delta
+			if point.x >= 0 and point.x <= 6 and point.y >= 0 and point.y <= size.y
+			else 0.0
 		)
-		button.custom_minimum_size.y = 32
-		button.set_meta("workspace_id", id)
-		_tab_buttons[id] = button
-		button.add_theme_color_override(
-			"font_color", ThemeTokens.color("ink" if model.active == id else "ink-muted")
-		)
-		var glyph := TextureRect.new()
-		glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		glyph.custom_minimum_size = Vector2(16, 16)
-		row.add_child(glyph)
-		var count := Label.new()
-		ThemeTokens.apply_label(count, "readout")
-		row.add_child(count)
-		_tab_alert_nodes[id] = {"glyph": glyph, "count": count}
-		_update_tab_alert(id)
-		var underline := ColorRect.new()
-		underline.custom_minimum_size.y = 2
-		underline.color = ThemeTokens.color("accent") if model.active == id else Color.TRANSPARENT
-		tab.add_child(underline)
-	_build_management_menu()
-	_fit_navigation.call_deferred()
-	if _tab_buttons.has(workspace_focus):
-		_tab_buttons[workspace_focus].grab_focus()
-	elif _panel_buttons.has(panel_focus):
-		_panel_buttons[panel_focus].grab_focus()
+		if _edge_elapsed >= 0.12:
+			open_command(false)
+		return
+	var focus := get_viewport().gui_get_focus_owner()
+	var retained_focus := focus != null and command_card.is_ancestor_of(focus)
+	if (
+		_command_keyboard
+		or retained_focus
+		or point.x <= command_card.position.x + command_card.size.x + 24
+	):
+		_close_elapsed = 0
+	else:
+		_close_elapsed += delta
+		if _close_elapsed >= 0.28:
+			close_command()
+
+
+func set_panel_state(key: String, value: String) -> void:
+	if (
+		not windows.has(key)
+		or not authorized.get(key, false)
+		or value not in ["open", "collapsed", "closed"]
+	):
+		return
+	if (
+		state(key).open == (value != "closed")
+		and state(key).minimized == (value == "collapsed")
+		and not map_only
+	):
+		return
+	_cancel_gestures()
+	state(key).open = value != "closed"
+	state(key).minimized = value == "collapsed"
+	if value != "closed":
+		map_only = false
+	_changed()
+
+
+func reveal_panel(key: String) -> void:
+	set_panel_state(key, "open")
+	if windows.has(key) and authorized.get(key, false):
+		focus_panel(key)
+
+
+func duplicate_workspace() -> void:
+	var selected: Array[String] = []
+	for key: String in model.workspaces[model.active].panels:
+		if state(key).open:
+			selected.append(key)
+	var source: Dictionary = model.workspaces[model.active].panels.duplicate(true)
+	if model.create_workspace(model.workspaces[model.active].name + " copy", selected).is_empty():
+		return
+	model.workspaces[model.active].panels = source
+	model.save_active()
+	workspace_changed.emit()
+	_changed()
+
+
+func delete_workspace() -> void:
+	_layout_action(1)
+
+
+func save_workspace() -> void:
+	model.save_active()
+	save_layout()
+	_refresh_command()
+
+
+func revert_workspace() -> void:
+	_cancel_gestures()
+	model.revert_active()
+	_changed()
+
+
+func is_layout_dirty() -> bool:
+	return model.is_active_dirty()
 
 
 func _build_management_menu() -> void:
@@ -773,7 +918,7 @@ func _build_management_menu() -> void:
 	popup.set_item_tooltip(popup.item_count - 1, _status.text)
 	popup.add_item("Reset current layout…", 0)
 	popup.add_item("Delete custom workspace…", 1)
-	popup.set_item_disabled(popup.item_count - 1, WorkspaceLayout.defaults().has(model.active))
+	popup.set_item_disabled(popup.item_count - 1, model.workspaces.size() <= 1)
 	popup.add_check_item("Show panel headers (Ctrl+Shift+H)", 2)
 	popup.set_item_checked(popup.item_count - 1, model.show_panel_headers)
 	popup.add_check_item("Map view · hide panels (Ctrl+\\)", 6)
@@ -867,7 +1012,13 @@ func _build_dialog() -> void:
 		body.add_child(check)
 		_checks[key] = check
 	var note := Label.new()
-	note.text = "Panels overlay the full map; pin locks position and size only.\nCollapse keeps the header; F1–F11 restores panels. Map gives immediate map access.\nDrag unpinned headers to move and edges or corners to resize.\nAlt bypasses snapping. Escape cancels and restores starting geometry.\nHidden headers keep a drag strip with Headers access. Layout / Ctrl+Shift+H toggles headers. Changes save on this device."
+	note.text = (
+		"Panels overlay the full map; pin locks position and size only.\n"
+		+ "Collapse keeps a tab; Ctrl+K opens commands.\n"
+		+ "Drag unpinned headers to move and edges or corners to resize.\n"
+		+ "Alt bypasses snapping. Escape restores starting geometry.\n"
+		+ "Ctrl+Shift+H toggles headers. Changes save on this device."
+	)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ThemeTokens.apply_label(note, "small")
 	body.add_child(note)
@@ -884,7 +1035,7 @@ func edit_workspace(create: bool) -> void:
 	_cancel_gestures()
 	_dialog_new = create
 	_name_input.text = "My workspace" if create else model.workspaces[model.active].name
-	_name_input.editable = create or not WorkspaceLayout.defaults().has(model.active)
+	_name_input.editable = true
 	_copy.visible = create
 	_sync_checks()
 	_dialog.title = "New workspace" if create else "Choose panels"
@@ -936,7 +1087,7 @@ func _layout_action(id: int) -> void:
 			edit_workspace(false)
 			return
 		5:
-			save_layout()
+			save_workspace()
 			_build_management_menu()
 			return
 		6:
@@ -944,6 +1095,8 @@ func _layout_action(id: int) -> void:
 			return
 	if id == 2:
 		toggle_panel_headers()
+		return
+	if id == 1 and model.workspaces.size() <= 1:
 		return
 	var confirmation := ConfirmationDialog.new()
 	_confirmation = confirmation
@@ -973,20 +1126,63 @@ func _layout_action(id: int) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
-	if event.ctrl_pressed and event.keycode == KEY_P:
-		_menu.grab_focus()
-		_menu.show_popup()
+	if not _ready_layout:
+		return
+	if event.keycode == KEY_ESCAPE and is_command_open():
+		close_command()
+	elif event.ctrl_pressed and event.keycode in [KEY_K, KEY_P]:
+		if is_command_open():
+			close_command()
+		else:
+			open_command(true)
 	elif event.ctrl_pressed and event.keycode == KEY_F:
 		edit_workspace(false)
 	elif event.ctrl_pressed and event.shift_pressed and event.keycode == KEY_H:
 		toggle_panel_headers()
 	elif event.ctrl_pressed and event.keycode == KEY_BACKSLASH:
 		toggle_map_only()
-	elif event.keycode >= KEY_F1 and event.keycode <= KEY_F11:
-		var index: int = event.keycode - KEY_F1
-		if index >= windows.size():
+	elif event.alt_pressed and event.keycode >= KEY_1 and event.keycode <= KEY_9:
+		var index: int = event.keycode - KEY_1
+		if index >= model.workspaces.size():
 			return
-		toggle_panel(windows.keys()[index])
+		switch_workspace(model.workspaces.keys()[index])
+	elif (
+		not event.ctrl_pressed
+		and not event.alt_pressed
+		and not event.shift_pressed
+		and not event.meta_pressed
+	):
+		var focus := get_viewport().gui_get_focus_owner()
+		if focus is LineEdit or focus is TextEdit:
+			return
+		var shortcuts := {
+			KEY_R: "resources",
+			KEY_P: "policies",
+			KEY_B: "construction",
+			KEY_I: "inspector",
+			KEY_A: "alerts",
+			KEY_Z: "operations",
+			KEY_F8: "performance"
+		}
+		var original := [
+			"overview",
+			"people",
+			"inspector",
+			"operations",
+			"policies",
+			"alerts",
+			"activity",
+			"trends",
+			"admin",
+			"developer",
+			"construction"
+		]
+		var key: String = shortcuts.get(event.keycode, "")
+		if key.is_empty() and event.keycode >= KEY_F1 and event.keycode <= KEY_F11:
+			key = original[event.keycode - KEY_F1]
+		if key.is_empty() or not windows.has(key):
+			return
+		toggle_panel(key)
 	else:
 		return
 	get_viewport().set_input_as_handled()
