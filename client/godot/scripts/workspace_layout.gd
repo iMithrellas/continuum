@@ -45,8 +45,8 @@ static func defaults() -> Dictionary:
 		"status": ["center", 0, "top", 12, 360, 30],
 		"session": ["right", 16, "bottom", 12, 220, 30],
 		"performance": ["right", 248, "bottom", 12, 224, 30],
-		"resources": ["right", 16, "top", 12, 296, 156],
-		"alerts": ["right", 16, "top", 168, 296, 190],
+		"resources": ["right", 16, "top", 12, 320, 156],
+		"alerts": ["right", 16, "top", 168, 320, 190],
 		"people": ["left", 16, "bottom", 16, 330, 326],
 		"activity": ["center", 0, "bottom", 12, 340, 246],
 		"overview": ["left", 16, "top", 12, 280, 240],
@@ -54,7 +54,7 @@ static func defaults() -> Dictionary:
 		"construction": ["left", 16, "top", 12, 300, 400],
 		"operations": ["left", 16, "bottom", 16, 300, 280],
 		"inspector": ["right", 328, "top", 12, 280, 300],
-		"trends": ["right", 16, "bottom", 56, 440, 120],
+		"trends": ["right", 16, "bottom", 56, 440, 180],
 		"admin": ["center", 0, "top", 60, 480, 250],
 		"developer": ["center", 0, "top", 330, 480, 450],
 	}
@@ -84,14 +84,14 @@ static func defaults() -> Dictionary:
 				elif key == "policies":
 					design = ["right", 16, "bottom", 16, 380, 280]
 				elif key == "alerts":
-					design = ["left", 16, "bottom", 16, 296, 190]
+					design = ["left", 16, "bottom", 16, 320, 190]
 			if id == "diagnostics":
 				if key == "performance":
 					design = ["right", 16, "top", 12, 224, 30]
 				elif key == "session":
 					design = ["right", 16, "top", 52, 220, 30]
 				elif key == "trends":
-					design = ["left", 16, "bottom", 16, 520, 120]
+					design = ["left", 16, "bottom", 16, 520, 180]
 				elif key == "activity":
 					design = ["right", 16, "bottom", 16, 360, 326]
 			var anchor := {

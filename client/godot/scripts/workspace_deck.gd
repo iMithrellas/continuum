@@ -391,7 +391,35 @@ func _floating_rect(key: String) -> Rect2:
 		if saved.has("design"):
 			rect = WorkspaceLayout.design_rect(saved.design, area.size, minimum)
 		rect = WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
+	if key == "performance" and saved.has("design") and area.size.x < 480:
+		rect = _responsive_performance_rect(rect)
 	return rect
+
+
+## Stack only design-anchored telemetry; user-positioned rectangles stay untouched.
+func _responsive_performance_rect(rect: Rect2) -> Rect2:
+	var result := rect
+	var anchor: Dictionary = state("performance").design
+	if anchor.y == "top" and _designed_micro_open("status"):
+		var status_rect := _floating_rect("status")
+		if state("status").design.y == "top" and result.intersects(status_rect):
+			result.position.y = status_rect.end.y + 10
+			if _designed_micro_open("session") and state("session").design.y == "top":
+				result.position.y = maxf(result.position.y, _floating_rect("session").end.y + 10)
+	elif anchor.y == "bottom" and _designed_micro_open("session"):
+		var session_rect := _floating_rect("session")
+		if state("session").design.y == "bottom" and result.intersects(session_rect):
+			result.position.y = session_rect.position.y - result.size.y - 10
+	return WorkspaceLayout.clamp_rect(result, area.size, metrics, result.size)
+
+
+func _designed_micro_open(key: String) -> bool:
+	return (
+		windows.has(key)
+		and authorized.get(key, false)
+		and state(key).open
+		and state(key).has("design")
+	)
 
 
 ## Alert ownership and aggregation belong to integration, not local preferences.
@@ -825,10 +853,10 @@ func _fit_command() -> void:
 	if not is_instance_valid(command_card):
 		return
 	command_card.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
-	command_card.position = Vector2(8, 8)
 	var width := minf(272, maxf(1, area.size.x - 16))
-	if command_card.has_method("fit_width"):
-		command_card.call("fit_width", width)
+	if command_card.has_method("set_available_size"):
+		command_card.call("set_available_size", area.size)
+	command_card.position = Vector2(8, 8)
 	command_card.custom_minimum_size.x = width
 	command_card.size = Vector2(width, maxf(1, area.size.y - 16))
 
