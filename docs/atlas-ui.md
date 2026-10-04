@@ -97,10 +97,12 @@ reducers or mutate persistent server state.
 
 `client/godot/gdformatrc` sets gdformat's 100-character line length and excludes
 addons and generated SpacetimeDB bindings. `client/godot/gdlintrc` is the lint
-configuration (present in the integration worktree); do not broaden the new
-recipes to addons/bindings or unrelated legacy files. The scoped `lint-gd` and
-`fmt-gd-check` recipes in the justfile list only Atlas-owned/currently targeted
-scripts and `tools/atlas_ui*.gd`. `test-atlas-ui` invokes the backend-free
+configuration; do not broaden the new recipes to addons/bindings or unrelated
+legacy files. `lint-gd` and `fmt-gd-check` first `cd client/godot` so both tools
+discover their project config. Their scoped list covers the Atlas workspace,
+window, command, diagnostics, menu, chart, shared readout/feed/roster components,
+and `tools/atlas*.gd`, including forthcoming fixture scripts. `test-atlas-ui`
+invokes the backend-free
 `client/godot/tools/atlas_ui_checks.py` runner with `GODOT` support. That runner
 is being added separately; this recipe does not claim it already exists or
 passes. A render mode should be added only when that runner defines its CLI and
