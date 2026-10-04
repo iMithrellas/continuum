@@ -2,7 +2,7 @@
 ## Run through atlas_ui_checks.py to isolate HOME and every XDG directory.
 extends Node
 
-const MainScene = preload("res://tools/ui_main_fixture.tscn")
+const MainScene = preload("res://tools/atlas_fixture_main.tscn")
 const TerrainFixture = preload("res://tools/terrain_fixture.gd")
 var main: Control
 var local: LocalDatabase
@@ -36,6 +36,8 @@ class FixtureReducerClient:
 
 func _ready() -> void:
 	_parse_arguments()
+	if not _keep_open:
+		ProjectSettings.set_setting("gui/timers/tooltip_delay_sec", 3600.0)
 	get_window().size = _screen
 	get_window().title = "Atlas UI — generated local fixture (no server)"
 	get_window().close_requested.connect(_finish)
@@ -47,6 +49,7 @@ func _ready() -> void:
 	main = MainScene.instantiate()
 	add_child(main)
 	await settle()
+	main._server_management.probes.transport = _fixture_probe
 	main._host = "http://fixture.invalid"
 	main._database = "atlas-generated-local-fixture"
 	main._authenticated_identity = "fixture-operator-not-a-live-session"
@@ -59,10 +62,13 @@ func _ready() -> void:
 	var settings: ClientSettings = main._settings.clone()
 	settings.ui_scale_percent = _scale
 	settings.reduced_motion = true
+	settings.diagnostics_enabled = _workspace == "diagnostics"
+	settings.diagnostics_graph_enabled = false
 	main.apply_settings(settings, false)
 	main._sync_menu_input()
 	main.map.bind_world_source(SpacetimeDB.Continuum.db)
 	main.map.refresh()
+	_sample_series()
 	main._refresh_status()
 	main._full_ui_refresh = true
 	main._refresh()
@@ -79,9 +85,10 @@ func _ready() -> void:
 	if _command:
 		check(main.workspace.has_method("open_command"), "deck exposes open_command")
 		if main.workspace.has_method("open_command"):
-			main.workspace.call("open_command", false)
+			main.workspace.call("open_command", true)
 	if _settings:
 		await show_settings()
+	_park_pointer()
 	await settle()
 	await run_contracts()
 	check(main.forbidden_connections == 0, "fixture requests no SDK connections")
@@ -139,7 +146,7 @@ func _seed_database() -> void:
 		SpacetimeDB.Continuum._init_db(local)
 		landscape.free()
 	var config: ContinuumConfig = local._tables.config[0]
-	config.game_seconds = 3600.0
+	config.game_seconds = 0.0
 	config.generation = 7
 	config.time_scale = 6.0
 	var colony: ContinuumColony = local._tables.colony[0]
@@ -187,6 +194,37 @@ func show_settings() -> void:
 		button.pressed.emit()
 	main._sync_menu_input()
 	await settle()
+
+
+## Samples come from explicitly generated typed rows and real observation/history APIs.
+func _sample_series() -> void:
+	var config: ContinuumConfig = local._tables.config[0]
+	var colony: ContinuumColony = local._tables.colony[0]
+	for minute in 61:
+		config.game_seconds = minute * 60.0
+		colony.food = 88.0 + minute * 0.2
+		colony.wood = 148.0 + minute * 0.2
+		colony.stone = 96.0 - minute * 0.1
+		colony.smoothed_mood = 66.0 + minute / 15.0
+		colony.smoothed_productivity = 78.0 + minute / 10.0
+		main._refresh_status()
+		main._sample_history()
+	print("ATLAS_FIXTURE_DATA generated typed rows; 61 one-minute clock samples; no server")
+
+
+func _park_pointer() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	var point: Vector2 = main.workspace.windows.status.get_global_rect().get_center()
+	if main.workspace.is_command_open():
+		point = main.workspace.command_card.get_global_rect().position + Vector2(20, 20)
+	elif main._menu.visible:
+		point = main._menu._modal.get_global_rect().position + Vector2(10, 10)
+	Input.warp_mouse(get_viewport().get_final_transform() * point)
+
+
+func _fixture_probe(_entry: Dictionary, complete: Callable) -> void:
+	complete.call({"reachable": false, "error": "Generated fixture: networking disabled"})
 
 
 func run_contracts() -> void:

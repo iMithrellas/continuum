@@ -19,7 +19,10 @@ import subprocess
 import tempfile
 
 PROJECT = Path(__file__).resolve().parents[1]
-MATRIX = ((1440, 900, 100), (1440, 900, 125), (960, 640, 100), (960, 640, 150))
+MATRIX = (
+    (1440, 900, 100), (1440, 900, 125),
+    (960, 640, 100), (960, 640, 150), (360, 480, 150),
+)
 
 
 def run(command, env, log, marker=None, timeout=180):
@@ -106,6 +109,22 @@ def main():
     godot = shlex.split(os.environ.get("GODOT", "godot"))
     base = godot + ["--path", str(PROJECT), "--audio-driver", "Dummy"]
     xvfb = None
+    failures = []
+    results = []
+
+    def check_case(command, name, marker, timeout=180):
+        try:
+            run(command, env, output / f"{name}.log", marker, timeout)
+            results.append("PASS " + name)
+            return True
+        except (RuntimeError, subprocess.TimeoutExpired) as error:
+            failures.append(name)
+            results.append("FAIL " + name)
+            print(f"FAIL: {error}")
+            return False
+        finally:
+            (output / "summary.log").write_text("\n".join(results) + "\n")
+
     print(f"Evidence: {output}\nIsolated user state: {state}")
     try:
         run(base + ["--headless", "--editor", "--import"], env, output / "import.log")
@@ -120,7 +139,7 @@ def main():
                     "--headless", "res://tools/atlas_ui_test.tscn", "--",
                     f"--screen={width}x{height}", f"--scale={scale}",
                 ]
-                run(command, env, output / f"{name}.log", "ATLAS_UI_TEST_PASS")
+                check_case(command, name, "ATLAS_UI_TEST_PASS")
         if args.render:
             xvfb = start_xvfb(args.xvfb, env, output)
             print(f"Private display: {env['DISPLAY']} (llvmpipe; not the human desktop)")
@@ -148,13 +167,15 @@ def main():
                     ] + flags
                     if args.keep_open:
                         command.append("--keep-open")
-                    run(
-                        command, env, output / f"{name}.log", "ATLAS_UI_FIXTURE_PASS",
+                    passed = check_case(
+                        command, name, "ATLAS_UI_FIXTURE_PASS",
                         timeout=None if args.keep_open else 180,
                     )
-                    if not (output / f"{name}.png").is_file():
-                        raise RuntimeError("Godot reported success without a screenshot")
-        return 0
+                    if passed and not (output / f"{name}.png").is_file():
+                        failures.append(name + "-missing-screenshot")
+                        results.append("FAIL " + name + "-missing-screenshot")
+        (output / "summary.log").write_text("\n".join(results) + "\n")
+        return 1 if failures else 0
     except (RuntimeError, subprocess.TimeoutExpired, ValueError) as error:
         print(f"FAIL: {error}")
         return 1

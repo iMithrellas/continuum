@@ -15,7 +15,9 @@ GODOT = os.environ.get("GODOT", "godot")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--review-only", action="store_true", help="focused F1/F2 production regressions and actual PCK, not unchanged full gates")
-    review_only = parser.parse_args().review_only
+    parser.add_argument("--legacy-ui", action="store_true", help="also run historical two-strip composition expectations")
+    options = parser.parse_args()
+    review_only = options.review_only
     state = Path(os.environ.get("UI_CHECK_OUTPUT", tempfile.mkdtemp(prefix="ui-checks-", dir="/tmp/opencode")))
     state.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -49,18 +51,22 @@ def main():
     if not run("import", PROJECT, "--editor", "--import"):
         (state / "summary.log").write_text("FAIL import\n")
         return True
-    for name in (["workspace_test", "map_client_legacy_ui_test", "diagnostics_integration_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "diagnostics_integration_test", "map_style_test", "planning_test", "world_art_test", "large_map_wire_test", "world_art_review_test", "legacy_surface_stream_test", "compact_validation_test", "overview_burst_test", "terrain_sdk_cache_test", "terrain_local_cache_test", "world_ecology_art_test"]):
+    for name in (["workspace_test", "map_client_legacy_ui_test", "main_menu_test"] if review_only else ["workspace_test", "terrain_test", "terrain_ui_test", "map_client_test", "map_client_legacy_ui_test", "main_menu_test", "map_style_test", "planning_test", "world_art_test", "large_map_wire_test", "world_art_review_test", "legacy_surface_stream_test", "compact_validation_test", "overview_burst_test", "terrain_sdk_cache_test", "terrain_local_cache_test", "world_ecology_art_test"]):
         run(name, PROJECT, "--scene", f"res://tools/{name}.tscn")
-    run("workspace_collapsed_production_test", PROJECT, "--scene", "res://tools/workspace_collapsed_production_test.tscn")
+    for screen, scale in [("1440x900", 100), ("1440x900", 125), ("960x640", 100), ("960x640", 150), ("360x480", 150)]:
+        run(f"atlas-{screen}-{scale}", PROJECT, "--scene", "res://tools/atlas_ui_test.tscn", "--", f"--screen={screen}", f"--scale={scale}")
     run("role_panels_test", PROJECT, "--scene", "res://tools/role_panels_test.tscn", "--", "--profile=developer")
     for name in ([] if review_only else ["server_browser_test", "diagnostics_test", "diagnostics_bar_test", "history_test", "session_observations_test", "ui_data_test", "ui_theme_test", "map_regions_test", "ui_scale_test", "large_map_foundations_test", "sdk_subscription_cache_test"]):
         run(name, PROJECT, "--script", f"res://tools/{name}.gd")
     if not review_only:
         run("map-client-cpu-profile", PROJECT, "--scene", "res://tools/map_client_profile.tscn", "--", "--edge=24")
-    if review_only:
+    if options.legacy_ui:
+        run("diagnostics_integration_test", PROJECT, "--scene", "res://tools/diagnostics_integration_test.tscn")
+        run("workspace_collapsed_production_test", PROJECT, "--scene", "res://tools/workspace_collapsed_production_test.tscn")
+    if review_only and options.legacy_ui:
         run("review-regressions", PROJECT, "--scene", "res://tools/ui_review_regression.tscn", "--", "--status=problem", "--focus", "--reduced-motion")
         run("status-budget", PROJECT, "--scene", "res://tools/ui_status_budget_test.tscn", "--", "--screen=960x640", "--scale=150", "--status=problem", "--focus", "--reduced-motion")
-    for status in ([] if review_only else ["nominal", "problem"]):
+    for status in (["nominal", "problem"] if options.legacy_ui and not review_only else []):
         run("composition-" + status, PROJECT, "--scene", "res://tools/ui_composition_fixture.tscn", "--", "--screen=1440x900", "--scale=100", "--status=" + status, "--focus", "--reduced-motion", "--layout-qa")
 
     # Relative component-test imports require the original repository shape.
@@ -84,8 +90,8 @@ def main():
         # geometry from the exported pack in an otherwise empty directory.
         empty = state / "pack-runtime"
         empty.mkdir(exist_ok=True)
-        fixture = "ui_status_budget_test" if review_only else "ui_composition_fixture"
-        run("packed-widgets", empty, "--main-pack", str(pack), "--scene", f"res://tools/{fixture}.tscn", "--", "--screen=960x640" if review_only else "--screen=1440x900", "--scale=150" if review_only else "--scale=100", "--status=problem", "--reduced-motion", "--focus", "--layout-qa")
+        fixture = "atlas_ui_test"
+        run("packed-widgets", empty, "--main-pack", str(pack), "--scene", f"res://tools/{fixture}.tscn", "--", "--screen=960x640" if review_only else "--screen=1440x900", "--scale=150" if review_only else "--scale=100")
     (state / "summary.log").write_text("FAIL " + ", ".join(failures) if failures else "ALL_BACKEND_FREE_GATES_PASS\n")
     print("Evidence:", state)
     return bool(failures)

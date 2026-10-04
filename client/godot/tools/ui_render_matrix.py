@@ -9,16 +9,28 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
+
+from atlas_ui_checks import main as atlas_main
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--live", action="store_true", help="render actual typed-fixture production main, not phase 2 chrome")
+parser.add_argument("--legacy-ui", action="store_true", help="explicit historical two-strip fixtures rather than current Atlas")
 parser.add_argument("--review-only", action="store_true", help="three focused review-fix GPU cases, not the unchanged full matrix")
 parser.add_argument("--floating-only", action="store_true", help="eight actual-main viewport/scale/status cases for floating integration")
 parser.add_argument("--header-only", action="store_true", help="focused two-strip header matrix plus a 4K window")
 parser.add_argument("--budget-only", action="store_true", help="five multi-warning status budgets, including 240 logical px")
 parser.add_argument("--collapsed-only", action="store_true", help="production resize/collapse/drag at 100/125/150 percent and the floating boundary")
 options = parser.parse_args()
+if not options.legacy_ui:
+    # Current primary test-ui-render uses the actual-main Atlas matrix. Old chrome
+    # expectations are opt-in historical evidence, never silently treated as Atlas.
+    arguments = [sys.argv[0], "--render"]
+    if os.environ.get("UI_RENDER_OUTPUT"):
+        arguments += ["--output", os.environ["UI_RENDER_OUTPUT"]]
+    sys.argv = arguments
+    raise SystemExit(atlas_main())
 scene = "ui_composition_fixture" if options.live or options.floating_only or options.header_only else "ui_chrome_fixture"
 if options.review_only:
     scene = "ui_review_regression"

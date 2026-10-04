@@ -51,13 +51,17 @@ func run_contracts() -> void:
 	await _keyboard_contracts(deck)
 	await _workspace_contracts(deck)
 	await _settings_contracts(deck)
+	await _diagnostics_shortcut_contracts(deck)
+	await _footer_contracts(deck)
 	_migration_contracts()
 	# Restore the requested composition so captures show no test side effects.
 	deck.switch_workspace(_workspace)
 	deck.revert_workspace()
 	deck.close_command()
+	main.configure_diagnostics(_workspace == "diagnostics", false, false)
 	if _command:
-		deck.open_command(false)
+		deck.open_command(true)
+	_park_pointer()
 	await settle()
 
 
@@ -91,8 +95,16 @@ func _geometry_contracts(deck: Variant) -> void:
 		deck.reveal_panel(key)
 		await settle()
 		var window: Variant = deck.windows[key]
-		check(window.position.y <= 40, "diagnostics micro panel uses top position: " + key)
-		check(window.size.y < 180, "micro window retains natural height: " + key)
+		if not deck.compact:
+			var expected_y := 52.0 if key == "session" else 12.0
+			check(
+				is_equal_approx(window.position.y, expected_y),
+				"diagnostics micro panel top position: " + key
+			)
+		check(
+			is_equal_approx(window.size.y, 30),
+			"micro window remains 30 logical pixels, including compact: " + key
+		)
 	deck.reveal_panel("people")
 	await settle()
 	var regular: Variant = deck.windows.people
@@ -146,6 +158,14 @@ func _command_contracts(deck: Variant) -> void:
 	check(
 		not "developer" in copy and not "admin" in copy, "Command card omits unauthorized entries"
 	)
+	for action: String in ["Since you left", "Settings", "Servers", "Disconnect"]:
+		var button := find_button(card, action)
+		check(button != null, "Command footer exposes " + action)
+		if button != null:
+			check(
+				rect.grow(1).encloses(button.get_global_rect()),
+				"Command footer route remains bounded and reachable: " + action
+			)
 	check(main._map_input_blocked(rect.get_center()), "Command card hit area blocks map input")
 	var selections := [0]
 	var selected := func(_rect: Rect2i) -> void: selections[0] += 1
@@ -180,8 +200,9 @@ func _state_contracts(deck: Variant) -> void:
 	deck._apply_layout()
 	await settle()
 	var origin: Vector2 = window.position
-	await _drag(window.titlebar.global_position + Vector2(50, 12), Vector2(20, 30))
-	check(window.position.distance_to(origin) > 1, "collapsed header really drags")
+	if not deck.compact:
+		await _drag(window.titlebar.global_position + Vector2(50, 12), Vector2(20, 30))
+		check(window.position.distance_to(origin) > 1, "collapsed header really drags")
 	check(
 		deck.state("people").rect.slice(2) == dimensions,
 		"collapsed drag preserves expanded dimensions"
@@ -217,12 +238,17 @@ func _state_contracts(deck: Variant) -> void:
 		deck.reveal_panel(key)
 		await settle()
 		var micro: Variant = deck.windows[key]
-		var natural: Vector2 = micro.size
+		var dimensions_before: Array = deck.state(key).rect.slice(2)
 		deck.set_panel_state(key, "collapsed")
 		deck.set_panel_state(key, "open")
 		await settle()
 		check(
-			micro.size.is_equal_approx(natural), "micro reopen preserves natural dimensions: " + key
+			micro.size.is_equal_approx(micro.micro_size().min(deck.area.size)),
+			"micro reopen uses current natural content dimensions, not viewport: " + key
+		)
+		check(
+			deck.state(key).rect.slice(2) == dimensions_before,
+			"micro reopen preserves expanded saved dimensions: " + key
 		)
 	deck.revert_workspace()
 
@@ -234,6 +260,13 @@ func _keyboard_contracts(deck: Variant) -> void:
 	var card: Variant = deck.get("command_card")
 	var search: LineEdit = _line_edit(card) if card != null else null
 	if search != null:
+		search.grab_focus()
+		await _key(KEY_K, true)
+		check(
+			not deck.is_command_open(), "Ctrl+K closes Command while its LineEdit already has focus"
+		)
+		await _key(KEY_K, true)
+		check(deck.is_command_open(), "Ctrl+K reopens Command and focuses search")
 		search.grab_focus()
 		var mode: StringName = main.map.interaction_mode
 		await _key(KEY_B)
@@ -255,6 +288,9 @@ func _keyboard_contracts(deck: Variant) -> void:
 			"Alt+%d selects preset" % (index + 1)
 		)
 	main._set_permissions("admin", true, true)
+	var profile: String = main._profile
+	main._profile = ContinuumClientProfile.DEVELOPER
+	main._refresh_permissions()
 	deck.set_panel_state("admin", "closed")
 	deck.set_panel_state("developer", "closed")
 	await _key(KEY_F9)
@@ -264,6 +300,7 @@ func _keyboard_contracts(deck: Variant) -> void:
 	)
 	await _key(KEY_F10)
 	check(deck.windows.developer.visible, "legacy F10 targets Developer")
+	main._profile = profile
 	main._set_permissions("operator", true, false)
 	await _key(KEY_F9)
 	await _key(KEY_F10)
@@ -412,6 +449,133 @@ func _settings_contracts(deck: Variant) -> void:
 	)
 	deck.close_command()
 	await settle()
+
+
+func _diagnostics_shortcut_contracts(deck: Variant) -> void:
+	main.configure_diagnostics(false, false, false)
+	deck.close_command()
+	await _key(KEY_F8)
+	check(main._settings.diagnostics_enabled, "F8 toggles Performance when colony input is active")
+	main.configure_diagnostics(false, false, false)
+	for context: String in ["text", "menu", "servers", "digest"]:
+		if context == "text":
+			deck.open_command(true)
+		elif context == "menu":
+			main._menu.show_menu()
+		elif context == "servers":
+			main._show_server_management()
+		else:
+			main._show_away_digest()
+		main._sync_menu_input()
+		await settle()
+		await _key(KEY_F8)
+		check(not main._settings.diagnostics_enabled, "F8 has no effect with " + context + " input")
+		main.configure_diagnostics(false, false, false)
+		if context == "text":
+			deck.close_command()
+		elif context == "menu":
+			main._on_menu_resume_requested()
+		elif context == "servers":
+			main._hide_server_management()
+			main._on_menu_resume_requested()
+		else:
+			main._hide_away_digest()
+		main._sync_menu_input()
+		await settle()
+	deck.open_command(false)
+	await _card_panel_click(deck, "performance", "Open")
+	check(
+		main._settings.diagnostics_enabled,
+		"Command Performance Open enables diagnostics preference"
+	)
+	check(
+		main._menu._diagnostics_toggle.button_pressed,
+		"Command Performance Open updates Settings checkbox"
+	)
+	await _card_panel_click(deck, "performance", "Closed")
+	check(
+		not main._settings.diagnostics_enabled,
+		"Command Performance Close disables diagnostics preference"
+	)
+	check(
+		not main._menu._diagnostics_toggle.button_pressed,
+		"Command Performance Close updates Settings checkbox"
+	)
+	await show_settings()
+	main._menu._diagnostics_toggle.set_pressed(true)
+	await settle()
+	check(deck.state("performance").open, "Settings diagnostics checkbox opens Performance panel")
+	main._menu._diagnostics_toggle.set_pressed(false)
+	await settle()
+	check(
+		not deck.state("performance").open, "Settings diagnostics checkbox closes Performance panel"
+	)
+	await _key(KEY_ESCAPE)
+	main._sync_menu_input()
+	deck.close_command()
+
+
+func _card_panel_click(deck: Variant, key: String, state: String) -> void:
+	var card: Control = deck.command_card
+	var row := card.find_child("Panel_" + key, true, false)
+	check(row != null, "Command has actual panel row: " + key)
+	if row == null:
+		return
+	var button := row.find_child(state, true, false) as Button
+	check(button != null, "Command exposes actual state segment: " + state)
+	if button == null:
+		return
+	var scroll := card.find_child("CommandBodyScroll", true, false) as ScrollContainer
+	scroll.ensure_control_visible(button)
+	await settle()
+	check(
+		scroll.get_global_rect().grow(1).encloses(button.get_global_rect()),
+		"panel segment is reachable through Command scroll"
+	)
+	await _click(button.get_global_rect().get_center())
+	await settle()
+
+
+func _footer_contracts(deck: Variant) -> void:
+	for action: String in ["Since you left", "Settings", "Servers"]:
+		deck.open_command(false)
+		await settle()
+		var button := find_button(deck.command_card, action)
+		check(button != null, "actual footer action available: " + action)
+		if button == null:
+			continue
+		await _click(button.get_global_rect().get_center())
+		await settle()
+		check(not deck.is_command_open(), "footer route closes Command: " + action)
+		if action == "Since you left":
+			check(main._digest_overlay.visible, "footer reaches actual away digest")
+			main._hide_away_digest()
+		elif action == "Settings":
+			check(
+				main._menu.visible and main._menu._settings_panel.visible,
+				"footer reaches actual Settings modal"
+			)
+			await _key(KEY_ESCAPE)
+		else:
+			check(
+				main._server_management.visible,
+				"footer reaches actual server browser with disabled probe transport"
+			)
+			main._hide_server_management()
+			main._on_menu_resume_requested()
+		main._sync_menu_input()
+		await settle()
+	# Disconnect is reachable but not dispatched: the fixture keeps its typed world.
+	deck.open_command(false)
+	await settle()
+	var disconnect := find_button(deck.command_card, "Disconnect")
+	if disconnect != null:
+		disconnect.grab_focus()
+		check(
+			get_viewport().gui_get_focus_owner() == disconnect,
+			"Disconnect route remains keyboard reachable at narrow scale"
+		)
+	deck.close_command()
 
 
 func _line_edit(node: Node) -> LineEdit:
