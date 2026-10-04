@@ -1,0 +1,14 @@
+# Match the existing client composition style; generated/third-party code is external.
+# gdformat keeps code at 100 columns. Literal UI copy and SQL can be up to 200.
+disable:
+  - class-definitions-order
+class-variable-name: '(_?[a-z][a-z0-9]*(_[a-z0-9]+)*|[A-Z][A-Z0-9]*(_[A-Z0-9]+)*)'
+max-line-length: 200
+max-file-lines: 6000
+max-public-methods: 80
+max-returns: 15
+excluded_directories: !!set
+  .git: null
+  .godot: null
+  addons: null
+  spacetime_bindings: null
