@@ -3544,6 +3544,8 @@ func _layout_map_overlays() -> void:
 
 
 func _map_input_blocked(point: Vector2) -> bool:
+	if _system_modal_visible():
+		return true
 	if is_instance_valid(_session_menu) and _session_menu.get_popup().visible:
 		return true
 	if workspace.blocks_map_input(point):
@@ -4001,7 +4003,9 @@ func _refresh_status() -> void:
 	if config == null or colony == null:
 		_clock.text = "Day --  --:--"
 		_population.text = "Crew --"
-		_rates_status.text = "Rates unavailable · waiting for colony state"
+		_rates_status.text = "Rates unavailable"
+		_rates_status.tooltip_text = "Waiting for authoritative colony state. Rates are local stock observations per game hour since connection."
+		_rates_status.show()
 		_resource_warning.hide()
 		_status_resource_inputs.clear()
 		_status_resource_configs.clear()
@@ -4094,16 +4098,12 @@ func _refresh_status() -> void:
 			% [resource.capitalize(), str(data.value), _resource_labels[kind].model.rate_copy]
 		)
 	_rates_status.text = (
-		"Rates warming · observed per game h"
+		"Rates warming · game h"
 		if usable == 0 and _state_ready and config.time_scale > 0
 		else (
-			"Rates unavailable · paused or stale"
+			"Rates unavailable"
 			if usable == 0
-			else (
-				"Rates partial · observed per game h"
-				if warming > 0
-				else "Observed per game h · since connection"
-			)
+			else ("Partial estimates · game h" if warming > 0 else "Local estimates · game h")
 		)
 	)
 	_rates_status.tooltip_text = (
