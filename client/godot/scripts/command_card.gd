@@ -41,13 +41,15 @@ var _workspace_grid: GridContainer
 var _workspace_buttons: Dictionary = {}
 var _workspace_group := ButtonGroup.new()
 var _management: MarginContainer
+var _management_grid: GridContainer
 var _delete_button: Button
 var _modified: MarginContainer
+var _modified_row: HBoxContainer
 var _panel_count: Label
 var _group_nodes: Dictionary = {}
 var _panel_rows: Dictionary = {}
 var _footer: PanelContainer
-var _footer_row: HBoxContainer
+var _footer_row: GridContainer
 var _footer_buttons: Dictionary = {}
 var _digest_label: Label
 var _digest_count := 0
@@ -56,6 +58,7 @@ var _results: Array[Button] = []
 var _query := ""
 var _row_normal: StyleBoxFlat
 var _row_hover: StyleBoxFlat
+var _available_size := Vector2.ZERO
 
 
 ## Small vector glyphs keep the prototype's 10×8 state controls crisp at UI scale.
@@ -128,11 +131,34 @@ func refresh() -> void:
 		return
 	if not _deck.model.workspaces.has(_deck.model.active):
 		return
+	var focused := get_viewport().gui_get_focus_owner() if is_inside_tree() else null
+	var owned_focus := focused != null and is_ancestor_of(focused)
 	_sync_workspaces()
 	_sync_panels()
 	_modified.visible = _deck.is_layout_dirty()
 	_delete_button.disabled = _deck.model.workspaces.size() < 2
 	_apply_filter()
+	if owned_focus and is_visible_in_tree():
+		if not is_instance_valid(focused) or not focused.is_visible_in_tree():
+			_search.grab_focus()
+		elif focused is BaseButton and focused.disabled:
+			_search.grab_focus()
+
+
+## Logical viewport size, after UI scaling. Keep the eight-pixel inset on every edge.
+## Call on deck resize; the regular 272-pixel prototype layout remains unchanged.
+func set_available_size(viewport: Vector2) -> void:
+	_available_size = viewport
+	if _search == null:
+		return
+	var width := clampf(viewport.x - INSET * 2, 0, WIDTH)
+	var narrow := width < 260
+	_management_grid.columns = 2 if narrow else 4
+	_footer_row.columns = 2 if narrow else 3
+	_modified_row.add_theme_constant_override("separation", 4 if narrow else 10)
+	custom_minimum_size.x = width
+	offset_right = INSET + width
+	size = Vector2(width, maxf(0, viewport.y - INSET * 2))
 
 
 func focus_search() -> void:
@@ -193,6 +219,8 @@ func _build() -> void:
 	bottom.custom_minimum_size.y = 8
 	_body.add_child(bottom)
 	_build_footer(stack)
+	if _available_size != Vector2.ZERO:
+		set_available_size(_available_size)
 
 
 func _build_search(parent: Node) -> void:
@@ -240,11 +268,15 @@ func _build_workspaces() -> void:
 	_workspace_grid.add_theme_constant_override("v_separation", 4)
 	margin.add_child(_workspace_grid)
 	_management = _inset(_body, Vector4(12, 7, 12, 0))
-	var controls := _hbox(_management, 14)
+	_management_grid = GridContainer.new()
+	_management_grid.columns = 4
+	_management_grid.add_theme_constant_override("h_separation", 14)
+	_management_grid.add_theme_constant_override("v_separation", 4)
+	_management.add_child(_management_grid)
 	for entry: Array in [
 		["+ New", "new"], ["Rename", "rename"], ["Duplicate", "duplicate"], ["Delete", "delete"]
 	]:
-		var button := _button(controls, entry[0], _workspace_action.bind(entry[1]))
+		var button := _button(_management_grid, entry[0], _workspace_action.bind(entry[1]))
 		button.add_theme_font_size_override("font_size", 12)
 		button.add_theme_color_override("font_color", SUBTLE)
 		if entry[1] == "delete":
@@ -256,6 +288,7 @@ func _build_workspaces() -> void:
 	)
 	_modified.add_child(panel)
 	var row := _hbox(panel, 10)
+	_modified_row = row
 	row.custom_minimum_size.y = 26
 	row.add_child(_label("Layout changed", 12, MUTED))
 	for action: String in ["save", "revert"]:
@@ -301,7 +334,11 @@ func _build_footer(parent: Node) -> void:
 	_digest_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_digest_label.offset_right = -6
 	digest.add_child(_digest_label)
-	_footer_row = _hbox(stack, 2)
+	_footer_row = GridContainer.new()
+	_footer_row.columns = 3
+	_footer_row.add_theme_constant_override("h_separation", 2)
+	_footer_row.add_theme_constant_override("v_separation", 0)
+	stack.add_child(_footer_row)
 	for action: String in ["settings", "servers", "disconnect"]:
 		_footer_button(_footer_row, action)
 
@@ -435,6 +472,7 @@ func _make_panel_row(key: String, parent: Node) -> Dictionary:
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	button.clip_text = true
+	button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	button.add_theme_font_size_override("font_size", 13)
 	for style: String in ["normal", "hover", "pressed"]:
 		button.add_theme_stylebox_override(
