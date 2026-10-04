@@ -9,6 +9,21 @@ const Layout = preload("res://scripts/workspace_layout.gd")
 func _init() -> void:
 	var path := "user://ui_scale_test_%d.cfg" % Time.get_ticks_usec()
 	var settings := Settings.new()
+	assert(Settings.UI_SCALES == [100, 125, 150, 175])
+	for boundary: Array in [
+		[0, 100],
+		[75, 100],
+		[112, 100],
+		[113, 125],
+		[137, 125],
+		[138, 150],
+		[162, 150],
+		[163, 175],
+		[175, 175],
+		[200, 175],
+		[999, 175]
+	]:
+		assert(Settings.normalize_ui_scale(boundary[0]) == boundary[1])
 	settings.font_size = 999
 	assert(settings.save_to(path) == OK)
 	var restored := Settings.new()
@@ -37,21 +52,28 @@ func _init() -> void:
 		assert(migrated.ui_scale_percent == Settings.legacy_ui_scale(old_font))
 		assert(migrated.ui_scale_percent >= 100 and migrated.font_size == old_font)
 		assert(migrated.server_host == "http://example.test")
-	settings.ui_scale_percent = 150
-	settings.reduced_motion = true
-	assert(settings.save_to(path) == OK)
-	assert(
-		(
-			restored.load_from(path) == "loaded"
-			and restored.ui_scale_percent == 150
-			and restored.reduced_motion
-		)
-	)
 	var window := Window.new()
-	restored.apply_ui_scale(window)
-	assert(window.content_scale_factor == 1.5 and restored.font_size == 13)
-	assert(restored.ui_metrics().scale == 1 and restored.ui_metrics().font(10) == 11)
-	assert(restored.clone().reduced_motion and restored.clone().ui_scale_percent == 150)
+	for scale: int in Settings.UI_SCALES:
+		settings.ui_scale_percent = scale
+		settings.reduced_motion = true
+		assert(settings.save_to(path) == OK)
+		assert(restored.load_from(path) == "loaded")
+		assert(restored.ui_scale_percent == scale and restored.reduced_motion)
+		restored.apply_ui_scale(window)
+		assert(window.content_scale_mode == Window.CONTENT_SCALE_MODE_CANVAS_ITEMS)
+		assert(window.content_scale_factor == float(scale) / 100.0)
+		assert(restored.font_size == Settings.DEFAULT_FONT_SIZE)
+		assert(restored.ui_metrics().scale == 1 and restored.ui_metrics().font(10) == 11)
+		assert(restored.clone().reduced_motion and restored.clone().ui_scale_percent == scale)
+	assert(window.content_scale_factor == 1.75 and restored.ui_scale_percent == 175)
+	for boundary: Array in [[75, 100], [200, 175]]:
+		var unsupported := ConfigFile.new()
+		unsupported.set_value("ui", "scale_percent", boundary[0])
+		assert(unsupported.save(path) == OK)
+		assert(restored.load_from(path) == "loaded")
+		assert(restored.ui_scale_percent == boundary[1])
+		restored.apply_ui_scale(window)
+		assert(window.content_scale_factor == float(boundary[1]) / 100.0)
 	window.free()
 	var corrupt := path + ".bad"
 	var bad_file := FileAccess.open(corrupt, FileAccess.WRITE)

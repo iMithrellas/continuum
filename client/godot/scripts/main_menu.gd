@@ -14,7 +14,6 @@ const SUBTLE := Color("8b929a")
 const DIVIDER := Color("262a2f")
 const MEDIUM_FONT = preload("res://ui/theme/fonts/IBMPlexSans-Medium.woff2")
 const PRIMARY_UI_SCALES := [100, 125, 150, 175]
-const EXTRA_UI_SCALES := [75, 200]
 
 var main: Control
 var settings := ClientSettings.new()
@@ -359,7 +358,7 @@ func _build_scale_control() -> void:
 	_scale_more.text = "More…"
 	_scale_more.custom_minimum_size.y = 24
 	_scale_more.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_scale_more.tooltip_text = "Additional UI scales: 75% and 200%."
+	_scale_more.tooltip_text = "Additional supported UI scales."
 	_scale_more.add_theme_font_override("font", ThemeTokens.font("log"))
 	_scale_more.add_theme_font_size_override("font_size", 12)
 	_scale_more.add_theme_color_override("font_color", DeckTheme.MUTED)
@@ -371,11 +370,7 @@ func _build_scale_control() -> void:
 	_ui_scale.focus_mode = Control.FOCUS_NONE
 	_ui_scale.visible = false
 	_scale_controls.add_child(_ui_scale)
-	var values: Array = ClientSettings.UI_SCALES.duplicate()
-	for value: int in PRIMARY_UI_SCALES + EXTRA_UI_SCALES:
-		if not values.has(value):
-			values.append(value)
-	for value: int in values:
+	for value: int in ClientSettings.UI_SCALES:
 		_ui_scale.add_item("%d%%" % value, value)
 		if not PRIMARY_UI_SCALES.has(value):
 			_scale_more.get_popup().add_radio_check_item("%d%%" % value, value)
@@ -415,6 +410,8 @@ func _layout_scale_control(stacked: bool) -> void:
 
 
 func _pick_ui_scale(value: int) -> void:
+	if not ClientSettings.UI_SCALES.has(value):
+		return
 	settings.ui_scale_percent = value
 	settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
 	_apply_settings()
@@ -438,6 +435,8 @@ func _sync_ui_scale_controls(prefer_settings := false) -> void:
 		button.set_pressed_no_signal(scale == value)
 		button.disabled = _ui_scale.disabled
 	var popup := _scale_more.get_popup()
+	_scale_more.visible = popup.item_count > 0
+	_scale_more.focus_mode = Control.FOCUS_ALL if _scale_more.visible else Control.FOCUS_NONE
 	for index in popup.item_count:
 		popup.set_item_checked(index, popup.get_item_id(index) == value)
 	_scale_more.text = "More…" if PRIMARY_UI_SCALES.has(value) else "%d%%…" % value

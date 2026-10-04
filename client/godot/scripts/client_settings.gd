@@ -5,7 +5,7 @@ extends RefCounted
 const DEFAULT_FONT_SIZE := 13
 const MIN_FONT_SIZE := 10
 const MAX_FONT_SIZE := 24
-const UI_SCALES := [100, 125, 150]
+const UI_SCALES := [100, 125, 150, 175]
 const SAVE_PATH := "user://continuum_settings.cfg"
 const HISTORY_PATH := "user://continuum_connection_history.json"
 const FAVORITES_PATH := "user://continuum_connection_favorites.json"
