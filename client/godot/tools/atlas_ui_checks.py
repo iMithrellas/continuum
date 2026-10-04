@@ -77,7 +77,7 @@ def main():
     parser.add_argument("--fixture-only", action="store_true")
     parser.add_argument("--xvfb", default=os.environ.get("XVFB") or shutil.which("Xvfb"))
     parser.add_argument("--output", type=Path)
-    parser.add_argument("--screen", help="Single size WxH; otherwise use the four-size/scale matrix")
+    parser.add_argument("--screen", help="Single size WxH; otherwise use four reference budgets plus 360x480/150%")
     parser.add_argument("--scale", type=int, default=100)
     parser.add_argument("--workspace", default="diagnostics")
     parser.add_argument("--command", action="store_true")

@@ -1,6 +1,8 @@
 extends Node
 
 const MenuScene = preload("res://scenes/main_menu.tscn")
+const MainScene = preload("res://scenes/main.tscn")
+const ControllerFixture = preload("res://tools/main_menu_controller_fixture.gd")
 
 var failed := false
 
@@ -36,7 +38,9 @@ func _ready() -> void:
 	var menu: ContinuumMainMenu = MenuScene.instantiate()
 	add_child(menu)
 	menu.setup(null, ClientSettings.new(), UiMetrics.new())
-	var buttons := menu.find_children("*", "Button", true, false)
+	var buttons := menu.find_children("*", "Button", true, false).filter(
+		func(button: Button) -> bool: return button.is_visible_in_tree()
+	)
 	var expected_buttons := [
 		"Join last server",
 		"Disconnect",
@@ -46,7 +50,10 @@ func _ready() -> void:
 		"Reduce motion",
 		"Show diagnostics",
 		"Show frame/RTT graph",
-		"100%"
+		"100%",
+		"125%",
+		"150%",
+		"175%"
 	]
 	_assert(
 		buttons.size() == expected_buttons.size(),
@@ -88,9 +95,36 @@ func _ready() -> void:
 		"clearing busy does not enable an absent last endpoint"
 	)
 	_assert(
-		menu._ui_scale.item_count == 3 and menu._ui_scale.get_item_id(2) == 150,
-		"settings expose only 100/125/150 percent UI scales"
+		(
+			menu._ui_scale.item_count == 4
+			and menu._ui_scale.get_item_id(0) == 100
+			and menu._ui_scale.get_item_id(1) == 125
+			and menu._ui_scale.get_item_id(2) == 150
+			and menu._ui_scale.get_item_id(3) == 175
+		),
+		"compatibility scale data exposes exactly 100/125/150/175 percent"
 	)
+	_assert(
+		not menu._ui_scale.visible and menu._ui_scale.focus_mode == Control.FOCUS_NONE,
+		"hidden compatibility OptionButton is not a keyboard stop"
+	)
+	_assert(
+		menu._scale_buttons.keys() == [100, 125, 150, 175],
+		"actual Settings UI exposes four supported scale segments"
+	)
+	for value: int in [100, 125, 150, 175]:
+		var segment: Button = menu._scale_buttons[value]
+		_assert(
+			segment.visible and segment.focus_mode == Control.FOCUS_ALL,
+			"scale segment is keyboard reachable: %d" % value
+		)
+		segment.pressed.emit()
+		_assert(
+			menu.settings.ui_scale_percent == value,
+			"actual scale segment applies %d percent" % value
+		)
+		_assert(segment.button_pressed, "selected scale segment retains active state")
+	menu._scale_buttons[100].pressed.emit()
 	_button(menu, "Settings").pressed.emit()
 	_assert(menu._settings_panel.visible, "settings are reachable from the menu")
 	_assert(
@@ -203,7 +237,7 @@ func _ready() -> void:
 
 
 func _test_layout() -> void:
-	for font_size: int in [100, 125, 150]:
+	for font_size: int in [100, 125, 150, 175]:
 		var menu: ContinuumMainMenu = MenuScene.instantiate()
 		add_child(menu)
 		menu.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
@@ -257,12 +291,12 @@ func _test_layout() -> void:
 
 
 func _test_controller_resume() -> void:
-	var fixture = preload("res://tools/main_menu_controller_fixture.gd")
+	var fixture = ControllerFixture
 	var previous := SpacetimeDB.Continuum
 	var client = fixture.ClientFixture.new()
 	SpacetimeDB.add_child(client)
 	SpacetimeDB.Continuum = client
-	var main = preload("res://scenes/main.tscn").instantiate()
+	var main = MainScene.instantiate()
 	main.set_script(fixture)
 	add_child(main)
 	main.set_process(false)
@@ -417,7 +451,7 @@ func _test_controller_resume() -> void:
 	client = fixture.ClientFixture.new()
 	SpacetimeDB.add_child(client)
 	SpacetimeDB.Continuum = client
-	main = preload("res://scenes/main.tscn").instantiate()
+	main = MainScene.instantiate()
 	main.set_script(fixture)
 	add_child(main)
 	main.set_process(false)
@@ -461,8 +495,8 @@ func _test_sdk_menu_route() -> void:
 	client._token = "private-menu-fixture-token"
 	SpacetimeDB.add_child(client)
 	SpacetimeDB.Continuum = client
-	var main = preload("res://scenes/main.tscn").instantiate()
-	main.set_script(preload("res://tools/main_menu_controller_fixture.gd"))
+	var main = MainScene.instantiate()
+	main.set_script(ControllerFixture)
 	main.use_sdk_setup = true
 	add_child(main)
 	main.set_process(false)

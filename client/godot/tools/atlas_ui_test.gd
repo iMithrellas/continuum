@@ -209,6 +209,12 @@ func _state_contracts(deck: Variant) -> void:
 	deck.save_workspace()
 	check(not deck.is_layout_dirty(), "explicit save establishes clean baseline")
 	var before: Dictionary = deck.state("people").duplicate(true)
+	if deck.compact:
+		# Compact has one regular-panel slot and prioritizes expanded panels. Isolate
+		# this ternary-state subject; independent micro panels remain available.
+		for key: String in deck.windows:
+			if key != "people" and key not in MICRO_PANELS:
+				deck.set_panel_state(key, "closed")
 	deck.set_panel_state("people", "closed")
 	await settle()
 	check(not deck.windows.people.visible, "closed state removes window")
@@ -217,6 +223,10 @@ func _state_contracts(deck: Variant) -> void:
 	check(
 		deck.windows.people.visible and deck.windows.people.collapsed,
 		"collapsed state keeps title tab"
+	)
+	check(
+		is_equal_approx(deck.windows.people.size.y, 26),
+		"collapsed regular panel has only its 26px tab"
 	)
 	var dimensions: Array = deck.state("people").rect.slice(2)
 	var window: Variant = deck.windows.people
@@ -267,6 +277,7 @@ func _state_contracts(deck: Variant) -> void:
 		var micro: Variant = deck.windows[key]
 		var dimensions_before: Array = deck.state(key).rect.slice(2)
 		deck.set_panel_state(key, "collapsed")
+		await settle()
 		deck.set_panel_state(key, "open")
 		await settle()
 		check(
@@ -476,13 +487,13 @@ func _normalized_rect_equal(actual: Array, expected: Array, context: String) -> 
 		if delta > 0:
 			print(
 				(
-					"ATLAS_JSON_RECT_DELTA %s axis=%d actual=%.17f expected=%.17f delta=%.17f tolerance=%.7f"
+					"ATLAS_JSON_RECT_DELTA %s axis=%d actual=%.17f expected=%.17f delta_x1e18=%.6f tolerance=%.7f"
 					% [
 						context,
 						axis,
 						float(actual[axis]),
 						float(expected[axis]),
-						delta,
+						delta * 1e18,
 						NORMALIZED_RECT_EPSILON
 					]
 				)
