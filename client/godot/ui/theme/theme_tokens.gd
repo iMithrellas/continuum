@@ -3,10 +3,57 @@ extends RefCounted
 ## Logical 100% units. The viewport owns UI scaling; tokens never do.
 
 const ROOT := "res://ui/theme/"
-const VARIANTS := {"title": "LabelTitle", "body-strong": "LabelBodyStrong", "body": "LabelBody", "small": "LabelSmall", "display": "LabelDisplay", "section": "LabelSection", "tag": "LabelTag", "readout-lg": "LabelReadoutLarge", "readout": "LabelReadout", "log": "LabelLog"}
+const VARIANTS := {
+	"title": "LabelTitle",
+	"body-strong": "LabelBodyStrong",
+	"body": "LabelBody",
+	"small": "LabelSmall",
+	"display": "LabelDisplay",
+	"section": "LabelSection",
+	"tag": "LabelTag",
+	"readout-lg": "LabelReadoutLarge",
+	"readout": "LabelReadout",
+	"log": "LabelLog"
+}
 ## Required names are the public contract; their values still come only from JSON.
 const REQUIRED_TOKENS := {
-	"color": ["bg-000", "bg-100", "bg-200", "bg-300", "bg-400", "line-100", "line-200", "ink", "ink-muted", "ink-subtle", "meter-track", "meter-fill", "accent", "accent-soft", "on-accent", "warn", "warn-soft", "on-warn", "critical", "critical-soft", "on-critical", "map-ground", "map-ground-deep", "map-grid", "map-ink", "map-paper", "map-plan", "zone-farm", "zone-forest", "zone-mine", "zone-storage", "zone-sleep", "zone-dining", "zone-rec"],
+	"color":
+	[
+		"bg-000",
+		"bg-100",
+		"bg-200",
+		"bg-300",
+		"bg-400",
+		"line-100",
+		"line-200",
+		"ink",
+		"ink-muted",
+		"ink-subtle",
+		"meter-track",
+		"meter-fill",
+		"accent",
+		"accent-soft",
+		"on-accent",
+		"warn",
+		"warn-soft",
+		"on-warn",
+		"critical",
+		"critical-soft",
+		"on-critical",
+		"map-ground",
+		"map-ground-deep",
+		"map-grid",
+		"map-ink",
+		"map-paper",
+		"map-plan",
+		"zone-farm",
+		"zone-forest",
+		"zone-mine",
+		"zone-storage",
+		"zone-sleep",
+		"zone-dining",
+		"zone-rec"
+	],
 	"spacing": ["space-1", "space-2", "space-3", "space-4", "space-6", "space-8"],
 	"size": ["control-sm", "control-md", "panel-header", "topbar", "tile", "panel-min"],
 	"radius": ["radius-0", "radius-sm", "radius-md"],
@@ -18,6 +65,7 @@ static var _styles: Dictionary = {}
 static var _fonts: Dictionary = {}
 static var _style_fonts: Dictionary = {}
 static var _loaded := false
+
 
 ## Pure resolver: error is explicit and malformed/missing/cyclic aliases never hang.
 static func resolve(values: Dictionary, token: String) -> Dictionary:
@@ -40,11 +88,13 @@ static func resolve(values: Dictionary, token: String) -> Dictionary:
 		return {"value": value}
 	return {}
 
+
 static func parse_number(value: String) -> Dictionary:
 	var raw := value.trim_suffix("px")
 	if not raw.is_valid_float() or not is_finite(raw.to_float()) or raw.to_float() < 0:
 		return {"error": "Invalid nonnegative pixel value: " + value}
 	return {"value": raw.to_float()}
+
 
 static func parse_shadow(value: String) -> Dictionary:
 	var layers: Array[Dictionary] = []
@@ -58,14 +108,23 @@ static func parse_shadow(value: String) -> Dictionary:
 			if parsed.has("error"):
 				return parsed
 			dimensions.append(parsed.value)
-		layers.append({"offset": Vector2(dimensions[0], dimensions[1]), "blur": dimensions[2], "spread": dimensions[3] if dimensions.size() == 4 else 0.0, "color": Color.html(fields[-1])})
+		layers.append(
+			{
+				"offset": Vector2(dimensions[0], dimensions[1]),
+				"blur": dimensions[2],
+				"spread": dimensions[3] if dimensions.size() == 4 else 0.0,
+				"color": Color.html(fields[-1])
+			}
+		)
 	return {"value": layers}
+
 
 static func shadow(token: String) -> Array:
 	if not _ensure() or _families.get(token) != "shadow":
 		push_error("Unknown shadow token " + token)
 		return []
 	return parse_shadow(resolve(_values, token).value).value
+
 
 static func validate(data: Variant) -> Array[String]:
 	var errors: Array[String] = []
@@ -78,7 +137,11 @@ static func validate(data: Variant) -> Array[String]:
 			errors.append("Missing token family: " + family)
 			continue
 		for token: Variant in data[family].tokens:
-			if not token is Dictionary or not token.get("name") is String or not token.get("value") is String:
+			if (
+				not token is Dictionary
+				or not token.get("name") is String
+				or not token.get("value") is String
+			):
 				errors.append("Invalid token in " + family)
 				continue
 			if values.has(token.name):
@@ -108,24 +171,46 @@ static func validate(data: Variant) -> Array[String]:
 				errors.append(parsed.error)
 			elif families[key] == "radius" and not parsed.value in [0.0, 2.0, 4.0]:
 				errors.append("Unsupported radius: " + key)
-	if not data.get("type") is Dictionary or not data.type.get("groups") is Array or not data.type.get("fonts") is Array:
+	if (
+		not data.get("type") is Dictionary
+		or not data.type.get("groups") is Array
+		or not data.type.get("fonts") is Array
+	):
 		errors.append("Missing typography")
 		return errors
 	var available := {}
 	for entry: Variant in data.type.fonts:
-		if not entry is Dictionary or not entry.get("family") is String or not entry.get("weight") is String or not entry.get("file") is String:
+		if (
+			not entry is Dictionary
+			or not entry.get("family") is String
+			or not entry.get("weight") is String
+			or not entry.get("file") is String
+		):
 			errors.append("Invalid font entry")
 			continue
-		if not entry.file.begins_with("fonts/") or ".." in entry.file or not entry.file.ends_with(".woff2"):
+		if (
+			not entry.file.begins_with("fonts/")
+			or ".." in entry.file
+			or not entry.file.ends_with(".woff2")
+		):
 			errors.append("Unsafe font path")
 		available[entry.family + ":" + entry.weight] = true
 	var styles := {}
 	for group: Variant in data.type.groups:
-		if not group is Dictionary or not group.get("family") in ["sans", "cond", "mono"] or not group.get("styles") is Array:
+		if (
+			not group is Dictionary
+			or not group.get("family") in ["sans", "cond", "mono"]
+			or not group.get("styles") is Array
+		):
 			errors.append("Invalid type group")
 			continue
 		for style: Variant in group.styles:
-			if not style is Dictionary or not style.get("name") is String or not style.get("fontSize") is String or not style.get("lineHeight") is String:
+			if (
+				not style is Dictionary
+				or not style.get("name") is String
+				or not style.get("fontSize") is String
+				or not style.get("lineHeight") is String
+			):
 				errors.append("Invalid type style")
 				continue
 			if styles.has(style.name):
@@ -136,22 +221,42 @@ static func validate(data: Variant) -> Array[String]:
 				errors.append("Invalid font weight: " + style.name)
 				continue
 			var numeric_weight := float(weight)
-			if not is_finite(numeric_weight) or numeric_weight != floor(numeric_weight) or numeric_weight < 1 or numeric_weight > 1000:
+			if (
+				not is_finite(numeric_weight)
+				or numeric_weight != floor(numeric_weight)
+				or numeric_weight < 1
+				or numeric_weight > 1000
+			):
 				errors.append("Font weight must be a finite integer from 1 to 1000: " + style.name)
 				continue
 			var size := parse_number(style.fontSize)
 			var height := parse_number(style.lineHeight)
-			if size.has("error") or height.has("error") or size.get("value", 0) < 11 or height.get("value", 0) < size.get("value", 0):
+			if (
+				size.has("error")
+				or height.has("error")
+				or size.get("value", 0) < 11
+				or height.get("value", 0) < size.get("value", 0)
+			):
 				errors.append("Invalid type dimensions: " + style.name)
-			var family: String = {"sans": "IBM Plex Sans", "cond": "IBM Plex Sans Condensed", "mono": "IBM Plex Mono"}[group.family]
+			var family: String = {
+				"sans": "IBM Plex Sans", "cond": "IBM Plex Sans Condensed", "mono": "IBM Plex Mono"
+			}[group.family]
 			if not available.has(family + ":" + str(int(style.fontWeight))):
 				errors.append("Missing font for " + style.name)
-			if style.has("letterSpacing") and (not style.letterSpacing is String or not style.letterSpacing.ends_with("em") or not style.letterSpacing.trim_suffix("em").is_valid_float()):
+			if (
+				style.has("letterSpacing")
+				and (
+					not style.letterSpacing is String
+					or not style.letterSpacing.ends_with("em")
+					or not style.letterSpacing.trim_suffix("em").is_valid_float()
+				)
+			):
 				errors.append("Invalid tracking")
 	for style: String in VARIANTS:
 		if not styles.has(style):
 			errors.append("Missing type style: " + style)
 	return errors
+
 
 static func _ensure() -> bool:
 	if _loaded:
@@ -205,6 +310,7 @@ static func _ensure() -> bool:
 	_loaded = true
 	return true
 
+
 static func color(token: String) -> Color:
 	if not _ensure():
 		return Color.TRANSPARENT
@@ -213,6 +319,7 @@ static func color(token: String) -> Color:
 		push_error("UI color: " + token + " " + str(result))
 		return Color.TRANSPARENT
 	return Color.html(result.value)
+
 
 static func number(token: String) -> float:
 	if not _ensure():
@@ -223,17 +330,20 @@ static func number(token: String) -> float:
 		return 0.0
 	return parse_number(result.value).get("value", 0.0)
 
+
 static func font_size(style: String) -> int:
 	if not _ensure() or not _styles.has(style):
 		push_error("Unknown type style " + style)
 		return 11
 	return int(parse_number(_styles[style].fontSize).value)
 
+
 static func line_height(style: String) -> int:
 	if not _ensure() or not _styles.has(style):
 		push_error("Unknown type style " + style)
 		return 14
 	return int(parse_number(_styles[style].lineHeight).value)
+
 
 static func font(style: String) -> Font:
 	if not _ensure() or not _styles.has(style):
@@ -242,23 +352,29 @@ static func font(style: String) -> Font:
 	if _style_fonts.has(style):
 		return _style_fonts[style]
 	var spec: Dictionary = _styles[style]
-	var family: String = {"sans": "IBM Plex Sans", "cond": "IBM Plex Sans Condensed", "mono": "IBM Plex Mono"}[spec.family]
+	var family: String = {
+		"sans": "IBM Plex Sans", "cond": "IBM Plex Sans Condensed", "mono": "IBM Plex Mono"
+	}[spec.family]
 	var base: Font = load(_fonts[family + ":" + str(int(spec.fontWeight))])
 	assert(base != null, "Font import missing")
 	if spec.has("letterSpacing"):
 		var variation := FontVariation.new()
 		variation.base_font = base
-		variation.spacing_glyph = roundi(float(spec.letterSpacing.trim_suffix("em")) * font_size(style))
+		variation.spacing_glyph = roundi(
+			float(spec.letterSpacing.trim_suffix("em")) * font_size(style)
+		)
 		_style_fonts[style] = variation
 		return variation
 	_style_fonts[style] = base
 	return base
+
 
 static func glyph(name: String) -> Texture2D:
 	if not name in ["notice", "warn", "critical", "ack", "auto", "player"]:
 		push_error("Unknown UI glyph: " + name)
 		return null
 	return load(ROOT + "glyphs/" + name + ".svg") as Texture2D
+
 
 static func apply_label(label: Label, style: String) -> void:
 	if not _ensure() or not VARIANTS.has(style):
@@ -267,7 +383,18 @@ static func apply_label(label: Label, style: String) -> void:
 	label.theme_type_variation = VARIANTS[style]
 	label.add_theme_font_override("font", font(style))
 	label.add_theme_font_size_override("font_size", font_size(style))
-	label.add_theme_color_override("font_color", color("ink-subtle" if style in ["section", "log"] else "ink-muted" if style in ["small", "tag"] else "ink"))
+	label.add_theme_color_override(
+		"font_color",
+		color(
+			(
+				"ink-subtle"
+				if style in ["section", "log"]
+				else "ink-muted" if style in ["small", "tag"] else "ink"
+			)
+		)
+	)
 	label.uppercase = style in ["section", "tag"]
-	label.add_theme_constant_override("line_spacing", line_height(style) - ceili(font(style).get_height(font_size(style))))
+	label.add_theme_constant_override(
+		"line_spacing", line_height(style) - ceili(font(style).get_height(font_size(style)))
+	)
 	label.custom_minimum_size.y = line_height(style)

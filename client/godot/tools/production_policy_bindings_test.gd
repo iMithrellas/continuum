@@ -3,12 +3,15 @@
 extends SceneTree
 
 
-class RecordingClient extends SpacetimeDBClient:
+class RecordingClient:
+	extends SpacetimeDBClient
 	var reducer_name := ""
 	var arguments: Array = []
 	var argument_types: Array = []
 
-	func call_reducer(p_name: String, args: Array = [], types: Array = []) -> SpacetimeDBReducerCall:
+	func call_reducer(
+		p_name: String, args: Array = [], types: Array = []
+	) -> SpacetimeDBReducerCall:
 		reducer_name = p_name
 		arguments = args
 		argument_types = types
@@ -31,7 +34,8 @@ func _initialize() -> void:
 		stream.data_array = bytes
 		stream.big_endian = false
 		var decoded: ContinuumProductionPolicy = deserializer._parse_generic_type(
-			stream, &"ContinuumProductionPolicy")
+			stream, &"ContinuumProductionPolicy"
+		)
 		assert(not deserializer.has_error(), deserializer.get_last_error())
 		assert(decoded.resource.value == kind and decoded.target == row.target)
 		assert(stream.get_position() == bytes.size())

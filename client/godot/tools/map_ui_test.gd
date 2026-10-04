@@ -18,13 +18,19 @@ func _ready() -> void:
 	if _has_user_arg("--map-ui-intentional-failure"):
 		_fail("intentional failure validation")
 		return
-	_assert(MapUiModel.normalize_rect(Vector2i(7, 4), Vector2i(2, 1)) == Rect2i(2, 1, 6, 4),
-		"reverse drag is normalized inclusively")
-	_assert(MapUiModel.normalize_rect(Vector2i(3, 3), Vector2i(3, 3)) == Rect2i(3, 3, 1, 1),
-		"single cell remains one cell")
+	_assert(
+		MapUiModel.normalize_rect(Vector2i(7, 4), Vector2i(2, 1)) == Rect2i(2, 1, 6, 4),
+		"reverse drag is normalized inclusively"
+	)
+	_assert(
+		MapUiModel.normalize_rect(Vector2i(3, 3), Vector2i(3, 3)) == Rect2i(3, 3, 1, 1),
+		"single cell remains one cell"
+	)
 	_assert(MapUiModel.cells(Rect2i(0, 0, 5, 2)) == 10, "rectangle cost uses area")
-	_assert(MapUiModel.clamp_cell(Vector2i(-4, 30), Vector2i(24, 24)) == Vector2i(0, 23),
-		"helper clamping remains deterministic")
+	_assert(
+		MapUiModel.clamp_cell(Vector2i(-4, 30), Vector2i(24, 24)) == Vector2i(0, 23),
+		"helper clamping remains deterministic"
+	)
 	await _test_map_input()
 	if failed:
 		return
@@ -61,12 +67,16 @@ func _test_flat_map_input() -> void:
 	map._grid = Vector2i(24, 24)
 	get_tree().root.add_child.call_deferred(map)
 	await get_tree().process_frame
-	map.build_rectangle_requested.connect(func(rect: Rect2i) -> void:
-		build_releases += 1
-		build_rects.append(rect))
-	map.rectangle_selected.connect(func(rect: Rect2i) -> void:
-		selected_releases += 1
-		selected_rects.append(rect))
+	map.build_rectangle_requested.connect(
+		func(rect: Rect2i) -> void:
+			build_releases += 1
+			build_rects.append(rect)
+	)
+	map.rectangle_selected.connect(
+		func(rect: Rect2i) -> void:
+			selected_releases += 1
+			selected_rects.append(rect)
+	)
 	map.set_interaction_mode(&"build")
 	_drag(Vector2(130, 130), Vector2(30, 50))
 	_assert(build_releases == 1, "one reversed build drag emits one atomic request")
@@ -121,37 +131,91 @@ func _test_controller_surface() -> void:
 	await main.ready
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and main.get_window().content_scale_factor == 1.0 and
-			main._haul_button.get_theme_font_size("font_size") == 13 and main._construction_panel.activate.get_theme_font_size("font_size") == 13,
-		"legacy lower font bound migrates to 100% without shrinking canonical typography")
+	_assert(
+		(
+			main._metrics.base_font_size == 13
+			and main._settings.ui_scale_percent == 100
+			and main.get_window().content_scale_factor == 1.0
+			and main._haul_button.get_theme_font_size("font_size") == 13
+			and main._construction_panel.activate.get_theme_font_size("font_size") == 13
+		),
+		"legacy lower font bound migrates to 100% without shrinking canonical typography"
+	)
 	await _test_header_geometry(main)
 	var clock_baseline: float = _label_baseline(main._clock) - main._clock_group.global_position.y
 	main.apply_font_size(24, false)
-	_assert(main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 150 and main.get_window().content_scale_factor == 1.5 and
-			main._feed.custom_minimum_size.y == 70 and main._history_chart.custom_minimum_size.y == 190 and main._clock_group.custom_minimum_size.y == 44 and
-			main._haul_button.get_theme_font_size("font_size") == 13 and main._connection_label.get_theme_font_size("font_size") == ThemeTokens.font_size("small"),
-		"legacy maximum font bound scales the entire viewport once while logical metrics remain fixed")
+	_assert(
+		(
+			main._metrics.base_font_size == 13
+			and main._settings.ui_scale_percent == 150
+			and main.get_window().content_scale_factor == 1.5
+			and main._feed.custom_minimum_size.y == 70
+			and main._history_chart.custom_minimum_size.y == 190
+			and main._clock_group.custom_minimum_size.y == 44
+			and main._haul_button.get_theme_font_size("font_size") == 13
+			and (
+				main._connection_label.get_theme_font_size("font_size")
+				== ThemeTokens.font_size("small")
+			)
+		),
+		"legacy maximum font bound scales the entire viewport once while logical metrics remain fixed"
+	)
 	await _test_header_geometry(main)
-	_assert(is_equal_approx(_label_baseline(main._clock) - main._clock_group.global_position.y, clock_baseline),
-		"clock baseline inside the padded time group remains stable at 150 percent")
+	_assert(
+		is_equal_approx(
+			_label_baseline(main._clock) - main._clock_group.global_position.y, clock_baseline
+		),
+		"clock baseline inside the padded time group remains stable at 150 percent"
+	)
 	main.apply_font_size(13, false)
-	_assert(main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0, "runtime reference size restores exactly")
+	_assert(
+		(
+			main._haul_button.get_theme_font_size("font_size") == 13
+			and main.get_window().content_scale_factor == 1.0
+		),
+		"runtime reference size restores exactly"
+	)
 	main.apply_font_size(10, false)
-	_assert(main._metrics.base_font_size == 13 and main._feed.custom_minimum_size.y == 70 and main._haul_button.get_theme_font_size("font_size") == 13 and main.get_window().content_scale_factor == 1.0,
-		"runtime scaling returns to 100% without compounding or shrinking typography")
+	_assert(
+		(
+			main._metrics.base_font_size == 13
+			and main._feed.custom_minimum_size.y == 70
+			and main._haul_button.get_theme_font_size("font_size") == 13
+			and main.get_window().content_scale_factor == 1.0
+		),
+		"runtime scaling returns to 100% without compounding or shrinking typography"
+	)
 	main.apply_font_size(13, false)
-	_assert(main._construction_panel != null and main._zones_panel != null and main._mode_buttons.has(&"excavate"), "separate planning panels and terrain work are reachable")
+	_assert(
+		(
+			main._construction_panel != null
+			and main._zones_panel != null
+			and main._mode_buttons.has(&"excavate")
+		),
+		"separate planning panels and terrain work are reachable"
+	)
 	_set_role(main, "operator", true, false)
-	_assert(main._zones_panel.choices.size() == 7 and main._zones_panel.choices.has(ContinuumTileKind.Options.forest), "all seven non-empty usage types are reachable only in Zones")
+	_assert(
+		(
+			main._zones_panel.choices.size() == 7
+			and main._zones_panel.choices.has(ContinuumTileKind.Options.forest)
+		),
+		"all seven non-empty usage types are reachable only in Zones"
+	)
 	main._set_mode(&"build")
 	_assert(main.map.interaction_mode == &"build", "build button changes map mode")
 	main._set_mode(&"select")
 	_assert(main.map.interaction_mode == &"select", "select button changes map mode")
 	_assert(main._block_box.visible and main._block_info != null, "block control panel is visible")
 	_assert(main._block_controls.size() == 6, "enable/disable and four work controls are reachable")
-	_assert(main._tile_action_box.visible and main._tile_info != null, "one-cell inspection detail remains visible")
-	_assert(main._block_controls[ContinuumWorkType.Options.farming].row.visible,
-		"block work controls are not hidden by legacy refresh")
+	_assert(
+		main._tile_action_box.visible and main._tile_info != null,
+		"one-cell inspection detail remains visible"
+	)
+	_assert(
+		main._block_controls[ContinuumWorkType.Options.farming].row.visible,
+		"block work controls are not hidden by legacy refresh"
+	)
 	await _test_workspace_surface(main)
 	if failed:
 		return
@@ -159,42 +223,84 @@ func _test_controller_surface() -> void:
 	main._on_table_changed("terrain")
 	_assert(main._map_dirty, "terrain updates invalidate map rendering")
 	_assert(main.can_send_map_intent(true, false), "ready client may send map intent")
-	_assert(not main.can_send_map_intent(false, false) and not main.can_send_map_intent(true, true),
-		"disconnected and pending clients are gated")
+	_assert(
+		not main.can_send_map_intent(false, false) and not main.can_send_map_intent(true, true),
+		"disconnected and pending clients are gated"
+	)
 	await _refresh_real_tiles(main)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(isolated_path))
 
 
 func _test_header_geometry(main: Control) -> void:
-	for frame in 8: await get_tree().process_frame
+	for frame in 8:
+		await get_tree().process_frame
 	var status: Rect2 = main.workspace._rows[0].get_global_rect()
 	var clock: Rect2 = main._clock_group.get_global_rect()
-	_assert(clock.size.y == 44 and status.encloses(clock), "44px time group fits the actual status viewport: clock=%s status=%s scale=%.2f" % [clock, status, main.get_window().content_scale_factor])
+	_assert(
+		clock.size.y == 44 and status.encloses(clock),
+		(
+			"44px time group fits the actual status viewport: clock=%s status=%s scale=%.2f"
+			% [clock, status, main.get_window().content_scale_factor]
+		)
+	)
 	for label: Label in [main._clock, main._population]:
-		_assert(clock.encloses(label.get_global_rect()) and label.get_combined_minimum_size().x <= label.size.x,
-			"clock and crew text fit their content-sized surface without clipping")
-		_assert(label.global_position.x >= clock.position.x + 8 and label.get_global_rect().end.x <= clock.end.x - 8,
-			"time-group text keeps real 8px horizontal insets")
-	_assert(main._clock.get_global_rect().end.y <= main._population.global_position.y,
-		"primary clock and secondary crew occupy distinct lines")
+		_assert(
+			(
+				clock.encloses(label.get_global_rect())
+				and label.get_combined_minimum_size().x <= label.size.x
+			),
+			"clock and crew text fit their content-sized surface without clipping"
+		)
+		_assert(
+			(
+				label.global_position.x >= clock.position.x + 8
+				and label.get_global_rect().end.x <= clock.end.x - 8
+			),
+			"time-group text keeps real 8px horizontal insets"
+		)
+	_assert(
+		main._clock.get_global_rect().end.y <= main._population.global_position.y,
+		"primary clock and secondary crew occupy distinct lines"
+	)
 	var previous_card := Rect2()
 	var previous_baseline := 0.0
 	for card: ResourceReadout in main._resource_labels.values():
 		var bounds := card.get_global_rect()
-		_assert(card.get_combined_minimum_size().y == 44 and bounds.size.y == 44 and status.encloses(bounds),
-			"calm resource cards keep a bounded 44px logical height inside the status viewport")
-		_assert(not bounds.intersects(clock) and not bounds.intersects(main._session_group.get_global_rect()),
-			"resource cards cannot overlap time or session metadata")
+		_assert(
+			(
+				card.get_combined_minimum_size().y == 44
+				and bounds.size.y == 44
+				and status.encloses(bounds)
+			),
+			"calm resource cards keep a bounded 44px logical height inside the status viewport"
+		)
+		_assert(
+			(
+				not bounds.intersects(clock)
+				and not bounds.intersects(main._session_group.get_global_rect())
+			),
+			"resource cards cannot overlap time or session metadata"
+		)
 		for label: Label in card.find_children("*", "Label", true, false):
-			_assert(bounds.encloses(label.get_global_rect()) and label.get_combined_minimum_size().x <= label.size.x,
-				"resource names, values and secondary text fit their card")
+			_assert(
+				(
+					bounds.encloses(label.get_global_rect())
+					and label.get_combined_minimum_size().x <= label.size.x
+				),
+				"resource names, values and secondary text fit their card"
+			)
 		var value: Label = card.get_child(0).get_child(0).get_child(-1)
 		var baseline := _label_baseline(value)
 		if previous_card.has_area():
 			_assert(not previous_card.intersects(bounds), "adjacent resource cards never overlap")
 			if previous_card.position.y == bounds.position.y:
-				_assert(bounds.position.x - previous_card.end.x >= 4 and absf(baseline - previous_baseline) <= 1,
-					"resource values share a stable row baseline with a visible inter-card gutter")
+				_assert(
+					(
+						bounds.position.x - previous_card.end.x >= 4
+						and absf(baseline - previous_baseline) <= 1
+					),
+					"resource values share a stable row baseline with a visible inter-card gutter"
+				)
 		previous_card = bounds
 		previous_baseline = baseline
 
@@ -202,36 +308,63 @@ func _test_header_geometry(main: Control) -> void:
 func _label_baseline(label: Label) -> float:
 	var font := label.get_theme_font("font")
 	var font_size := label.get_theme_font_size("font_size")
-	return label.global_position.y + (label.size.y - font.get_height(font_size)) * 0.5 + font.get_ascent(font_size)
+	return (
+		label.global_position.y
+		+ (label.size.y - font.get_height(font_size)) * 0.5
+		+ font.get_ascent(font_size)
+	)
 
 
 func _test_workspace_surface(main: Control) -> void:
-	_assert(main._sections.size() == 11 and main.workspace.windows.size() == 11,
-		"workspace manager exposes eleven extensible panels")
-	_assert(main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
-		"workspace manager starts on the daily built-in layout")
-	_assert(not main._orders_help.text.contains("\n") and not main._orders_help.tooltip_text.is_empty(),
-		"compact order help retains hover details")
+	_assert(
+		main._sections.size() == 11 and main.workspace.windows.size() == 11,
+		"workspace manager exposes eleven extensible panels"
+	)
+	_assert(
+		main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
+		"workspace manager starts on the daily built-in layout"
+	)
+	_assert(
+		not main._orders_help.text.contains("\n") and not main._orders_help.tooltip_text.is_empty(),
+		"compact order help retains hover details"
+	)
 	main._set_feedback(main._intent_feedback, "Failed", "Full reducer error detail")
-	_assert(main._intent_feedback.text == "Failed" and
-			main._intent_feedback.tooltip_text == "Full reducer error detail",
-		"error status stays concise while retaining details")
+	_assert(
+		(
+			main._intent_feedback.text == "Failed"
+			and main._intent_feedback.tooltip_text == "Full reducer error detail"
+		),
+		"error status stays concise while retaining details"
+	)
 	_set_role(main, "viewer", false, false)
-	_assert(not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"],
-		"viewer workspace authorization fails closed")
-	_assert(not main.workspace.authorized["construction"] and not main._mode_buttons[&"excavate"].visible and not main._block_box.visible,
-		"viewer cannot see mutation controls")
+	_assert(
+		not main.workspace.authorized["policies"] and not main.workspace.authorized["operations"],
+		"viewer workspace authorization fails closed"
+	)
+	_assert(
+		(
+			not main.workspace.authorized["construction"]
+			and not main._mode_buttons[&"excavate"].visible
+			and not main._block_box.visible
+		),
+		"viewer cannot see mutation controls"
+	)
 	main.map_intent_override = _record_reducer_call
 	var before := reducer_calls.size()
 	main._on_build_rectangle_requested(Rect2i(1, 1, 1, 1))
 	_assert(reducer_calls.size() == before, "programmatic build is guarded for viewers")
 	_set_role(main, "operator", true, false)
-	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"],
-		"operator inherits policy and operations workspace access")
+	_assert(
+		main.workspace.authorized["policies"] and main.workspace.authorized["operations"],
+		"operator inherits policy and operations workspace access"
+	)
 	for mode: StringName in [&"build", &"excavate", &"facility"]:
 		main._set_mode(mode)
 		_set_role(main, "viewer", false, false)
-		_assert(main.map.interaction_mode == &"select" and not main.map._dragging, "permission loss cancels armed %s mode and paint" % mode)
+		_assert(
+			main.map.interaction_mode == &"select" and not main.map._dragging,
+			"permission loss cancels armed %s mode and paint" % mode
+		)
 		_set_role(main, "operator", true, false)
 	var ack_probe := Button.new()
 	ack_probe.text = "Ack"
@@ -239,35 +372,68 @@ func _test_workspace_surface(main: Control) -> void:
 	_assert(ack_probe.is_inside_tree(), "operator alert rows are present before downgrade")
 	_set_role(main, "viewer", false, false)
 	await get_tree().process_frame
-	_assert(not is_instance_valid(ack_probe), "permission downgrade immediately rebuilds alert rows")
+	_assert(
+		not is_instance_valid(ack_probe), "permission downgrade immediately rebuilds alert rows"
+	)
 	_set_role(main, "operator", true, false)
 	_set_role(main, "maintenance", true, false)
-	_assert(not main._can_operate and main._role_name == "Unknown",
-		"unknown role input fails closed")
+	_assert(
+		not main._can_operate and main._role_name == "Unknown", "unknown role input fails closed"
+	)
 	_set_role(main, "admin", true, false)
-	_assert(not main._can_operate and not main._is_admin,
-		"inconsistent admin flags fail closed")
+	_assert(not main._can_operate and not main._is_admin, "inconsistent admin flags fail closed")
 	_set_role(main, "admin", true, true)
-	_assert(main.workspace.authorized["policies"] and main.workspace.authorized["operations"] and
-			main.workspace.authorized["admin"], "verified admin can see the admin panel")
-	_assert(main._speed_label.get_parent() == main._sections["admin"] and
-		main._speed_strip.get_parent() == main._sections["admin"], "speed controls belong to admin content, not telemetry")
+	_assert(
+		(
+			main.workspace.authorized["policies"]
+			and main.workspace.authorized["operations"]
+			and main.workspace.authorized["admin"]
+		),
+		"verified admin can see the admin panel"
+	)
+	_assert(
+		(
+			main._speed_label.get_parent() == main._sections["admin"]
+			and main._speed_strip.get_parent() == main._sections["admin"]
+		),
+		"speed controls belong to admin content, not telemetry"
+	)
 	_assert(not main.workspace.authorized["developer"], "normal profile has no developer utilities")
-	_assert(main._construction_panel.activate.disabled and main._zones_panel.activate.disabled, "disconnected or pending state disables planning")
+	_assert(
+		main._construction_panel.activate.disabled and main._zones_panel.activate.disabled,
+		"disconnected or pending state disables planning"
+	)
 	var desktop_size := main.size
 	main.size = Vector2(390, 844)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	_assert(main.workspace.compact and main.workspace.area.size.x == 390,
-		"production UI fits a phone viewport without a fixed-width sidebar")
+	_assert(
+		main.workspace.compact and main.workspace.area.size.x == 390,
+		"production UI fits a phone viewport without a fixed-width sidebar"
+	)
 	await _test_header_geometry(main)
 	var utilities: Rect2 = main.workspace._utilities.get_global_rect()
 	var status: Rect2 = main.workspace._rows[0].get_global_rect()
 	var views: Rect2 = main.workspace._rows[1].get_global_rect()
-	_assert(main.workspace.area.position.y == main.workspace.header.size.y and main.workspace.header.size.y <= 202 and status.size.y <= 96,
-		"narrow header has a bounded padded utility row, two status rows and view tabs (actual %.1f)" % main.workspace.header.size.y)
-	_assert(utilities.end.y + 8 <= status.position.y and status.end.y + 8 <= views.position.y and views.end.y <= main.workspace.area.global_position.y,
-		"stacked utilities, status and view tabs have real gutters and cannot overlap the map")
+	_assert(
+		(
+			main.workspace.area.position.y == main.workspace.header.size.y
+			and main.workspace.header.size.y <= 202
+			and status.size.y <= 96
+		),
+		(
+			"narrow header has a bounded padded utility row, two status rows and view tabs (actual %.1f)"
+			% main.workspace.header.size.y
+		)
+	)
+	_assert(
+		(
+			utilities.end.y + 8 <= status.position.y
+			and status.end.y + 8 <= views.position.y
+			and views.end.y <= main.workspace.area.global_position.y
+		),
+		"stacked utilities, status and view tabs have real gutters and cannot overlap the map"
+	)
 	await _test_planning_header_geometry(main)
 	main.size = desktop_size
 	await get_tree().process_frame
@@ -277,8 +443,10 @@ func _test_workspace_surface(main: Control) -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	for window: WorkspaceWindow in main.workspace.windows.values():
-		_assert(window.content.get_combined_minimum_size().x <= window.scroll.size.x,
-			"panel contents fit minimum width: %s" % window.name)
+		_assert(
+			window.content.get_combined_minimum_size().x <= window.scroll.size.x,
+			"panel contents fit minimum width: %s" % window.name
+		)
 	main.workspace._apply_layout()
 
 
@@ -289,20 +457,42 @@ func _test_planning_header_geometry(main: Control) -> void:
 	var row: HBoxContainer = main._intent_feedback.get_parent()
 	_assert(not row.visible, "Inspect mode has no empty or cancelled-tool status row")
 	main._set_mode(&"excavate")
-	for frame in 8: await get_tree().process_frame
-	var expected_extra: float = row.size.y + main.workspace.status_content.get_theme_constant("separation")
-	_assert(row.visible and is_equal_approx(main.workspace.header.size.y, quiet_height + expected_extra),
-		"active tool reserves exactly one measured status row, without inflating resource typography or padding")
+	for frame in 8:
+		await get_tree().process_frame
+	var expected_extra: float = (
+		row.size.y + main.workspace.status_content.get_theme_constant("separation")
+	)
+	_assert(
+		(
+			row.visible
+			and is_equal_approx(main.workspace.header.size.y, quiet_height + expected_extra)
+		),
+		"active tool reserves exactly one measured status row, without inflating resource typography or padding"
+	)
 	var bounds := row.get_global_rect()
 	var telemetry: Rect2 = main.workspace.telemetry.get_global_rect()
 	var status: Rect2 = main.workspace._rows[0].get_global_rect()
 	var views: Rect2 = main.workspace._rows[1].get_global_rect()
-	_assert(status.encloses(bounds) and telemetry.end.y + 8 <= bounds.position.y and bounds.end.y + 8 <= views.position.y,
-		"active-tool status has distinct eight-pixel gutters below telemetry and above view navigation")
+	_assert(
+		(
+			status.encloses(bounds)
+			and telemetry.end.y + 8 <= bounds.position.y
+			and bounds.end.y + 8 <= views.position.y
+		),
+		"active-tool status has distinct eight-pixel gutters below telemetry and above view navigation"
+	)
 	for child: Control in row.get_children():
-		_assert(bounds.encloses(child.get_global_rect()), "active-tool label and Cancel button fit the narrow status row")
-	_assert(main.workspace.area.position.y == main.workspace.header.size.y and main.workspace.area.size.y >= main.size.y * 0.7,
-		"armed narrow header preserves at least seventy percent of the tall viewport for map/panels")
+		_assert(
+			bounds.encloses(child.get_global_rect()),
+			"active-tool label and Cancel button fit the narrow status row"
+		)
+	_assert(
+		(
+			main.workspace.area.position.y == main.workspace.header.size.y
+			and main.workspace.area.size.y >= main.size.y * 0.7
+		),
+		"armed narrow header preserves at least seventy percent of the tall viewport for map/panels"
+	)
 	await _test_header_geometry(main)
 	var menu_was_visible: bool = main._menu.visible
 	main._menu.hide()
@@ -311,27 +501,50 @@ func _test_planning_header_geometry(main: Control) -> void:
 	escape.keycode = KEY_ESCAPE
 	escape.pressed = true
 	Input.parse_input_event(escape)
-	for frame in 3: await get_tree().process_frame
-	_assert(main._planning_system == &"", "native Escape from the focused header Cancel action disarms the map tool")
+	for frame in 3:
+		await get_tree().process_frame
+	_assert(
+		main._planning_system == &"",
+		"native Escape from the focused header Cancel action disarms the map tool"
+	)
 	escape = escape.duplicate()
 	escape.pressed = false
 	Input.parse_input_event(escape)
 	main._menu.visible = menu_was_visible
-	main._set_feedback(main._intent_feedback, "Failed", "Outcome detail remains available in the planning panels.")
-	for frame in 8: await get_tree().process_frame
-	_assert(not row.visible and main.map.interaction_mode == &"select" and is_equal_approx(main.workspace.header.size.y, quiet_height),
-		"cancel and subsequent idle outcome feedback restore the original header budget exactly")
-	_assert(main._construction_panel.feedback.visible and "Outcome detail" in main._construction_panel.feedback.text,
-		"hiding idle header status preserves visible outcome details in the planning panel")
+	main._set_feedback(
+		main._intent_feedback, "Failed", "Outcome detail remains available in the planning panels."
+	)
+	for frame in 8:
+		await get_tree().process_frame
+	_assert(
+		(
+			not row.visible
+			and main.map.interaction_mode == &"select"
+			and is_equal_approx(main.workspace.header.size.y, quiet_height)
+		),
+		"cancel and subsequent idle outcome feedback restore the original header budget exactly"
+	)
+	_assert(
+		(
+			main._construction_panel.feedback.visible
+			and "Outcome detail" in main._construction_panel.feedback.text
+		),
+		"hiding idle header status preserves visible outcome details in the planning panel"
+	)
 
 
 func _refresh_real_tiles(main: Control) -> void:
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
 	var deadline := Time.get_ticks_msec() + 10000
-	while (not main._state_ready or client.db == null or client.db.tile.iter().is_empty()) and Time.get_ticks_msec() < deadline:
+	while (
+		(not main._state_ready or client.db == null or client.db.tile.iter().is_empty())
+		and Time.get_ticks_msec() < deadline
+	):
 		await get_tree().process_frame
-	_assert(main._state_ready and client.db != null and not client.db.tile.iter().is_empty(),
-		"private fixture subscription completes with tiles within 10 seconds")
+	_assert(
+		main._state_ready and client.db != null and not client.db.tile.iter().is_empty(),
+		"private fixture subscription completes with tiles within 10 seconds"
+	)
 	if failed:
 		return
 	var occupied: ContinuumTile = null
@@ -347,28 +560,41 @@ func _refresh_real_tiles(main: Control) -> void:
 	main._on_rectangle_selected(ColonyMap.tile_footprint(occupied))
 	main._selected_tile_id = occupied.id
 	main._refresh_controls()
-	_assert(main._block_box.visible and main._tile_info.text.contains("Selected:"),
-		"occupied refresh keeps block primary and inspection detail")
+	_assert(
+		main._block_box.visible and main._tile_info.text.contains("Selected:"),
+		"occupied refresh keeps block primary and inspection detail"
+	)
 	var compatible := ColonyMap.compatible_work(occupied.kind.value)
 	if not compatible.is_empty():
-		_assert(not main._block_controls[compatible[0]].set.disabled,
-			"occupied refresh enables compatible block work control")
+		_assert(
+			not main._block_controls[compatible[0]].set.disabled,
+			"occupied refresh enables compatible block work control"
+		)
 	main._on_rectangle_selected(ColonyMap.tile_footprint(empty))
 	main._selected_tile_id = empty.id
 	main._refresh_controls()
-	_assert(main._block_box.visible and main._tile_info.text.contains("Selected:"),
-		"empty refresh keeps block primary and inspection detail")
+	_assert(
+		main._block_box.visible and main._tile_info.text.contains("Selected:"),
+		"empty refresh keeps block primary and inspection detail"
+	)
 	if not compatible.is_empty():
-		_assert(main._block_controls[compatible[0]].set.disabled,
-			"empty refresh disables incompatible block work control")
+		_assert(
+			main._block_controls[compatible[0]].set.disabled,
+			"empty refresh disables incompatible block work control"
+		)
 	var area := Rect2i(empty.x, empty.y, 1, 1)
 	main._activate_planning(&"zones")
 	main._choose_zone(ContinuumTileKind.Options.farm)
 	main._on_build_rectangle_requested(area)
 	_assert(reducer_calls.size() == 1, "controller dispatches one reducer invocation")
-	_assert(reducer_calls[0][0] == "designate_zone_at" and
-			reducer_calls[0][1].slice(0, 4) == [empty.x, empty.y, empty.x, empty.y] and reducer_calls[0][1][4] == main.map.terrain_model.uniform_base(area),
-		"reducer receives normalized inclusive rectangle and actual visible floor z")
+	_assert(
+		(
+			reducer_calls[0][0] == "designate_zone_at"
+			and reducer_calls[0][1].slice(0, 4) == [empty.x, empty.y, empty.x, empty.y]
+			and reducer_calls[0][1][4] == main.map.terrain_model.uniform_base(area)
+		),
+		"reducer receives normalized inclusive rectangle and actual visible floor z"
+	)
 	main._on_build_rectangle_requested(area)
 	_assert(reducer_calls.size() == 2, "each completed block maps to one reducer invocation")
 

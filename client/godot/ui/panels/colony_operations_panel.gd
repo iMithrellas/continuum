@@ -14,6 +14,7 @@ var _rows: Dictionary = {}
 var _ready_state := false
 var _can_operate := false
 
+
 func _init() -> void:
 	_expand = Button.new()
 	_expand.text = "Stabilization & operations"
@@ -38,6 +39,7 @@ func _init() -> void:
 	_body.add_child(_access)
 	set_model({}, false)
 
+
 func set_model(value: Dictionary, can_operate: bool) -> void:
 	model = value.duplicate(true)
 	_ready_state = value.get("ready", false)
@@ -47,7 +49,11 @@ func set_model(value: Dictionary, can_operate: bool) -> void:
 	_next.text = value.get("next", {}).get("action", "Waiting for colony")
 	_next.tooltip_text = value.get("next", {}).get("detail", "Waiting for a live colony snapshot")
 	_next.disabled = not _ready_state
-	_access.text = "Intervene through existing Operations controls; then observe recovery." if can_operate else "Read-only: inspect causes and map targets. An operator must change orders or policies."
+	_access.text = (
+		"Intervene through existing Operations controls; then observe recovery."
+		if can_operate
+		else "Read-only: inspect causes and map targets. An operator must change orders or policies."
+	)
 	var visible_keys := {}
 	for item: Dictionary in value.get("milestones", []):
 		var key: String = "milestone:" + item.name
@@ -57,10 +63,27 @@ func set_model(value: Dictionary, can_operate: bool) -> void:
 		var item: Dictionary = value.operations[index]
 		var key := "operation:%s" % item.get("work", index)
 		visible_keys[key] = true
-		var target := {"panel": "inspector", "focus_tile_id": item.get("focus_tile_id", -1), "colonist_id": -1}
-		_update_row(key, target, "%s · %s\n%s\n%s\nNext intervention: %s" % [item.get("name", "Work"), item.get("state", "Unknown"), item.get("summary", ""), item.get("detail", ""), item.get("suggested_action", "Inspect causes before changing work")], "Focus work" if int(item.get("focus_tile_id", -1)) >= 0 else "Inspect work")
+		var target := {
+			"panel": "inspector", "focus_tile_id": item.get("focus_tile_id", -1), "colonist_id": -1
+		}
+		_update_row(
+			key,
+			target,
+			(
+				"%s · %s\n%s\n%s\nNext intervention: %s"
+				% [
+					item.get("name", "Work"),
+					item.get("state", "Unknown"),
+					item.get("summary", ""),
+					item.get("detail", ""),
+					item.get("suggested_action", "Inspect causes before changing work")
+				]
+			),
+			"Focus work" if int(item.get("focus_tile_id", -1)) >= 0 else "Inspect work"
+		)
 	for key: String in _rows:
 		_rows[key].box.visible = visible_keys.has(key)
+
 
 func _update_row(key: String, target: Dictionary, text: String, action: String) -> void:
 	if not _rows.has(key):
@@ -80,11 +103,17 @@ func _update_row(key: String, target: Dictionary, text: String, action: String) 
 	_rows[key].button.disabled = not _ready_state
 	_rows[key].box.visible = true
 
+
 func _navigate(target: Dictionary) -> void:
-	if not _ready_state or target.is_empty(): return
+	if not _ready_state or target.is_empty():
+		return
 	var panel: String = target.get("panel", "inspector")
-	if not _can_operate and panel in ["operations", "policies"]: panel = "inspector"
-	navigation_requested.emit(panel, int(target.get("focus_tile_id", -1)), int(target.get("colonist_id", -1)))
+	if not _can_operate and panel in ["operations", "policies"]:
+		panel = "inspector"
+	navigation_requested.emit(
+		panel, int(target.get("focus_tile_id", -1)), int(target.get("colonist_id", -1))
+	)
+
 
 func _label() -> Label:
 	var label := Label.new()

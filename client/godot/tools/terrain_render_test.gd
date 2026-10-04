@@ -2,9 +2,12 @@
 ## godot --path client/godot --rendering-method gl_compatibility --scene res://tools/terrain_render_test.tscn
 extends Node
 
+
 func _ready() -> void:
 	if DisplayServer.get_name() == "headless":
-		push_error("This pixel test requires a real rendering driver; use terrain_test.tscn for backend-free headless tests.")
+		push_error(
+			"This pixel test requires a real rendering driver; use terrain_test.tscn for backend-free headless tests."
+		)
 		get_tree().quit(1)
 		return
 	var source := Image.create(64, 64, false, Image.FORMAT_RGBA8)
@@ -51,7 +54,17 @@ func _ready() -> void:
 		brightness.append(mean)
 		var overlay := pixels.get_pixel(32, 48)
 		overlays_sharp = overlays_sharp and overlay.is_equal_approx(ThemeTokens.color("accent"))
-	var passed := details[0] > details[1] and details[1] > details[2] \
-		and brightness[0] > brightness[1] and brightness[1] > brightness[2] and overlays_sharp
-	print("TERRAIN_RENDER_%s detail=%s brightness=%s sharp_overlay=%s" % ["PASS" if passed else "FAIL", details, brightness, overlays_sharp])
+	var passed := (
+		details[0] > details[1]
+		and details[1] > details[2]
+		and brightness[0] > brightness[1]
+		and brightness[1] > brightness[2]
+		and overlays_sharp
+	)
+	print(
+		(
+			"TERRAIN_RENDER_%s detail=%s brightness=%s sharp_overlay=%s"
+			% ["PASS" if passed else "FAIL", details, brightness, overlays_sharp]
+		)
+	)
 	get_tree().quit(0 if passed else 1)

@@ -63,6 +63,7 @@ var _busy := false
 var _native_busy := false
 var _autostart_enabled := false
 
+
 func _ready() -> void:
 	if history == null:
 		history = ContinuumConnectionHistory.new()
@@ -80,8 +81,10 @@ func _ready() -> void:
 	resized.connect(_layout_content)
 	_build_ui()
 
+
 func set_history_store(store: ContinuumConnectionHistory) -> void:
 	history = store
+
 
 func set_probe_service(service: ContinuumServerProbes) -> void:
 	probes = service
@@ -92,9 +95,11 @@ func set_probe_service(service: ContinuumServerProbes) -> void:
 	if not probes.probe_started.is_connected(_update_probe_label):
 		probes.probe_started.connect(_update_probe_label)
 
+
 func set_connection_defaults(host: String, database: String) -> void:
 	_host = host
 	_database = database
+
 
 func apply_metrics(value: UiMetrics) -> void:
 	_metrics = value
@@ -103,47 +108,60 @@ func apply_metrics(value: UiMetrics) -> void:
 		_database = _join_database.text
 		_build_ui()
 
+
 func set_world_catalog(worlds: Array[Dictionary]) -> void:
 	_world_catalog = worlds.duplicate(true)
+
 
 func set_local_management_state(state: Dictionary) -> void:
 	local_management_state = state.duplicate(true)
 	if is_instance_valid(_local_start):
 		_update_local_controls()
 
+
 func set_managed_servers(servers: Array[Dictionary], selected_id: String) -> void:
 	var ids_changed := servers.size() != _managed_servers.size()
 	for index in mini(servers.size(), _managed_servers.size()):
-		if servers[index].id != _managed_servers[index].id: ids_changed = true
+		if servers[index].id != _managed_servers[index].id:
+			ids_changed = true
 	_managed_servers = servers.duplicate(true)
 	selected_server_id = selected_id
 	if is_instance_valid(_managed_list):
-		if ids_changed or _managed_rows.size() != servers.size(): _refresh_managed_list()
-		else: _update_managed_rows()
+		if ids_changed or _managed_rows.size() != servers.size():
+			_refresh_managed_list()
+		else:
+			_update_managed_rows()
+
 
 func request_server_selection(server_id: String) -> void:
-	if _busy or _native_busy: return
+	if _busy or _native_busy:
+		return
 	for server in _managed_servers:
 		if server.id == server_id:
 			local_server_selected.emit(server_id)
 			return
 
+
 func request_local_create() -> void:
 	if not _busy and not _native_busy:
 		local_create_requested.emit(_local_name.text)
+
 
 func request_local_delete() -> void:
 	if not _busy and not _native_busy and bool(local_management_state.get("can_delete", false)):
 		local_delete_requested.emit()
 
+
 func request_local_module_update() -> void:
 	if not _busy and not _native_busy and bool(local_management_state.get("can_update", false)):
 		local_module_update_requested.emit()
+
 
 func set_native_autostart(enabled: bool) -> void:
 	_autostart_enabled = enabled
 	if is_instance_valid(_native_autostart):
 		_native_autostart.set_pressed_no_signal(enabled)
+
 
 func set_status(message: String, warning := false) -> void:
 	_status_message = message
@@ -155,9 +173,12 @@ func set_status(message: String, warning := false) -> void:
 		_status_glyph.visible = warning
 		_status_tag.visible = warning
 		_status_glyph.texture = ThemeTokens.glyph("warn") if warning else null
-		_status.add_theme_color_override("font_color", ThemeTokens.color("warn" if warning else "ink-muted"))
+		_status.add_theme_color_override(
+			"font_color", ThemeTokens.color("warn" if warning else "ink-muted")
+		)
 		if _status.visible:
 			_reveal_status.call_deferred()
+
 
 func _reveal_status() -> void:
 	if is_instance_valid(_status) and _status.is_inside_tree() and _status.visible:
@@ -166,6 +187,7 @@ func _reveal_status() -> void:
 			# Status is first in the body. A long error can be taller than the
 			# viewport; reveal its beginning, not its last line.
 			scroll.scroll_vertical = 0
+
 
 func set_busy(busy: bool) -> void:
 	_busy = busy
@@ -179,35 +201,65 @@ func set_busy(busy: bool) -> void:
 		button.disabled = busy or _native_busy
 	_update_local_controls()
 
+
 func set_native_busy(busy: bool) -> void:
 	_native_busy = busy
 	set_busy(_busy)
 
+
 func _update_local_controls() -> void:
-	_local_start.disabled = _busy or _native_busy or not bool(local_management_state.get("can_start", false))
-	_local_start.text = "Join local server" if local_management_state.get("state", "") == "online" else "Start local server"
+	_local_start.disabled = (
+		_busy or _native_busy or not bool(local_management_state.get("can_start", false))
+	)
+	_local_start.text = (
+		"Join local server"
+		if local_management_state.get("state", "") == "online"
+		else "Start local server"
+	)
 	_local_stop.disabled = not bool(local_management_state.get("can_stop", false))
 	_local_force.disabled = not bool(local_management_state.get("can_force_stop", false))
 	var state := str(local_management_state.get("state", ""))
-	_local_cancel.visible = _native_busy and not bool(local_management_state.get("module_update_pending", false)) and (state in ["installing", "preparing", "starting"] or bool(local_management_state.get("startup_pending", state.is_empty())))
-	_native_autostart.disabled = _busy or _native_busy or local_management_state.get("state", "") in ["unknown", "checking", "unsupported", "conflict", "deleted"]
+	_local_cancel.visible = (
+		_native_busy
+		and not bool(local_management_state.get("module_update_pending", false))
+		and (
+			state in ["installing", "preparing", "starting"]
+			or bool(local_management_state.get("startup_pending", state.is_empty()))
+		)
+	)
+	_native_autostart.disabled = (
+		_busy
+		or _native_busy
+		or (
+			local_management_state.get("state", "")
+			in ["unknown", "checking", "unsupported", "conflict", "deleted"]
+		)
+	)
 	if is_instance_valid(_local_delete):
-		_local_delete.disabled = _busy or _native_busy or not bool(local_management_state.get("can_delete", false))
-		_local_update.disabled = _busy or _native_busy or not bool(local_management_state.get("can_update", false))
+		_local_delete.disabled = (
+			_busy or _native_busy or not bool(local_management_state.get("can_delete", false))
+		)
+		_local_update.disabled = (
+			_busy or _native_busy or not bool(local_management_state.get("can_update", false))
+		)
 		_local_create.disabled = _busy or _native_busy
 		_local_name.editable = not _busy and not _native_busy
 	_update_managed_rows()
 	_native_note.text = str(local_management_state.get("message", "Checking native server..."))
 
+
 func select_world(world_id: String, world_slug: String) -> void:
 	world_selected.emit(world_id, world_slug)
+
 
 func set_search(value: String) -> void:
 	_search = value
 	_refresh_history_list()
 
+
 func visible_entries() -> Array[Dictionary]:
 	return history.entries(_search) if history else []
+
 
 func request_join(key: String) -> bool:
 	if _busy or _native_busy:
@@ -220,6 +272,7 @@ func request_join(key: String) -> bool:
 			join_requested.emit(entry.duplicate(true))
 			return true
 	return false
+
 
 func _join_server() -> void:
 	if _busy or _native_busy:
@@ -234,11 +287,13 @@ func _join_server() -> void:
 	set_status("Connecting to %s / %s ..." % [host, database])
 	join_requested.emit({"endpoint": host, "database": database})
 
+
 func set_browser_visible(value: bool) -> void:
 	if probes:
 		probes.set_visible(value)
 	if value:
 		_refresh_history_list()
+
 
 func request_favorite(key: String, favorite: bool) -> bool:
 	var accepted := history != null and history.set_favorite(key, favorite) == OK
@@ -249,6 +304,7 @@ func request_favorite(key: String, favorite: bool) -> bool:
 		set_status("Could not save the favorite change.", true)
 	return accepted
 
+
 func request_history_removal(key: String) -> bool:
 	var accepted := history != null and history.remove_history(key) == OK
 	if accepted:
@@ -258,26 +314,32 @@ func request_history_removal(key: String) -> bool:
 		set_status("Could not remove the history entry.", true)
 	return accepted
 
+
 func request_local_start() -> void:
 	if not _busy and not _native_busy and bool(local_management_state.get("can_start", false)):
 		set_native_busy(true)
 		local_start_requested.emit()
 
+
 func request_local_stop() -> void:
 	if bool(local_management_state.get("can_stop", false)):
 		local_stop_requested.emit()
 
+
 func request_local_force_stop() -> void:
 	if bool(local_management_state.get("can_force_stop", false)):
 		local_force_stop_requested.emit()
+
 
 func _process(_delta: float) -> void:
 	if probes and probes.visible:
 		probes.refresh(visible_entries())
 		probes.process()
 
+
 func _on_probe_finished(key: String, _result: Dictionary) -> void:
 	_update_probe_label(key)
+
 
 func _build_ui() -> void:
 	var draft_name := _local_name.text if is_instance_valid(_local_name) else ""
@@ -287,7 +349,9 @@ func _build_ui() -> void:
 	theme = DeckTheme.create(_metrics)
 	_content = PanelContainer.new()
 	_content.name = "BrowserContent"
-	_content.add_theme_stylebox_override("panel", DeckTheme.box(DeckTheme.PANEL_GROUND, DeckTheme.LINE, _metrics.px(12)))
+	_content.add_theme_stylebox_override(
+		"panel", DeckTheme.box(DeckTheme.PANEL_GROUND, DeckTheme.LINE, _metrics.px(12))
+	)
 	_content.minimum_size_changed.connect(_layout_content, CONNECT_DEFERRED)
 	add_child(_content)
 	var column := VBoxContainer.new()
@@ -349,7 +413,14 @@ func _build_ui() -> void:
 	direct.add_child(_join_button)
 
 	var local := _section(_sections, "Managed local servers")
-	local.add_child(_label("Run independent, persistent servers on this computer. Select a server to start, join, stop, or delete it."))
+	(
+		local
+		. add_child(
+			_label(
+				"Run independent, persistent servers on this computer. Select a server to start, join, stop, or delete it."
+			)
+		)
+	)
 	_managed_list = VBoxContainer.new()
 	_managed_list.name = "ManagedServers"
 	local.add_child(_managed_list)
@@ -386,7 +457,9 @@ func _build_ui() -> void:
 	_native_autostart.text = "Start at login"
 	_native_autostart.tooltip_text = "Start the native server when you log into this computer."
 	_native_autostart.button_pressed = _autostart_enabled
-	_native_autostart.toggled.connect(func(enabled: bool) -> void: native_autostart_requested.emit(enabled))
+	_native_autostart.toggled.connect(
+		func(enabled: bool) -> void: native_autostart_requested.emit(enabled)
+	)
 	local.add_child(_native_autostart)
 	_native_note = _label("")
 	_native_note.add_theme_color_override("font_color", DeckTheme.MUTED)
@@ -406,6 +479,7 @@ func _build_ui() -> void:
 	_refresh_history_list()
 	set_busy(_busy)
 	_layout_content()
+
 
 func _refresh_managed_list() -> void:
 	for child in _managed_list.get_children():
@@ -429,14 +503,20 @@ func _refresh_managed_list() -> void:
 		_managed_rows[server.id] = {"title": title, "address": address, "select": select}
 	_update_managed_rows()
 
+
 func _update_managed_rows() -> void:
 	for server in _managed_servers:
-		if not _managed_rows.has(server.id): continue
+		if not _managed_rows.has(server.id):
+			continue
 		var row: Dictionary = _managed_rows[server.id]
 		var selected: bool = server.id == selected_server_id
 		row.title.text = ("Selected · " if selected else "") + str(server.name)
-		row.address.text = "http://127.0.0.1:%d / continuum · %s" % [int(server.port), server.get("state", "checking")]
+		row.address.text = (
+			"http://127.0.0.1:%d / continuum · %s"
+			% [int(server.port), server.get("state", "checking")]
+		)
 		row.select.disabled = selected or _busy or _native_busy
+
 
 func _layout_content() -> void:
 	if not is_instance_valid(_content):
@@ -446,6 +526,7 @@ func _layout_content() -> void:
 	_sections.vertical = width < _metrics.px(720)
 	_content.position = Vector2((size.x - width) / 2, margin)
 	_content.size = Vector2(width, maxf(0.0, size.y - margin * 2))
+
 
 func _section(parent: Node, title: String) -> VBoxContainer:
 	var panel := PanelContainer.new()
@@ -458,6 +539,7 @@ func _section(parent: Node, title: String) -> VBoxContainer:
 	column.add_child(heading)
 	return column
 
+
 func _label(text: String) -> Label:
 	var label := Label.new()
 	label.text = text
@@ -466,12 +548,14 @@ func _label(text: String) -> Label:
 	label.custom_minimum_size = Vector2(1, _metrics.px(20))
 	return label
 
+
 func _button(text: String, action: Callable) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size.y = _metrics.px(34)
 	button.pressed.connect(action)
 	return button
+
 
 func _refresh_history_list() -> void:
 	if not is_instance_valid(_history_list):
@@ -483,13 +567,27 @@ func _refresh_history_list() -> void:
 	_history_join_buttons.clear()
 	var entries := visible_entries()
 	if entries.is_empty():
-		_history_list.add_child(_label("No saved connections yet. Join a server to add it here." if _search.is_empty() else "No connections match your search."))
+		_history_list.add_child(
+			_label(
+				(
+					"No saved connections yet. Join a server to add it here."
+					if _search.is_empty()
+					else "No connections match your search."
+				)
+			)
+		)
 	for entry in entries:
 		var title := str(entry.get("display_name", entry.database))
-		var row := _section(_history_list, ("Favorite | " if entry.get("favorite", false) else "") + title)
+		var row := _section(
+			_history_list, ("Favorite | " if entry.get("favorite", false) else "") + title
+		)
 		row.add_child(_label("%s / %s" % [entry.endpoint, entry.database]))
-		var details := _label("World: %s | Last joined: %s" % [entry.world,
-			Time.get_datetime_string_from_unix_time(int(entry.last_seen), true)])
+		var details := _label(
+			(
+				"World: %s | Last joined: %s"
+				% [entry.world, Time.get_datetime_string_from_unix_time(int(entry.last_seen), true)]
+			)
+		)
 		ThemeTokens.apply_label(details, "log")
 		details.add_theme_color_override("font_color", DeckTheme.MUTED)
 		row.add_child(details)
@@ -505,22 +603,43 @@ func _refresh_history_list() -> void:
 		join.disabled = _busy or _native_busy
 		controls.add_child(join)
 		_history_join_buttons.append(join)
-		controls.add_child(_button("Unfavorite" if entry.get("favorite", false) else "Favorite", request_favorite.bind(entry.key, not entry.get("favorite", false))))
+		controls.add_child(
+			_button(
+				"Unfavorite" if entry.get("favorite", false) else "Favorite",
+				request_favorite.bind(entry.key, not entry.get("favorite", false))
+			)
+		)
 		controls.add_child(_button("Remove history", request_history_removal.bind(entry.key)))
+
 
 func _update_probe_label(key: String) -> void:
 	if not _probe_labels.has(key):
 		return
 	var sample := probes.state(key) if probes else {"status": "unknown"}
 	var status := str(sample.get("status", "unknown"))
-	if status == "online" and not bool(sample.get("health_ok", true)) and int(sample.get("http_status", -1)) >= 0:
+	if (
+		status == "online"
+		and not bool(sample.get("health_ok", true))
+		and int(sample.get("http_status", -1)) >= 0
+	):
 		status = "HTTP health failed %d" % int(sample.http_status)
-	var rtt := "%.0f ms HTTP" % float(sample.rtt_ms) if float(sample.get("rtt_ms", -1)) >= 0 else "HTTP RTT unavailable"
+	var rtt := (
+		"%.0f ms HTTP" % float(sample.rtt_ms)
+		if float(sample.get("rtt_ms", -1)) >= 0
+		else "HTTP RTT unavailable"
+	)
 	var freshness := "stale" if sample.get("stale", false) else "current"
 	var label: Label = _probe_labels[key]
 	label.text = "%s (%s) | %s" % [status, freshness, rtt]
-	label.tooltip_text = "HTTP health is not database joinability.\nJoinable: %s | Auth: %s\nLast sample: %s" % [
-		sample.get("joinable", "unknown"), sample.get("auth", "unknown"), sample.get("last_sample", "never")]
+	label.tooltip_text = (
+		"HTTP health is not database joinability.\nJoinable: %s | Auth: %s\nLast sample: %s"
+		% [
+			sample.get("joinable", "unknown"),
+			sample.get("auth", "unknown"),
+			sample.get("last_sample", "never")
+		]
+	)
+
 
 static func validate_endpoint(host: String, database: String) -> String:
 	if not (host.begins_with("http://") or host.begins_with("https://")):

@@ -25,17 +25,24 @@ var _last_started_tick := -1
 
 signal probe_closed(request_id: int, outcome: String)
 
-func configure_probe(send_authenticated_echo: Callable, timeout := DEFAULT_TIMEOUT_USEC,
-		freshness := DEFAULT_FRESHNESS_USEC, interval := DEFAULT_INTERVAL_USEC) -> void:
+
+func configure_probe(
+	send_authenticated_echo: Callable,
+	timeout := DEFAULT_TIMEOUT_USEC,
+	freshness := DEFAULT_FRESHNESS_USEC,
+	interval := DEFAULT_INTERVAL_USEC
+) -> void:
 	sender = send_authenticated_echo
 	timeout_usec = maxi(1, timeout)
 	freshness_usec = maxi(1, freshness)
 	interval_usec = maxi(1_000_000, interval)
 
+
 func set_connected(value: bool, now_usec := -1) -> void:
 	if connected != value and not value:
 		reset()
 	connected = value
+
 
 func reset() -> void:
 	for request_id in _inflight:
@@ -47,6 +54,7 @@ func reset() -> void:
 	_last_rtt_ms = null
 	_stale_gap_tick = -1
 	_last_started_tick = -1
+
 
 func pump(now_usec: int) -> bool:
 	_expire(now_usec)
@@ -91,6 +99,7 @@ func respond(request_id: int, response_tick_usec: int, response_epoch := -1) -> 
 	_stale_gap_tick = -1
 	return true
 
+
 func reject(request_id: int, now_usec := -1) -> bool:
 	if not _inflight.has(request_id):
 		return false
@@ -99,12 +108,16 @@ func reject(request_id: int, now_usec := -1) -> bool:
 	probe_closed.emit(request_id, "rejected")
 	return true
 
+
 func advance(now_usec: int) -> void:
 	_expire(now_usec)
 
+
 func snapshot(now_usec: int) -> Dictionary:
 	_expire(now_usec)
-	var fresh := _last_success_tick >= 0 and now_usec - _last_success_tick <= freshness_usec and connected
+	var fresh := (
+		_last_success_tick >= 0 and now_usec - _last_success_tick <= freshness_usec and connected
+	)
 	var timeout_count := 0
 	var rejected_count := 0
 	var success_count := 0
@@ -137,13 +150,25 @@ func snapshot(now_usec: int) -> Dictionary:
 		for value in rtts:
 			total += value
 		smoothed = total / rtts.size()
-	return {"rtt_ms": _last_rtt_ms if fresh else null, "rtt_smoothed_ms": smoothed,
+	return {
+		"rtt_ms": _last_rtt_ms if fresh else null,
+		"rtt_smoothed_ms": smoothed,
 		"rtt_stale": _last_success_tick >= 0 and not fresh,
-		"rtt_samples_ms": graph_values, "successful": success_count, "timed_out": timeout_count,
+		"rtt_samples_ms": graph_values,
+		"successful": success_count,
+		"timed_out": timeout_count,
 		"rejected": rejected_count,
 		"rtt_graph": graph_points,
-		"probe_timeout_ratio": float(timeout_count) / (success_count + timeout_count) if success_count + timeout_count > 0 else null,
-		"packet_loss": null, "inflight": not _inflight.is_empty()}
+		"probe_timeout_ratio":
+		(
+			float(timeout_count) / (success_count + timeout_count)
+			if success_count + timeout_count > 0
+			else null
+		),
+		"packet_loss": null,
+		"inflight": not _inflight.is_empty()
+	}
+
 
 func _expire(now_usec: int) -> void:
 	for request_id in _inflight.keys():
@@ -152,8 +177,14 @@ func _expire(now_usec: int) -> void:
 			_inflight.erase(request_id)
 			_record(now_usec, 0.0, false, "timeout")
 			probe_closed.emit(request_id, "timeout")
-	while not _settled.is_empty() and (now_usec - int(_settled[0].tick) > max_age_usec or _settled.size() > max_samples):
+	while (
+		not _settled.is_empty()
+		and (now_usec - int(_settled[0].tick) > max_age_usec or _settled.size() > max_samples)
+	):
 		_settled.pop_front()
 
+
 func _record(tick: int, rtt_usec: float, success: bool, outcome := "success") -> void:
-	_settled.append({"tick": tick, "success": success, "outcome": outcome, "rtt_ms": rtt_usec / 1000.0})
+	_settled.append(
+		{"tick": tick, "success": success, "outcome": outcome, "rtt_ms": rtt_usec / 1000.0}
+	)

@@ -37,8 +37,11 @@ func _ready() -> void:
 	options.threading = false
 	options.one_time_token = false
 	client.token_save_path = _cli_option("--token-path", "user://session_ping.token")
-	client.connect_db(_cli_option("--stdb-host", "http://127.0.0.1:3303"),
-			_cli_option("--stdb-db", "session_ping"), options)
+	client.connect_db(
+		_cli_option("--stdb-host", "http://127.0.0.1:3303"),
+		_cli_option("--stdb-db", "session_ping"),
+		options
+	)
 
 
 func _process(delta: float) -> void:
@@ -46,11 +49,18 @@ func _process(delta: float) -> void:
 		return
 	if shutdown_requested:
 		if disconnect_seen:
-			_assert(client._pending_reducer_call.size() == 0, "SDK pending reducer map is empty after disconnect")
+			_assert(
+				client._pending_reducer_call.size() == 0,
+				"SDK pending reducer map is empty after disconnect"
+			)
 			_assert(role_verified, "sender-scoped expected role was verified")
 			finished = true
-			print("SESSION_PING_E2E replies=%d latest_ms=%.3f smoothed_ms=%.3f" % [
-				final_replies, final_latest_ms, final_smoothed_ms])
+			print(
+				(
+					"SESSION_PING_E2E replies=%d latest_ms=%.3f smoothed_ms=%.3f"
+					% [final_replies, final_latest_ms, final_smoothed_ms]
+				)
+			)
 			print("SESSION_PING_E2E_FAIL" if failed else "SESSION_PING_E2E_PASS")
 			get_tree().quit(0 if not failed else 1)
 		elif Time.get_ticks_usec() >= shutdown_deadline_usec:
@@ -71,10 +81,15 @@ func _process(delta: float) -> void:
 		return
 	var snapshot := sampler.snapshot(now_usec)
 	if snapshot.successful >= TARGET_REPLIES:
-		_assert(client._pending_reducer_call.size() == 0, "SDK pending reducer map is empty after response")
+		_assert(
+			client._pending_reducer_call.size() == 0,
+			"SDK pending reducer map is empty after response"
+		)
 		_assert(snapshot.rtt_ms > 0.0, "latest RTT is positive")
 		_assert(snapshot.rtt_smoothed_ms > 0.0, "smoothed RTT is positive")
-		_assert(snapshot.timed_out == 0 and snapshot.rejected == 0, "real echo replies are not failures")
+		_assert(
+			snapshot.timed_out == 0 and snapshot.rejected == 0, "real echo replies are not failures"
+		)
 		_assert(client.get_local_identity().size() > 0, "connected identity is nonempty")
 		_assert(_token_file_is_nonempty(), "authenticated token file is nonempty")
 		_assert(role_verified, "authenticated client has the expected effective role")
@@ -107,8 +122,14 @@ func _on_role_subscription_applied() -> void:
 	if rows.size() != 1:
 		return
 	var row := rows[0]
-	var ordinal := ContinuumRole.Options.viewer if expected == "Viewer" else ContinuumRole.Options.operator
-	role_verified = row.identity == client.get_local_identity() and row.role != null and row.role.value == ordinal
+	var ordinal := (
+		ContinuumRole.Options.viewer if expected == "Viewer" else ContinuumRole.Options.operator
+	)
+	role_verified = (
+		row.identity == client.get_local_identity()
+		and row.role != null
+		and row.role.value == ordinal
+	)
 	_assert(role_verified, "role ordinal and row identity match the authenticated sender")
 	if role_verified:
 		print("SESSION_PING_ROLE=%s TAG=%d" % [expected, ordinal])
@@ -132,9 +153,13 @@ func _finish(passed: bool) -> void:
 	var final_snapshot := sampler.snapshot(Time.get_ticks_usec())
 	final_replies = final_snapshot.successful
 	final_latest_ms = float(final_snapshot.rtt_ms) if final_snapshot.rtt_ms != null else 0.0
-	final_smoothed_ms = float(final_snapshot.rtt_smoothed_ms) if final_snapshot.rtt_smoothed_ms != null else 0.0
+	final_smoothed_ms = (
+		float(final_snapshot.rtt_smoothed_ms) if final_snapshot.rtt_smoothed_ms != null else 0.0
+	)
 	transport.dispose()
-	_assert(client._pending_reducer_call.size() == 0, "SDK pending reducer map is empty after dispose")
+	_assert(
+		client._pending_reducer_call.size() == 0, "SDK pending reducer map is empty after dispose"
+	)
 	shutdown_requested = true
 	shutdown_deadline_usec = Time.get_ticks_usec() + 5_000_000
 	if client.is_connected_db():

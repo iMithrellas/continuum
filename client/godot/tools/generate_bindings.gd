@@ -45,12 +45,15 @@ func _initialize() -> void:
 		var result: Array = await http.request_completed
 		var status: int = result[1]
 		if status != 200:
-			_die("schema fetch for '%s' returned HTTP %d - is the module published?"
-					% [module_name, status])
+			_die(
+				(
+					"schema fetch for '%s' returned HTTP %d - is the module published?"
+					% [module_name, status]
+				)
+			)
 			return
 
-		module.set(&"unparsed_module_schema",
-				(result[3] as PackedByteArray).get_string_from_utf8())
+		module.set(&"unparsed_module_schema", (result[3] as PackedByteArray).get_string_from_utf8())
 		print("    ok (%d bytes)" % (result[3] as PackedByteArray).size())
 
 	print("==> generating into %s" % BINDINGS_SCHEMA_PATH)

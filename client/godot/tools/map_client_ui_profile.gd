@@ -3,11 +3,13 @@
 ## git snapshot of Main; no original/dirty worktree is ever loaded or edited.
 extends Node
 
+
 func subtree_size(node: Node) -> int:
 	var count := 1
 	for child in node.get_children():
 		count += subtree_size(child)
 	return count
+
 
 func sample(main: Control, label: String, colonists_changed: bool) -> void:
 	var samples: Array[float] = []
@@ -34,7 +36,13 @@ func sample(main: Control, label: String, colonists_changed: bool) -> void:
 	var total := 0.0
 	for cost in samples:
 		total += cost
-	print("UI_PROFILE %s n=30 mean_ms=%.3f p95_ms=%.3f max_ms=%.3f created_nodes=%d" % [label, total / 30, samples[28], samples.back(), new_nodes])
+	print(
+		(
+			"UI_PROFILE %s n=30 mean_ms=%.3f p95_ms=%.3f max_ms=%.3f created_nodes=%d"
+			% [label, total / 30, samples[28], samples.back(), new_nodes]
+		)
+	)
+
 
 func _ready() -> void:
 	var previous := SpacetimeDB.Continuum.db
@@ -56,7 +64,12 @@ func _ready() -> void:
 	main._refresh()
 	await get_tree().process_frame
 	await get_tree().process_frame
-	print("UI_PROFILE environment main=%s edge=128 display=%s cached_map=true" % [script_path, DisplayServer.get_name()])
+	print(
+		(
+			"UI_PROFILE environment main=%s edge=128 display=%s cached_map=true"
+			% [script_path, DisplayServer.get_name()]
+		)
+	)
 	await sample(main, "ordinary_tick", true)
 	await sample(main, "config_only_tick", false)
 	main.free()

@@ -1,6 +1,7 @@
 ## In-memory generated rows only. Never connects or calls server reducers.
 extends RefCounted
 
+
 static func database(populate := true) -> LocalDatabase:
 	var client := SpacetimeDB.Continuum
 	var schema := SpacetimeDBSchema.new("Continuum", "res://spacetime_bindings/schema", false)
@@ -33,9 +34,13 @@ static func database(populate := true) -> LocalDatabase:
 					var z := 15 if x < 3 else 7
 					chunk.materials[x + 16 * (y + 16 * z)] = 1 if x < 3 else 2
 		local._tables["terrain_chunk"][chunk.id] = chunk
-	var facility := ContinuumTile.create(1, 3, 0, ContinuumTileKind.create_dining(), true, -8, 2, 1, 12)
+	var facility := ContinuumTile.create(
+		1, 3, 0, ContinuumTileKind.create_dining(), true, -8, 2, 1, 12
+	)
 	local._tables["tile"][1] = facility
-	local._tables["tile"][2] = ContinuumTile.create(2, 1, 0, ContinuumTileKind.create_dining(), true, -8, 1, 1, 4)
+	local._tables["tile"][2] = ContinuumTile.create(
+		2, 1, 0, ContinuumTileKind.create_dining(), true, -8, 1, 1, 4
+	)
 	for id in [1, 2, 3]:
 		var actor := ContinuumColonist.new()
 		actor.id = id
@@ -80,6 +85,7 @@ static func database(populate := true) -> LocalDatabase:
 	local._tables["excavation_designation"][1] = designation
 	index_rows(local)
 	return local
+
 
 static func index_rows(local: LocalDatabase) -> void:
 	for table in local._tables:

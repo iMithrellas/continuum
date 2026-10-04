@@ -20,16 +20,21 @@ var diagnostics_graph_enabled := false
 var native_autostart := false
 var last_load_status := "missing"
 
+
 static func path_from_args(fallback := SAVE_PATH) -> String:
 	for argument: String in OS.get_cmdline_user_args():
 		if argument.begins_with("--settings-file="):
 			return argument.substr("--settings-file=".length())
 	return fallback
 
-static func companion_path_from_settings(settings_path: String, suffix: String, default_path: String) -> String:
+
+static func companion_path_from_settings(
+	settings_path: String, suffix: String, default_path: String
+) -> String:
 	if settings_path == SAVE_PATH:
 		return default_path
 	return settings_path + suffix
+
 
 func load_from(path := path_from_args()) -> String:
 	var config := ConfigFile.new()
@@ -40,8 +45,12 @@ func load_from(path := path_from_args()) -> String:
 	if error != OK:
 		last_load_status = "unreadable"
 		return last_load_status
-	font_size = clampi(int(config.get_value("ui", "font_size", DEFAULT_FONT_SIZE)), MIN_FONT_SIZE, MAX_FONT_SIZE)
-	ui_scale_percent = normalize_ui_scale(int(config.get_value("ui", "scale_percent", legacy_ui_scale(font_size))))
+	font_size = clampi(
+		int(config.get_value("ui", "font_size", DEFAULT_FONT_SIZE)), MIN_FONT_SIZE, MAX_FONT_SIZE
+	)
+	ui_scale_percent = normalize_ui_scale(
+		int(config.get_value("ui", "scale_percent", legacy_ui_scale(font_size)))
+	)
 	reduced_motion = bool(config.get_value("ui", "reduced_motion", false))
 	server_host = _safe_string(config.get_value("server", "host", ""))
 	database = _safe_string(config.get_value("server", "database", ""))
@@ -50,6 +59,7 @@ func load_from(path := path_from_args()) -> String:
 	native_autostart = bool(config.get_value("native", "autostart", false))
 	last_load_status = "loaded"
 	return last_load_status
+
 
 func save_to(path := path_from_args()) -> Error:
 	var config := ConfigFile.new()
@@ -63,10 +73,12 @@ func save_to(path := path_from_args()) -> Error:
 	config.set_value("native", "autostart", native_autostart)
 	return config.save(path)
 
+
 func remember_server(host: String, db: String, path := path_from_args()) -> Error:
 	server_host = host.strip_edges()
 	database = db.strip_edges()
 	return save_to(path)
+
 
 func clone() -> ClientSettings:
 	var copy := ClientSettings.new()
@@ -81,8 +93,10 @@ func clone() -> ClientSettings:
 	copy.last_load_status = last_load_status
 	return copy
 
+
 static func _safe_string(value: Variant) -> String:
 	return value if value is String else ""
+
 
 static func normalize_ui_scale(value: int) -> int:
 	var nearest := 100
@@ -91,9 +105,11 @@ static func normalize_ui_scale(value: int) -> int:
 			nearest = candidate
 	return nearest
 
+
 ## Legacy sizes below the 13px baseline must never shrink the new interface.
 static func legacy_ui_scale(value: int) -> int:
 	return normalize_ui_scale(maxi(100, roundi(float(value) / DEFAULT_FONT_SIZE * 100)))
+
 
 ## The Window is the sole scaling authority; all token measurements stay logical.
 func apply_ui_scale(window: Window) -> void:
@@ -101,6 +117,7 @@ func apply_ui_scale(window: Window) -> void:
 	font_size = DEFAULT_FONT_SIZE
 	window.content_scale_mode = Window.CONTENT_SCALE_MODE_CANVAS_ITEMS
 	window.content_scale_factor = float(ui_scale_percent) / 100.0
+
 
 func ui_metrics() -> UiMetrics:
 	return UiMetrics.new(DEFAULT_FONT_SIZE)

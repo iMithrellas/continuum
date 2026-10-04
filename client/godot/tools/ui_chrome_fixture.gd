@@ -37,23 +37,43 @@ func _ready() -> void:
 	await get_tree().process_frame
 	await get_tree().process_frame
 	_check_typography(self)
-	_check(_bar.mouse_filter == Control.MOUSE_FILTER_IGNORE, "inline diagnostics stays input transparent")
+	_check(
+		_bar.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"inline diagnostics stays input transparent"
+	)
 	_check(_bar.session_rtt_text() == "TCP RTT N/A", "HTTP/reducer sample cannot become TCP RTT")
 	if _focus:
-		_check(get_viewport().gui_get_focus_owner() == _focus_control, "focus case actually owns keyboard focus")
-	_check(_contrast(ThemeTokens.color("critical"), ThemeTokens.color("critical-soft")) >= 4.5, "selected critical text retains contrast on its status ground")
+		_check(
+			get_viewport().gui_get_focus_owner() == _focus_control,
+			"focus case actually owns keyboard focus"
+		)
+	_check(
+		_contrast(ThemeTokens.color("critical"), ThemeTokens.color("critical-soft")) >= 4.5,
+		"selected critical text retains contrast on its status ground"
+	)
 	for name: String in Icons.NAMES:
 		for token: String in Icons.TOKENS:
 			var texture: Texture2D = Icons.texture(name, token)
-			_check(texture != null and texture.get_size() == Vector2(16, 16), "16 logical pixel interface icon " + name)
-			_check(_icon_uses_token(texture, token), "interface icon uses token, not black currentColor fallback " + name)
+			_check(
+				texture != null and texture.get_size() == Vector2(16, 16),
+				"16 logical pixel interface icon " + name
+			)
+			_check(
+				_icon_uses_token(texture, token),
+				"interface icon uses token, not black currentColor fallback " + name
+			)
 	if not _capture.is_empty() and DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
 		var image := get_viewport().get_texture().get_image()
 		_check(image.get_size() == screen, "capture matches actual requested viewport")
 		_check(image.save_png(_capture) == OK, "viewport capture saves")
 	if _failures.is_empty():
-		print("UI_INTEGRATION_FIXTURE_PASS screen=%s scale=%.2f status=%s reduced_motion=%s focus=%s phase=chrome" % [screen, scale, "problem" if _problem else "nominal", _reduced_motion, _focus])
+		print(
+			(
+				"UI_INTEGRATION_FIXTURE_PASS screen=%s scale=%.2f status=%s reduced_motion=%s focus=%s phase=chrome"
+				% [screen, scale, "problem" if _problem else "nominal", _reduced_motion, _focus]
+			)
+		)
 	else:
 		for failure: String in _failures:
 			push_error(failure)
@@ -80,7 +100,16 @@ func _build_chrome() -> void:
 	_bar.custom_minimum_size = Vector2(280, 40)
 	top.add_child(_bar)
 	_bar.configure(true, true)
-	_bar.set_snapshots({"ready": true, "mean_fps": 60.0, "p95_frame_ms": 16.7, "frame_graph": [{"tick": 0, "value": 16.0}, {"tick": 1, "value": null}, {"tick": 2, "value": 17.0}]}, {"source": "http", "rtt_ms": 7.0})
+	_bar.set_snapshots(
+		{
+			"ready": true,
+			"mean_fps": 60.0,
+			"p95_frame_ms": 16.7,
+			"frame_graph":
+			[{"tick": 0, "value": 16.0}, {"tick": 1, "value": null}, {"tick": 2, "value": 17.0}]
+		},
+		{"source": "http", "rtt_ms": 7.0}
+	)
 	var tabs := HBoxContainer.new()
 	tabs.custom_minimum_size.y = ThemeTokens.number("panel-header")
 	column.add_child(tabs)
@@ -105,9 +134,20 @@ func _build_chrome() -> void:
 	var chart := HistoryChart.new()
 	chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(chart)
-	chart.set_points([{"seconds": 0.0, "values": {"mood": 70.0, "productivity": 65.0}}, {"seconds": 60.0, "values": {"mood": 68.0}}, {"seconds": 120.0, "values": {"mood": 69.0, "productivity": 63.0}}, {"seconds": 3600.0, "values": {"mood": 72.0, "productivity": 64.0}}])
+	chart.set_points(
+		[
+			{"seconds": 0.0, "values": {"mood": 70.0, "productivity": 65.0}},
+			{"seconds": 60.0, "values": {"mood": 68.0}},
+			{"seconds": 120.0, "values": {"mood": 69.0, "productivity": 63.0}},
+			{"seconds": 3600.0, "values": {"mood": 72.0, "productivity": 64.0}}
+		]
+	)
 	var row := PanelContainer.new()
-	var style := DeckTheme.box(ThemeTokens.color("critical-soft" if _problem else "bg-200"), ThemeTokens.color("accent" if _focus else "line-100"), 12)
+	var style := DeckTheme.box(
+		ThemeTokens.color("critical-soft" if _problem else "bg-200"),
+		ThemeTokens.color("accent" if _focus else "line-100"),
+		12
+	)
 	row.add_theme_stylebox_override("panel", style)
 	body.add_child(row)
 	var actions := HBoxContainer.new()
@@ -118,8 +158,12 @@ func _build_chrome() -> void:
 	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	glyph.texture = ThemeTokens.glyph("critical" if _problem else "notice")
 	actions.add_child(glyph)
-	var status := _label("Critical · selected contrast fixture" if _problem else "Nominal · no active alerts", "body")
-	status.add_theme_color_override("font_color", ThemeTokens.color("critical" if _problem else "ink-muted"))
+	var status := _label(
+		"Critical · selected contrast fixture" if _problem else "Nominal · no active alerts", "body"
+	)
+	status.add_theme_color_override(
+		"font_color", ThemeTokens.color("critical" if _problem else "ink-muted")
+	)
 	status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_child(status)
 	var command := Button.new()
@@ -129,7 +173,15 @@ func _build_chrome() -> void:
 	actions.add_child(command)
 	if _focus:
 		command.grab_focus.call_deferred()
-	body.add_child(_label("Phase 2 chrome only · component pulse and colony composition await dependency handoffs", "small"))
+	(
+		body
+		. add_child(
+			_label(
+				"Phase 2 chrome only · component pulse and colony composition await dependency handoffs",
+				"small"
+			)
+		)
+	)
 
 
 func _label(text: String, style: String) -> Label:
@@ -163,7 +215,11 @@ func _icon_uses_token(texture: Texture2D, token: String) -> bool:
 			var pixel := image.get_pixel(x, y)
 			if pixel.a > 0.9:
 				opaque_pixels += 1
-				if absf(pixel.r - expected.r) > 0.01 or absf(pixel.g - expected.g) > 0.01 or absf(pixel.b - expected.b) > 0.01:
+				if (
+					absf(pixel.r - expected.r) > 0.01
+					or absf(pixel.g - expected.g) > 0.01
+					or absf(pixel.b - expected.b) > 0.01
+				):
 					return false
 	return opaque_pixels > 0
 

@@ -10,6 +10,7 @@ var reduced_motion: bool = false
 var _ack_states: Dictionary = {}
 var model: Dictionary = {}
 
+
 ## null/missing means unavailable. coverage.status optionally marks partial or
 ## unavailable query coverage; it can never upgrade rejected input to complete.
 func set_model(rows: Variant = null, coverage: Dictionary = {}) -> void:
@@ -56,11 +57,13 @@ func set_model(rows: Variant = null, coverage: Dictionary = {}) -> void:
 		remove_child(row)
 		row.queue_free()
 
+
 func set_reduced_motion(enabled: bool) -> void:
 	reduced_motion = enabled
 	for child in get_children():
 		if child.has_method("set_reduced_motion"):
 			child.set_reduced_motion(enabled)
+
 
 func set_acknowledgement_state(id: Variant, pending: bool, error: String = "") -> void:
 	if not Models.valid_identifier(id):

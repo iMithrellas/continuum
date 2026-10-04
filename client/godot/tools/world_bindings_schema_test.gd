@@ -5,8 +5,10 @@ extends SceneTree
 
 const CONFIG := "res://spacetime_bindings/plugin_config.tres"
 
+
 func _initialize() -> void:
 	call_deferred("run")
+
 
 func run() -> void:
 	var config: Resource = load(CONFIG)
@@ -43,23 +45,37 @@ func run() -> void:
 			assert(not String(reducer.source_name).begins_with("generation_test_"))
 		for view: Dictionary in section.get("Views", []):
 			views[view.source_name] = view
-	for spec in [["terrain_column_chunk", "by_xy", [1, 2]],
+	for spec in [
+		["terrain_column_chunk", "by_xy", [1, 2]],
 		["terrain_overview_chunk", "by_view", [3, 4, 5, 6]],
-		["terrain_chunk", "by_xyz", [1, 2, 3]]]:
+		["terrain_chunk", "by_xyz", [1, 2, 3]]
+	]:
 		var found := false
 		for index: Dictionary in tables[spec[0]].indexes:
 			if index.accessor_name.some == spec[1]:
-				assert(index.algorithm.BTree.map(func(value: Variant) -> int: return int(value)) == spec[2])
+				assert(
+					(
+						index.algorithm.BTree.map(func(value: Variant) -> int: return int(value))
+						== spec[2]
+					)
+				)
 				found = true
 		assert(found, "backend spatial index missing: %s" % spec[1])
 	assert(reducers.reset_world_large.params.elements.size() == 3)
 	assert(reducers.retry_world_generation.params.elements.is_empty())
 	assert(views.has("my_role"))
-	assert(views.my_role.return_type.Sum.variants[0].algebraic_type.Ref == tables.membership.product_type_ref)
+	assert(
+		(
+			views.my_role.return_type.Sum.variants[0].algebraic_type.Ref
+			== tables.membership.product_type_ref
+		)
+	)
 	var schema := SpacetimeDBSchema.new("Continuum")
 	assert(schema.get_type_of_table_name(&"my_role") == &"ContinuumMembership")
 	assert(not schema.module_types.has(&"ContinuumOwnRole"))
 	if OS.get_cmdline_user_args().has("--cache-schema"):
 		assert(ResourceSaver.save(config, CONFIG) == OK)
-	print("WORLD_BINDINGS_SCHEMA_PASS: production schema cache, backend XY/view/XYZ indexes and Membership view mapping")
+	print(
+		"WORLD_BINDINGS_SCHEMA_PASS: production schema cache, backend XY/view/XYZ indexes and Membership view mapping"
+	)
 	quit(0)

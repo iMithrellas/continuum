@@ -47,7 +47,9 @@ var _status_viewport: ScrollContainer
 var _diagnostics_graph := false
 
 
-func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()) -> void:
+func setup(
+	map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metrics := UiMetrics.new()
+) -> void:
 	_save_path = save_path
 	metrics = UiMetrics.new()
 	_map = map_control
@@ -88,7 +90,9 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_utilities.name = "ViewLayoutUtilities"
 	_utilities.custom_minimum_size.y = 44
 	_utilities.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	var utility_surface := DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 8)
+	var utility_surface := DeckTheme.box(
+		ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 8
+	)
 	utility_surface.content_margin_top = 4
 	utility_surface.content_margin_bottom = 4
 	_utilities.add_theme_stylebox_override("panel", utility_surface)
@@ -144,6 +148,7 @@ func setup(map_control: Control, save_path := WorkspaceLayout.SAVE_PATH, ui_metr
 	_panel_nav.hide()
 	_build_dialog()
 
+
 func apply_metrics(ui_metrics: UiMetrics) -> void:
 	metrics = UiMetrics.new()
 	_resize_diagnostics_host()
@@ -165,20 +170,32 @@ func _resize_diagnostics_host() -> void:
 	if not is_instance_valid(diagnostics_host):
 		return
 	diagnostics_host.custom_minimum_size = Vector2(
-		((360 if _diagnostics_graph else 224) if size.x >= 1280 else (112 if size.x >= 900 else 0)) if diagnostics_host.visible else 0,
-		0)
+		(
+			(
+				(360 if _diagnostics_graph else 224)
+				if size.x >= 1280
+				else (112 if size.x >= 900 else 0)
+			)
+			if diagnostics_host.visible
+			else 0
+		),
+		0
+	)
 
 
 func status_width() -> float:
 	return maxf(1, _status_viewport.size.x)
 
+
 func _fit_header() -> void:
-	if not is_instance_valid(_utilities): return
+	if not is_instance_valid(_utilities):
+		return
 	var stacked := size.x < 550
 	var parent: Container = _header_rows if stacked else _telemetry_header
 	if _utilities.get_parent() != parent:
 		_utilities.reparent(parent)
-		if stacked: _header_rows.move_child(_utilities, 0)
+		if stacked:
+			_header_rows.move_child(_utilities, 0)
 	_utilities.size_flags_horizontal = Control.SIZE_SHRINK_END if stacked else Control.SIZE_FILL
 	_resize_diagnostics_host()
 	header_layout_changed.emit()
@@ -219,54 +236,91 @@ func add_panel(key: String) -> VBoxContainer:
 	windows[key] = window
 	authorized[key] = true
 	window.focused.connect(focus_panel.bind(key))
-	window.interaction_started.connect(func() -> void:
-		_drag_origins[key] = state(key).duplicate(true)
-		var remembered := _floating_rect(key)
-		remembered.position = remembered.position.round()
-		remembered.size = remembered.size.round()
-		if window.position.distance_to(remembered.position) > 0.01 or window.size.distance_to(remembered.size) > 0.01:
-			_drag_origins[key].rect = _remembered_geometry(key))
-	window.headers_requested.connect(func() -> void:
-		if not model.show_panel_headers:
-			toggle_panel_headers())
-	window.interaction_cancelled.connect(func() -> void:
-		if _drag_origins.has(key):
-			model.workspaces[model.active].panels[key] = _drag_origins[key]
+	window.interaction_started.connect(
+		func() -> void:
+			_drag_origins[key] = state(key).duplicate(true)
+			var remembered := _floating_rect(key)
+			remembered.position = remembered.position.round()
+			remembered.size = remembered.size.round()
+			if (
+				window.position.distance_to(remembered.position) > 0.01
+				or window.size.distance_to(remembered.size) > 0.01
+			):
+				_drag_origins[key].rect = _remembered_geometry(key)
+	)
+	window.headers_requested.connect(
+		func() -> void:
+			if not model.show_panel_headers:
+				toggle_panel_headers()
+	)
+	window.interaction_cancelled.connect(
+		func() -> void:
+			if _drag_origins.has(key):
+				model.workspaces[model.active].panels[key] = _drag_origins[key]
+				_drag_origins.erase(key)
+				_apply_layout()
+			else:
+				if not compact:
+					state(key).rect = _remembered_geometry(key)
+			save_layout()
+	)
+	window.geometry_requested.connect(
+		func(rect: Rect2, resizing: bool, unsnapped: bool) -> void:
+			var others: Array[Rect2] = []
+			for other: WorkspaceWindow in windows.values():
+				if other != window and other.is_visible_in_tree():
+					var visible_rect := _visible_control_rect(other)
+					if visible_rect.has_area():
+						others.append(
+							Rect2(
+								(
+									area.get_global_transform().affine_inverse()
+									* visible_rect.position
+								),
+								visible_rect.size
+							)
+						)
+			var snapped: Rect2
+			var minimum := (
+				Vector2(WorkspaceLayout.minimum_size(metrics).x, window.chrome_height())
+				if window.collapsed
+				else Vector2.ZERO
+			)
+			if unsnapped:
+				snapped = (
+					WorkspaceLayout.clamp_resize_rect(
+						rect, area.size, window._resize_edges, metrics
+					)
+					if resizing
+					else WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
+				)
+			else:
+				snapped = WorkspaceLayout.snap_rect(
+					rect, area.size, others, resizing, metrics, window._resize_edges, minimum
+				)
+			snapped.position = snapped.position.round()
+			snapped.size = snapped.size.round()
+			window.position = snapped.position
+			window.size = snapped.size
+	)
+	window.interaction_finished.connect(
+		func() -> void:
 			_drag_origins.erase(key)
-			_apply_layout()
-		else:
 			if not compact:
 				state(key).rect = _remembered_geometry(key)
-		save_layout())
-	window.geometry_requested.connect(func(rect: Rect2, resizing: bool, unsnapped: bool) -> void:
-		var others: Array[Rect2] = []
-		for other: WorkspaceWindow in windows.values():
-			if other != window and other.is_visible_in_tree():
-				var visible_rect := _visible_control_rect(other)
-				if visible_rect.has_area():
-					others.append(Rect2(area.get_global_transform().affine_inverse() * visible_rect.position, visible_rect.size))
-		var snapped: Rect2
-		var minimum := Vector2(WorkspaceLayout.minimum_size(metrics).x, window.chrome_height()) if window.collapsed else Vector2.ZERO
-		if unsnapped:
-			snapped = WorkspaceLayout.clamp_resize_rect(rect, area.size, window._resize_edges, metrics) if resizing else WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
-		else:
-			snapped = WorkspaceLayout.snap_rect(rect, area.size, others, resizing, metrics, window._resize_edges, minimum)
-		snapped.position = snapped.position.round()
-		snapped.size = snapped.size.round()
-		window.position = snapped.position
-		window.size = snapped.size)
-	window.interaction_finished.connect(func() -> void:
-		_drag_origins.erase(key)
-		if not compact:
-			state(key).rect = _remembered_geometry(key)
-		save_layout())
+			save_layout()
+	)
 	window.minimize_requested.connect(toggle_panel.bind(key))
-	window.close_requested.connect(func() -> void:
-		state(key).open = false
-		_changed())
-	window.pin_requested.connect(func() -> void:
-		state(key).pinned = not state(key).pinned
-		_changed())
+	window.close_requested.connect(
+		func() -> void:
+			state(key).open = false
+			_changed()
+	)
+	window.pin_requested.connect(
+		func() -> void:
+			state(key).pinned = not state(key).pinned
+			_changed()
+	)
 	return window.content
 
 
@@ -287,17 +341,22 @@ func _floating_rect(key: String) -> Rect2:
 	var saved := state(key)
 	var rect := WorkspaceLayout.to_pixels(saved.rect, area.size, metrics)
 	if saved.minimized:
-		var minimum := Vector2(WorkspaceLayout.minimum_size(metrics).x, windows[key].chrome_height())
+		var minimum := Vector2(
+			WorkspaceLayout.minimum_size(metrics).x, windows[key].chrome_height()
+		)
 		rect.position = Vector2(saved.rect[0], saved.rect[1]) * area.size
 		rect.size.y = minimum.y
 		rect = WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
 	return rect
 
+
 ## Alert ownership and aggregation belong to integration, not local preferences.
 func set_workspace_alert_summary(id: String, level: String, count: int) -> void:
 	if not model.workspaces.has(id):
 		return
-	var summary := {"level": level, "count": count} if count > 0 and level in ["warn", "critical"] else {}
+	var summary := (
+		{"level": level, "count": count} if count > 0 and level in ["warn", "critical"] else {}
+	)
 	if _alert_summaries.get(id, {}) == summary:
 		return
 	if count <= 0 or level not in ["warn", "critical"]:
@@ -306,6 +365,7 @@ func set_workspace_alert_summary(id: String, level: String, count: int) -> void:
 		_alert_summaries[id] = summary
 	if _ready_layout:
 		_update_tab_alert(id)
+
 
 func set_panel_live_count(key: String, count: int = -1) -> void:
 	if windows.has(key):
@@ -318,7 +378,11 @@ func finish_setup() -> void:
 	_rebuild_navigation()
 	_apply_layout()
 	_status.text = "Layout defaults" if model.last_load_status != "loaded" else ""
-	_status.tooltip_text = "Saved layout could not be read; defaults loaded (%s)." % model.last_load_status if model.last_load_status != "loaded" else ""
+	_status.tooltip_text = (
+		"Saved layout could not be read; defaults loaded (%s)." % model.last_load_status
+		if model.last_load_status != "loaded"
+		else ""
+	)
 
 
 func state(key: String) -> Dictionary:
@@ -326,10 +390,18 @@ func state(key: String) -> Dictionary:
 
 
 func blocks_map_input(point: Vector2) -> bool:
-	if _dialog.visible or _menu.get_popup().visible or (is_instance_valid(_confirmation) and _confirmation.visible) or not _map.get_global_rect().has_point(point):
+	if (
+		_dialog.visible
+		or _menu.get_popup().visible
+		or (is_instance_valid(_confirmation) and _confirmation.visible)
+		or not _map.get_global_rect().has_point(point)
+	):
 		return true
 	for window: WorkspaceWindow in windows.values():
-		if window.visible and (not window._gesture.is_empty() or window.get_global_rect().has_point(point)):
+		if (
+			window.visible
+			and (not window._gesture.is_empty() or window.get_global_rect().has_point(point))
+		):
 			return true
 	return false
 
@@ -369,7 +441,11 @@ func switch_workspace(id: String) -> void:
 func focus_panel(key: String) -> void:
 	if not authorized.get(key, false):
 		return
-	if _compact_panel == key and windows[key].get_parent() == area and area.get_child(-1) == windows[key]:
+	if (
+		_compact_panel == key
+		and windows[key].get_parent() == area
+		and area.get_child(-1) == windows[key]
+	):
 		return
 	_compact_panel = key
 	var order: Array = windows.keys()
@@ -386,18 +462,30 @@ func focus_panel(key: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not _ready_layout or not event is InputEventMouseButton or not event.pressed or event.button_index != MOUSE_BUTTON_LEFT:
+	if (
+		not _ready_layout
+		or not event is InputEventMouseButton
+		or not event.pressed
+		or event.button_index != MOUSE_BUTTON_LEFT
+	):
 		return
 	var order: Array = windows.keys()
-	order.sort_custom(func(a: String, b: String) -> bool:
-		var a_float: bool = windows[a].get_parent() == area
-		var b_float: bool = windows[b].get_parent() == area
-		return int(state(a).z) > int(state(b).z) if a_float == b_float else a_float)
+	order.sort_custom(
+		func(a: String, b: String) -> bool:
+			var a_float: bool = windows[a].get_parent() == area
+			var b_float: bool = windows[b].get_parent() == area
+			return int(state(a).z) > int(state(b).z) if a_float == b_float else a_float
+	)
 	for key: String in order:
 		var child: WorkspaceWindow = windows[key]
 		if child.is_visible_in_tree() and _visible_control_rect(child).has_point(event.position):
 			focus_panel(child.name)
-			if event.alt_pressed and not child.header_visible and not child.pinned and not child.compact:
+			if (
+				event.alt_pressed
+				and not child.header_visible
+				and not child.pinned
+				and not child.compact
+			):
 				var on_handle := false
 				for handle: Control in child.resize_handles.values():
 					if handle.visible and handle.get_global_rect().has_point(event.position):
@@ -413,7 +501,12 @@ func toggle_panel(key: String) -> void:
 	if not authorized.get(key, false):
 		return
 	_cancel_gestures()
-	if map_only or not state(key).open or state(key).minimized or (compact and _compact_panel != key):
+	if (
+		map_only
+		or not state(key).open
+		or state(key).minimized
+		or (compact and _compact_panel != key)
+	):
 		if state(key).minimized and not compact:
 			var restored := WorkspaceLayout.to_pixels(state(key).rect, area.size, metrics)
 			var saved_anchor := Vector2(state(key).rect[0], state(key).rect[1]) * area.size
@@ -428,6 +521,7 @@ func toggle_panel(key: String) -> void:
 	else:
 		state(key).minimized = true
 	_changed()
+
 
 func _visible_control_rect(control: Control) -> Rect2:
 	var rect := control.get_global_rect()
@@ -470,7 +564,9 @@ func save_layout() -> void:
 		return
 	var error := model.save_to(_save_path)
 	_status.text = "Layout saved" if error == OK else "Layout save failed"
-	_status.tooltip_text = "" if error == OK else "Could not save local layout: %s" % error_string(error)
+	_status.tooltip_text = (
+		"" if error == OK else "Could not save local layout: %s" % error_string(error)
+	)
 
 
 func _apply_layout() -> void:
@@ -482,7 +578,14 @@ func _apply_layout() -> void:
 		_cancel_gestures()
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
-	if compact and (_compact_panel.is_empty() or not authorized.get(_compact_panel, false) or not state(_compact_panel).open):
+	if (
+		compact
+		and (
+			_compact_panel.is_empty()
+			or not authorized.get(_compact_panel, false)
+			or not state(_compact_panel).open
+		)
+	):
 		_compact_panel = ""
 		for key: String in order:
 			if authorized[key] and state(key).open and not state(key).minimized:
@@ -494,7 +597,12 @@ func _apply_layout() -> void:
 	for key: String in order:
 		var window: WorkspaceWindow = windows[key]
 		var saved := state(key)
-		window.visible = authorized[key] and saved.open and not map_only and (not compact or key == _compact_panel)
+		window.visible = (
+			authorized[key]
+			and saved.open
+			and not map_only
+			and (not compact or key == _compact_panel)
+		)
 		window.apply_state(saved.pinned, compact)
 		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
@@ -526,13 +634,18 @@ func _queue_body_focus_reveal() -> void:
 
 
 func _schedule_body_focus_reveal(control_ref: WeakRef, settling_frames: int, epoch: int) -> void:
-	_body_focus_reveal_callback = _reveal_retained_body_focus.bind(control_ref, settling_frames, epoch)
+	_body_focus_reveal_callback = _reveal_retained_body_focus.bind(
+		control_ref, settling_frames, epoch
+	)
 	get_tree().process_frame.connect(_body_focus_reveal_callback, CONNECT_ONE_SHOT)
 
 
 ## Leaving the tree invalidates callbacks even if this same deck is later reattached.
 func _exit_tree() -> void:
-	if _body_focus_reveal_callback.is_valid() and get_tree().process_frame.is_connected(_body_focus_reveal_callback):
+	if (
+		_body_focus_reveal_callback.is_valid()
+		and get_tree().process_frame.is_connected(_body_focus_reveal_callback)
+	):
 		get_tree().process_frame.disconnect(_body_focus_reveal_callback)
 	_body_focus_reveal_callback = Callable()
 	_body_focus_reveal_epoch += 1
@@ -544,7 +657,12 @@ func _reveal_retained_body_focus(control_ref: WeakRef, settling_frames: int, epo
 		return
 	_body_focus_reveal_callback = Callable()
 	var control := control_ref.get_ref() as Control
-	if not is_inside_tree() or not is_instance_valid(control) or not control.is_visible_in_tree() or get_viewport().gui_get_focus_owner() != control:
+	if (
+		not is_inside_tree()
+		or not is_instance_valid(control)
+		or not control.is_visible_in_tree()
+		or get_viewport().gui_get_focus_owner() != control
+	):
 		_body_focus_reveal_pending = false
 		return
 	if settling_frames > 0:
@@ -558,11 +676,18 @@ func _reveal_retained_body_focus(control_ref: WeakRef, settling_frames: int, epo
 			return
 	for key: String in windows:
 		var window: WorkspaceWindow = windows[key]
-		if not authorized.get(key, false) or not window.is_visible_in_tree() or not window.scroll.is_ancestor_of(control):
+		if (
+			not authorized.get(key, false)
+			or not window.is_visible_in_tree()
+			or not window.scroll.is_ancestor_of(control)
+		):
 			continue
 		var parent := control.get_parent()
 		while parent != window and parent != null:
-			if parent is ScrollContainer and not parent.get_global_rect().encloses(control.get_global_rect()):
+			if (
+				parent is ScrollContainer
+				and not parent.get_global_rect().encloses(control.get_global_rect())
+			):
 				parent.ensure_control_visible(control)
 			parent = parent.get_parent()
 		return
@@ -586,11 +711,18 @@ func _rebuild_navigation() -> void:
 		var row := HBoxContainer.new()
 		tab.add_child(row)
 		var name: String = model.workspaces[id].name
-		var button := _button(row, name if name.length() <= 28 else name.left(27) + "…", name + " · personal view preset; colony state is unchanged", switch_workspace.bind(id))
+		var button := _button(
+			row,
+			name if name.length() <= 28 else name.left(27) + "…",
+			name + " · personal view preset; colony state is unchanged",
+			switch_workspace.bind(id)
+		)
 		button.custom_minimum_size.y = 32
 		button.set_meta("workspace_id", id)
 		_tab_buttons[id] = button
-		button.add_theme_color_override("font_color", ThemeTokens.color("ink" if model.active == id else "ink-muted"))
+		button.add_theme_color_override(
+			"font_color", ThemeTokens.color("ink" if model.active == id else "ink-muted")
+		)
 		var glyph := TextureRect.new()
 		glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -612,14 +744,28 @@ func _rebuild_navigation() -> void:
 	elif _panel_buttons.has(panel_focus):
 		_panel_buttons[panel_focus].grab_focus()
 
+
 func _build_management_menu() -> void:
 	var popup := _menu.get_popup()
 	popup.clear()
 	for key: String in windows:
-		if not authorized.get(key, false): continue
+		if not authorized.get(key, false):
+			continue
 		var index := windows.keys().find(key)
-		popup.add_check_item("%s%s (F%d)" % [WorkspaceLayout.PANEL_NAMES[key], " · pinned" if state(key).pinned else "", index + 1], 100 + index)
-		popup.set_item_checked(popup.item_count - 1, state(key).open and not state(key).minimized and not map_only)
+		popup.add_check_item(
+			(
+				"%s%s (F%d)"
+				% [
+					WorkspaceLayout.PANEL_NAMES[key],
+					" · pinned" if state(key).pinned else "",
+					index + 1
+				]
+			),
+			100 + index
+		)
+		popup.set_item_checked(
+			popup.item_count - 1, state(key).open and not state(key).minimized and not map_only
+		)
 	popup.add_separator()
 	popup.add_item("New workspace…", 3)
 	popup.add_item("Choose panels / rename…", 4)
@@ -634,13 +780,21 @@ func _build_management_menu() -> void:
 	popup.set_item_checked(popup.item_count - 1, map_only)
 	popup.add_separator("Workspaces")
 	for id: String in model.workspaces:
-		popup.add_radio_check_item(model.workspaces[id].name, 200 + model.workspaces.keys().find(id))
+		popup.add_radio_check_item(
+			model.workspaces[id].name, 200 + model.workspaces.keys().find(id)
+		)
 		popup.set_item_checked(popup.item_count - 1, model.active == id)
-	_menu.tooltip_text = "View & layout · show panels or choose a personal view preset. Ctrl+P opens Panels; Ctrl+F edits this layout. " + _status.text
+	_menu.tooltip_text = (
+		"View & layout · show panels or choose a personal view preset. Ctrl+P opens Panels; Ctrl+F edits this layout. "
+		+ _status.text
+	)
+
 
 func _fit_navigation() -> void:
-	if not is_instance_valid(_tabs) or not is_instance_valid(_menu): return
-	for tab in _tabs.get_children(): tab.show()
+	if not is_instance_valid(_tabs) or not is_instance_valid(_menu):
+		return
+	for tab in _tabs.get_children():
+		tab.show()
 	for id: String in _tab_buttons:
 		var title: String = model.workspaces[id].name
 		_tab_buttons[id].text = title if title.length() <= 28 else title.left(27) + "…"
@@ -654,10 +808,16 @@ func _fit_navigation() -> void:
 		var active_button: Button = _tab_buttons.get(model.active)
 		if active_button != null:
 			if size.x < 350 and model.active in ["daily", "build", "welfare"]:
-				active_button.text = {"daily": "Daily", "build": "Build", "welfare": "Welfare"}[model.active]
+				active_button.text = {"daily": "Daily", "build": "Build", "welfare": "Welfare"}[
+					model.active
+				]
 			active_button.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 			active_button.custom_minimum_size.x = minf(200, maxf(80, available - 32))
-			active_button.tooltip_text = model.workspaces[model.active].name + " · personal view preset; choose views in Panels"
+			active_button.tooltip_text = (
+				model.workspaces[model.active].name
+				+ " · personal view preset; choose views in Panels"
+			)
+
 
 func _update_tab_alert(id: String) -> void:
 	if not _tab_alert_nodes.has(id):
@@ -691,8 +851,9 @@ func _build_dialog() -> void:
 	_name_input = LineEdit.new()
 	_name_input.placeholder_text = "Workspace name"
 	_name_input.max_length = 40
-	_name_input.text_changed.connect(func(text: String) -> void:
-		_dialog.get_ok_button().disabled = text.strip_edges().is_empty())
+	_name_input.text_changed.connect(
+		func(text: String) -> void: _dialog.get_ok_button().disabled = text.strip_edges().is_empty()
+	)
 	body.add_child(_name_input)
 	_copy = CheckBox.new()
 	_copy.text = "Copy current positions and sizes"
@@ -738,7 +899,10 @@ func edit_workspace(create: bool) -> void:
 func _confirm_workspace() -> void:
 	var selected: Array[String] = []
 	for key: String in _checks:
-		if (_checks[key].button_pressed and authorized[key]) or (not authorized[key] and state(key).open):
+		if (
+			(_checks[key].button_pressed and authorized[key])
+			or (not authorized[key] and state(key).open)
+		):
 			selected.append(key)
 	if _dialog_new:
 		if model.create_workspace(_name_input.text, selected, _copy.button_pressed).is_empty():
@@ -756,35 +920,52 @@ func _confirm_workspace() -> void:
 func _layout_action(id: int) -> void:
 	if id >= 200:
 		var index := id - 200
-		if index < model.workspaces.size(): switch_workspace(model.workspaces.keys()[index])
+		if index < model.workspaces.size():
+			switch_workspace(model.workspaces.keys()[index])
 		return
 	if id >= 100:
 		var index := id - 100
-		if index < windows.size() and authorized.get(windows.keys()[index], false): toggle_panel(windows.keys()[index])
+		if index < windows.size() and authorized.get(windows.keys()[index], false):
+			toggle_panel(windows.keys()[index])
 		return
 	match id:
-		3: edit_workspace(true); return
-		4: edit_workspace(false); return
-		5: save_layout(); _build_management_menu(); return
-		6: toggle_map_only(); return
+		3:
+			edit_workspace(true)
+			return
+		4:
+			edit_workspace(false)
+			return
+		5:
+			save_layout()
+			_build_management_menu()
+			return
+		6:
+			toggle_map_only()
+			return
 	if id == 2:
 		toggle_panel_headers()
 		return
 	var confirmation := ConfirmationDialog.new()
 	_confirmation = confirmation
 	confirmation.title = "Reset layout" if id == 0 else "Delete workspace"
-	confirmation.dialog_text = "Reset positions for this workspace?" if id == 0 else "Delete '%s'? Colony state is not affected." % model.workspaces[model.active].name
+	confirmation.dialog_text = (
+		"Reset positions for this workspace?"
+		if id == 0
+		else "Delete '%s'? Colony state is not affected." % model.workspaces[model.active].name
+	)
 	add_child(confirmation)
-	confirmation.confirmed.connect(func() -> void:
-		_cancel_gestures()
-		if id == 0:
-			model.reset_active()
-		else:
-			model.remove_workspace(model.active)
-		map_only = false
-		workspace_changed.emit()
-		_changed()
-		confirmation.queue_free())
+	confirmation.confirmed.connect(
+		func() -> void:
+			_cancel_gestures()
+			if id == 0:
+				model.reset_active()
+			else:
+				model.remove_workspace(model.active)
+			map_only = false
+			workspace_changed.emit()
+			_changed()
+			confirmation.queue_free()
+	)
 	confirmation.canceled.connect(confirmation.queue_free)
 	confirmation.popup_centered()
 

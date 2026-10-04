@@ -34,7 +34,12 @@ const ProductionTargets = preload("res://ui/panels/production_targets.gd")
 const InterfaceIcons = preload("res://ui/theme/icons.gd")
 const PlanningPanelControl = preload("res://ui/panels/planning_panel.gd")
 const RoomOverlayControl = preload("res://ui/components/room_overlay.gd")
-const ALERT_PANEL_OWNERS := {"low_food": "overview", "low_mood": "people", "low_productivity": "overview", "recreation_unavailable": "policies"}
+const ALERT_PANEL_OWNERS := {
+	"low_food": "overview",
+	"low_mood": "people",
+	"low_productivity": "overview",
+	"recreation_unavailable": "policies"
+}
 
 ## How often the panel contents are refreshed. The backend ticks once a real second;
 ## rebuilding on every individual row change would be wasteful.
@@ -46,15 +51,26 @@ const MAX_FEED_LINES := 40
 ## (4 real hours per in-game day).
 const BASE_TIME_SCALE := 6.0
 const RECONNECT_DELAY := 2.0
-static var SUBSCRIPTION_QUERIES := PackedStringArray([
-	"SELECT * FROM config", "SELECT * FROM colony", "SELECT * FROM tile",
-	"SELECT * FROM colonist", "SELECT * FROM alert", "SELECT * FROM event_log",
-	"SELECT * FROM item_stack", "SELECT * FROM work_order",
-	"SELECT * FROM speed_control", "SELECT * FROM terrain", "SELECT * FROM world_seed",
-	"SELECT * FROM world_geometry", "SELECT * FROM terrain_chunk",
-	"SELECT * FROM terrain_material", "SELECT * FROM excavation_designation",
-	"SELECT * FROM production_policy",
-])
+static var SUBSCRIPTION_QUERIES := PackedStringArray(
+	[
+		"SELECT * FROM config",
+		"SELECT * FROM colony",
+		"SELECT * FROM tile",
+		"SELECT * FROM colonist",
+		"SELECT * FROM alert",
+		"SELECT * FROM event_log",
+		"SELECT * FROM item_stack",
+		"SELECT * FROM work_order",
+		"SELECT * FROM speed_control",
+		"SELECT * FROM terrain",
+		"SELECT * FROM world_seed",
+		"SELECT * FROM world_geometry",
+		"SELECT * FROM terrain_chunk",
+		"SELECT * FROM terrain_material",
+		"SELECT * FROM excavation_designation",
+		"SELECT * FROM production_policy",
+	]
+)
 
 @onready var map: ColonyMap = $Map
 @onready var workspace: WorkspaceDeck = $Workspace
@@ -230,7 +246,9 @@ var _production_requests: Dictionary = {}
 
 func _ready() -> void:
 	get_tree().auto_accept_quit = false
-	_profile = ContinuumClientProfile.validated(_cli_option("--profile", ContinuumClientProfile.NORMAL))
+	_profile = ContinuumClientProfile.validated(
+		_cli_option("--profile", ContinuumClientProfile.NORMAL)
+	)
 	var settings_path := _cli_option("--settings-file", ClientSettings.path_from_args())
 	_settings_warning = _settings.load_from(settings_path)
 	get_window().content_scale_size = Vector2i.ZERO
@@ -238,8 +256,12 @@ func _ready() -> void:
 	_metrics = _settings.ui_metrics()
 	_return_snapshots.load_file()
 	_server_history = ConnectionHistoryModel.new()
-	var history_path := ClientSettings.companion_path_from_settings(settings_path, ".history.json", ClientSettings.HISTORY_PATH)
-	var favorites_path := ClientSettings.companion_path_from_settings(settings_path, ".favorites.json", ClientSettings.FAVORITES_PATH)
+	var history_path := ClientSettings.companion_path_from_settings(
+		settings_path, ".history.json", ClientSettings.HISTORY_PATH
+	)
+	var favorites_path := ClientSettings.companion_path_from_settings(
+		settings_path, ".favorites.json", ClientSettings.FAVORITES_PATH
+	)
 	_server_history.legacy_import_marker_path = history_path + ".legacy-imported"
 	_server_history.load_from(history_path, favorites_path)
 	_server_history.import_legacy_entry_once(_settings.server_host, _settings.database)
@@ -250,8 +272,14 @@ func _ready() -> void:
 	_server_management.set_native_autostart(false)
 	_server_management.set_history_store(_server_history)
 	_server_management.set_probe_service(_server_probes)
-	_server_management.set_local_management_state({"can_start": false, "can_stop": false, "can_force_stop": false,
-		"message": "Checking native server..."})
+	_server_management.set_local_management_state(
+		{
+			"can_start": false,
+			"can_stop": false,
+			"can_force_stop": false,
+			"message": "Checking native server..."
+		}
+	)
 	_server_management.visible = false
 	_server_management.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(_server_management)
@@ -290,9 +318,11 @@ func _ready() -> void:
 	_server_management.visibility_changed.connect(_sync_menu_input)
 	_create_away_digest()
 	_sync_menu_input()
-	workspace.workspace_changed.connect(func() -> void:
-		_set_mode(&"select")
-		_publish_alert_counts(_live_alert_models()))
+	workspace.workspace_changed.connect(
+		func() -> void:
+			_set_mode(&"select")
+			_publish_alert_counts(_live_alert_models())
+	)
 	map.input_blocked = _map_input_blocked
 	map.tile_selected.connect(_on_tile_selected)
 	map.rectangle_selected.connect(_on_rectangle_selected)
@@ -301,44 +331,81 @@ func _ready() -> void:
 	map.tool_cancelled.connect(func() -> void: _set_mode(&"select"))
 	map.excavation_requested.connect(_on_excavation_requested)
 	map.facility_requested.connect(_on_facility_requested)
-	map.cell_selected.connect(func(cell: Vector3i) -> void:
-		if map.layered and map.terrain_model.surface_at(Vector2i(cell.x, cell.y)) == null:
-			_cell_label.text = "No known surface at (%d,%d); cut z=%d" % [cell.x, cell.y, map.terrain_model.cut]
-			return
-		var material_id := map.terrain_model.material_at(cell)
-		_cell_label.text = "%s (%d,%d,%d); base z=%d" % [
-			LayeredTerrainModel.field(map.terrain_model.materials.get(material_id), "name", "Surface"),
-			cell.x, cell.y, cell.z, map.selected_base])
-	map.cut_changed.connect(func(_layer: int) -> void:
-		_selected_tile_id = -1
-		_selected_rect = Rect2i()
-		_selected_surface = {}
-		_cell_label.text = "Select a visible surface"
-		_dirty = true)
+	map.cell_selected.connect(
+		func(cell: Vector3i) -> void:
+			if map.layered and map.terrain_model.surface_at(Vector2i(cell.x, cell.y)) == null:
+				_cell_label.text = (
+					"No known surface at (%d,%d); cut z=%d"
+					% [cell.x, cell.y, map.terrain_model.cut]
+				)
+				return
+			var material_id := map.terrain_model.material_at(cell)
+			_cell_label.text = (
+				"%s (%d,%d,%d); base z=%d"
+				% [
+					LayeredTerrainModel.field(
+						map.terrain_model.materials.get(material_id), "name", "Surface"
+					),
+					cell.x,
+					cell.y,
+					cell.z,
+					map.selected_base
+				]
+			)
+	)
+	map.cut_changed.connect(
+		func(_layer: int) -> void:
+			_selected_tile_id = -1
+			_selected_rect = Rect2i()
+			_selected_surface = {}
+			_cell_label.text = "Select a visible surface"
+			_dirty = true
+	)
 	map.camera_changed.connect(_sync_map_toolbar)
 	map.cut_changed.connect(func(_layer: int) -> void: _sync_map_toolbar())
-	map.selection_invalidated.connect(func() -> void:
-		_selected_rect = Rect2i()
-		_selected_tile_id = -1
-		_selected_surface = {}
-		_cell_label.text = "Select a visible surface"
-		_dirty = true)
+	map.selection_invalidated.connect(
+		func() -> void:
+			_selected_rect = Rect2i()
+			_selected_tile_id = -1
+			_selected_surface = {}
+			_cell_label.text = "Select a visible surface"
+			_dirty = true
+	)
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
 	_setup_native_controller()
 	_large_world = LargeWorldSession.new()
 	_large_world.attach(map)
-	_large_world.ready.connect(func() -> void:
-		if _subscription != null and _session_requested and _large_world.client == SpacetimeDB.Continuum and _large_world.epoch == _session_generation:
-			_finish_subscription_ready(_subscription, _session_generation))
-	_large_world.failed.connect(func(message: String) -> void:
-		_state_ready = false
-		_set_connection_text(message, ThemeTokens.color("critical")))
-	_large_world.loading.changed.connect(func() -> void:
-		if _large_world.client != null and not _large_world.loading.playable:
+	_large_world.ready.connect(
+		func() -> void:
+			if (
+				_subscription != null
+				and _session_requested
+				and _large_world.client == SpacetimeDB.Continuum
+				and _large_world.epoch == _session_generation
+			):
+				_finish_subscription_ready(_subscription, _session_generation)
+	)
+	_large_world.failed.connect(
+		func(message: String) -> void:
 			_state_ready = false
-		map.set_process_input(_session_requested and (_failed_bootstrap == null or _subscription != _failed_bootstrap) \
-			and (_large_world.loading.playable or (_large_world.client == null and _state_ready))))
+			_set_connection_text(message, ThemeTokens.color("critical"))
+	)
+	_large_world.loading.changed.connect(
+		func() -> void:
+			if _large_world.client != null and not _large_world.loading.playable:
+				_state_ready = false
+			map.set_process_input(
+				(
+					_session_requested
+					and (_failed_bootstrap == null or _subscription != _failed_bootstrap)
+					and (
+						_large_world.loading.playable
+						or (_large_world.client == null and _state_ready)
+					)
+				)
+			)
+	)
 	_large_world.loading.cancel_requested.connect(leave_session)
 	_world_overlay = WorldLoadingOverlay.new()
 	_world_overlay.attach(self, _large_world.loading)
@@ -347,19 +414,34 @@ func _ready() -> void:
 	_bind_client(client)
 	if _has_cli_connection():
 		_direct_launch = true
-		configure_connection(_cli_option("--stdb-host", "http://127.0.0.1:3001"),
-			_cli_option("--stdb-db", "continuum"), _profile, true)
+		configure_connection(
+			_cli_option("--stdb-host", "http://127.0.0.1:3001"),
+			_cli_option("--stdb-db", "continuum"),
+			_profile,
+			true
+		)
 
 
 func _setup_native_controller() -> void:
 	_native_catalog = ContinuumNativeServerCatalog.new()
 	if _native_catalog.load_from() != OK:
-		_server_management.set_status("Could not read the managed server list. Local servers were not changed; you can still join manually.", true)
+		(
+			_server_management
+			. set_status(
+				"Could not read the managed server list. Local servers were not changed; you can still join manually.",
+				true
+			)
+		)
 		return
-	for entry in _native_catalog.entries(): _add_native_controller(entry)
-	if not _native_catalog.entry("default").is_empty(): _select_native_server("default")
-	elif not _native_catalog.entries().is_empty(): _select_native_server(str(_native_catalog.entries()[0].id))
-	else: _refresh_native_browser()
+	for entry in _native_catalog.entries():
+		_add_native_controller(entry)
+	if not _native_catalog.entry("default").is_empty():
+		_select_native_server("default")
+	elif not _native_catalog.entries().is_empty():
+		_select_native_server(str(_native_catalog.entries()[0].id))
+	else:
+		_refresh_native_browser()
+
 
 func _make_native_controller(entry: Dictionary) -> ContinuumNativeServerController:
 	var controller := NativeServerController.new()
@@ -369,27 +451,42 @@ func _make_native_controller(entry: Dictionary) -> ContinuumNativeServerControll
 		return manager
 	return controller
 
+
 func _add_native_controller(entry: Dictionary) -> void:
 	var id := str(entry.id)
 	var controller := _make_native_controller(entry)
 	_native_controllers[id] = controller
-	controller.state_changed.connect(_on_native_instance_state.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
-	controller.server_ready.connect(_on_native_ready.bind(controller.get_instance_id()), CONNECT_DEFERRED)
-	controller.autostart_changed.connect(_on_native_instance_autostart.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
-	controller.deletion_finished.connect(_on_native_deleted.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
-	controller.module_update_finished.connect(_on_native_module_updated.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
+	controller.state_changed.connect(
+		_on_native_instance_state.bind(id, controller.get_instance_id()), CONNECT_DEFERRED
+	)
+	controller.server_ready.connect(
+		_on_native_ready.bind(controller.get_instance_id()), CONNECT_DEFERRED
+	)
+	controller.autostart_changed.connect(
+		_on_native_instance_autostart.bind(id, controller.get_instance_id()), CONNECT_DEFERRED
+	)
+	controller.deletion_finished.connect(
+		_on_native_deleted.bind(id, controller.get_instance_id()), CONNECT_DEFERRED
+	)
+	controller.module_update_finished.connect(
+		_on_native_module_updated.bind(id, controller.get_instance_id()), CONNECT_DEFERRED
+	)
 	add_child(controller)
 	controller.request_autostart_status()
 
+
 func _select_native_server(id: String) -> void:
-	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]): return
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]):
+		return
 	_invalidate_native_join()
 	_native_server_id = id
 	_native_controller = _native_controllers[id]
 	_refresh_native_browser()
 
+
 func _create_native_server(display_name: String) -> void:
-	if _closing or _exit_requested or _manual_connection_busy() or _server_management._native_busy: return
+	if _closing or _exit_requested or _manual_connection_busy() or _server_management._native_busy:
+		return
 	var result := _native_catalog.create(display_name)
 	if not result.get("ok", false):
 		_server_management.set_status(str(result.error), true)
@@ -397,17 +494,36 @@ func _create_native_server(display_name: String) -> void:
 	_add_native_controller(result.entry)
 	_select_native_server(str(result.entry.id))
 	_server_management._local_name.clear()
-	_server_management.set_status("Created %s. Start it to prepare a new colony." % str(result.entry.name))
+	_server_management.set_status(
+		"Created %s. Start it to prepare a new colony." % str(result.entry.name)
+	)
+
 
 func _on_native_instance_state(value: String, message: String, id: String, source_id: int) -> void:
-	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	if (
+		not _native_controllers.has(id)
+		or not is_instance_valid(_native_controllers[id])
+		or _native_controllers[id].get_instance_id() != source_id
+	):
+		return
 	_native_states[id] = {"state": value, "message": message}
 	_refresh_native_browser()
 
-func _on_native_instance_autostart(enabled: bool, error: String, id: String, source_id: int) -> void:
-	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
-	if error.is_empty(): _native_autostarts[id] = enabled
-	if id == _native_server_id: _on_native_autostart_changed(enabled, error)
+
+func _on_native_instance_autostart(
+	enabled: bool, error: String, id: String, source_id: int
+) -> void:
+	if (
+		not _native_controllers.has(id)
+		or not is_instance_valid(_native_controllers[id])
+		or _native_controllers[id].get_instance_id() != source_id
+	):
+		return
+	if error.is_empty():
+		_native_autostarts[id] = enabled
+	if id == _native_server_id:
+		_on_native_autostart_changed(enabled, error)
+
 
 func _refresh_native_browser() -> void:
 	var servers := _native_catalog.entries()
@@ -415,23 +531,32 @@ func _refresh_native_browser() -> void:
 		server["state"] = _native_states.get(server.id, {}).get("state", "checking")
 	_server_management.set_managed_servers(servers, _native_server_id)
 	_server_management.set_native_autostart(bool(_native_autostarts.get(_native_server_id, false)))
-	var selected: Dictionary = _native_states.get(_native_server_id, {"state": "checking", "message": "Checking native server..."})
+	var selected: Dictionary = _native_states.get(
+		_native_server_id, {"state": "checking", "message": "Checking native server..."}
+	)
 	if not is_instance_valid(_native_controller):
 		selected = {"state": "unknown", "message": "Create a local server to start a new colony."}
 	_on_native_state(str(selected.state), str(selected.message))
 
+
 func _all_native_controllers() -> Array[ContinuumNativeServerController]:
 	var controllers: Array[ContinuumNativeServerController] = []
 	for controller in _native_controllers.values():
-		if is_instance_valid(controller): controllers.append(controller)
+		if is_instance_valid(controller):
+			controllers.append(controller)
 	for controller in _retiring_native_controllers:
-		if is_instance_valid(controller): controllers.append(controller)
-	if is_instance_valid(_native_controller) and not controllers.has(_native_controller): controllers.append(_native_controller)
+		if is_instance_valid(controller):
+			controllers.append(controller)
+	if is_instance_valid(_native_controller) and not controllers.has(_native_controller):
+		controllers.append(_native_controller)
 	return controllers
+
 
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
-	_settings.font_size = clampi(settings.font_size, ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE)
+	_settings.font_size = clampi(
+		settings.font_size, ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE
+	)
 	_settings.ui_scale_percent = ClientSettings.normalize_ui_scale(settings.ui_scale_percent)
 	_settings.reduced_motion = settings.reduced_motion
 	_settings.server_host = settings.server_host
@@ -460,8 +585,11 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 		return _settings.save_to()
 	return OK
 
+
 func set_native_autostart(enabled: bool) -> void:
-	if _native_controller != null: _native_controller.request_autostart(enabled)
+	if _native_controller != null:
+		_native_controller.request_autostart(enabled)
+
 
 func _on_native_autostart_changed(enabled: bool, error: String) -> void:
 	if not error.is_empty():
@@ -471,9 +599,12 @@ func _on_native_autostart_changed(enabled: bool, error: String) -> void:
 		_native_autostarts[_native_server_id] = enabled
 	_server_management.set_native_autostart(bool(_native_autostarts.get(_native_server_id, false)))
 
+
 func _native_start() -> void:
-	if _native_controller == null or _closing or _exit_requested: return
-	if _native_updating.has(_native_server_id) or _native_deleting.has(_native_server_id): return
+	if _native_controller == null or _closing or _exit_requested:
+		return
+	if _native_updating.has(_native_server_id) or _native_deleting.has(_native_server_id):
+		return
 	if _session_requested and _direct_launch and not _state_ready:
 		leave_session()
 		_show_server_management()
@@ -491,9 +622,11 @@ func _native_start() -> void:
 		_menu.set_busy(_manual_connection_busy())
 		_server_management.set_status("Native startup request could not be queued.", true)
 
+
 func _invalidate_native_join() -> void:
 	_native_join_epoch = -1
 	_native_join_generation = -1
+
 
 func cancel_local_setup() -> void:
 	_invalidate_native_join()
@@ -503,7 +636,13 @@ func cancel_local_setup() -> void:
 		_native_controller.cancel_startup()
 	_menu.set_busy(false)
 	_server_management.set_native_busy(false)
-	_server_management.set_status("Startup cancelled. The current atomic preparation step may finish, but it will not join a server.")
+	(
+		_server_management
+		. set_status(
+			"Startup cancelled. The current atomic preparation step may finish, but it will not join a server."
+		)
+	)
+
 
 func _request_exit() -> void:
 	_end_session_observations()
@@ -516,23 +655,29 @@ func _request_exit() -> void:
 	_unbind_client(SpacetimeDB.Continuum)
 	_clear_pending_requests()
 	_set_permissions("Unknown", false, false)
-	if _access != null: _access.stop()
+	if _access != null:
+		_access.stop()
 	_cancel_reconnect()
 	_reset_diagnostics_epoch()
 	if SpacetimeDB.Continuum.is_connected_db():
 		SpacetimeDB.Continuum.disconnect_db()
 	_menu.set_status("Closing after the current atomic setup step finishes...")
-	for controller in _all_native_controllers(): controller.request_shutdown()
+	for controller in _all_native_controllers():
+		controller.request_shutdown()
+
 
 func _native_stop() -> void:
 	_invalidate_native_join()
 	if _session_requested and _is_selected_native_session():
 		leave_session()
 		_show_server_management()
-	if _native_controller != null: _native_controller.request_stop(false)
+	if _native_controller != null:
+		_native_controller.request_stop(false)
+
 
 func _native_force_stop() -> void:
-	if _native_controller == null or _native_controller.cached_state() != "stop_timeout": return
+	if _native_controller == null or _native_controller.cached_state() != "stop_timeout":
+		return
 	if _native_force_dialog == null:
 		_native_force_dialog = ConfirmationDialog.new()
 		_native_force_dialog.title = "Force stop native server?"
@@ -540,89 +685,180 @@ func _native_force_stop() -> void:
 		add_child(_native_force_dialog)
 	# Capture the exact target. Changing selection while a dialog is open must
 	# never force-stop a different server.
-	for connection in _native_force_dialog.confirmed.get_connections(): _native_force_dialog.confirmed.disconnect(connection.callable)
+	for connection in _native_force_dialog.confirmed.get_connections():
+		_native_force_dialog.confirmed.disconnect(connection.callable)
 	var source_id := _native_controller.get_instance_id()
-	_native_force_dialog.confirmed.connect(func() -> void:
-		var target = instance_from_id(source_id)
-		if is_instance_valid(target) and target.cached_state() == "stop_timeout": target.request_stop(true))
+	_native_force_dialog.confirmed.connect(
+		func() -> void:
+			var target = instance_from_id(source_id)
+			if is_instance_valid(target) and target.cached_state() == "stop_timeout":
+				target.request_stop(true)
+	)
 	_native_force_dialog.popup_centered()
 
+
 func _is_selected_native_session() -> bool:
-	if _native_catalog == null: return _host == ContinuumNativeServerManager.DEFAULT_HOST
+	if _native_catalog == null:
+		return _host == ContinuumNativeServerManager.DEFAULT_HOST
 	var entry := _native_catalog.entry(_native_server_id)
 	return not entry.is_empty() and _matches_native_endpoint(_host, _database, int(entry.port))
 
+
 func _matches_native_endpoint(host: String, database: String, port: int) -> bool:
 	var parsed := ContinuumServerEndpoint.parse(host)
-	return not parsed.is_empty() and database.strip_edges().to_lower() == "continuum" and \
-		str(parsed.canonical) in ["http://127.0.0.1:%d" % port, "http://localhost:%d" % port, "ws://127.0.0.1:%d" % port, "ws://localhost:%d" % port]
+	return (
+		not parsed.is_empty()
+		and database.strip_edges().to_lower() == "continuum"
+		and (
+			str(parsed.canonical)
+			in [
+				"http://127.0.0.1:%d" % port,
+				"http://localhost:%d" % port,
+				"ws://127.0.0.1:%d" % port,
+				"ws://localhost:%d" % port
+			]
+		)
+	)
+
 
 func _native_delete() -> void:
-	if not is_instance_valid(_native_controller) or _native_controller.cached_state() not in ["offline", "deleted"]: return
+	if (
+		not is_instance_valid(_native_controller)
+		or _native_controller.cached_state() not in ["offline", "deleted"]
+	):
+		return
 	var entry := _native_catalog.entry(_native_server_id)
-	if entry.is_empty(): return
+	if entry.is_empty():
+		return
 	if _native_delete_dialog == null:
 		_native_delete_dialog = ConfirmationDialog.new()
 		_native_delete_dialog.title = "Permanently delete server?"
 		_native_delete_dialog.ok_button_text = "Delete permanently"
 		_native_delete_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		add_child(_native_delete_dialog)
-	for connection in _native_delete_dialog.confirmed.get_connections(): _native_delete_dialog.confirmed.disconnect(connection.callable)
+	for connection in _native_delete_dialog.confirmed.get_connections():
+		_native_delete_dialog.confirmed.disconnect(connection.callable)
 	var source_id := _native_controller.get_instance_id()
 	var id := _native_server_id
-	_native_delete_dialog.dialog_text = 'Delete "%s" at 127.0.0.1:%d?\n\nAll of this server’s colony data, configuration, and logs will be permanently removed. This cannot be undone. Other servers are not affected.' % [entry.name, int(entry.port)]
-	_native_delete_dialog.confirmed.connect(func() -> void:
-		var target = instance_from_id(source_id)
-		if not is_instance_valid(target) or not _native_controllers.has(id) or _native_controllers[id] != target or target.cached_state() not in ["offline", "deleted"] or _native_updating.has(id): return
-		_native_deleting[id] = true
-		if id == _native_server_id:
-			_invalidate_native_join()
-			_server_management.set_native_busy(true)
-			_server_management.set_status("Deleting %s..." % str(entry.name))
-		target.request_delete())
+	_native_delete_dialog.dialog_text = (
+		'Delete "%s" at 127.0.0.1:%d?\n\nAll of this server’s colony data, configuration, and logs will be permanently removed. This cannot be undone. Other servers are not affected.'
+		% [entry.name, int(entry.port)]
+	)
+	_native_delete_dialog.confirmed.connect(
+		func() -> void:
+			var target = instance_from_id(source_id)
+			if (
+				not is_instance_valid(target)
+				or not _native_controllers.has(id)
+				or _native_controllers[id] != target
+				or target.cached_state() not in ["offline", "deleted"]
+				or _native_updating.has(id)
+			):
+				return
+			_native_deleting[id] = true
+			if id == _native_server_id:
+				_invalidate_native_join()
+				_server_management.set_native_busy(true)
+				_server_management.set_status("Deleting %s..." % str(entry.name))
+			target.request_delete()
+	)
 	_popup_native_confirmation(_native_delete_dialog)
 
+
 func _native_update_module() -> void:
-	if _closing or _exit_requested or not is_instance_valid(_native_controller) or _native_controller.cached_state() != "offline": return
+	if (
+		_closing
+		or _exit_requested
+		or not is_instance_valid(_native_controller)
+		or _native_controller.cached_state() != "offline"
+	):
+		return
 	var entry := _native_catalog.entry(_native_server_id)
-	if entry.is_empty(): return
+	if entry.is_empty():
+		return
 	if _native_update_dialog == null:
 		_native_update_dialog = ConfirmationDialog.new()
 		_native_update_dialog.title = "Update server module?"
 		_native_update_dialog.ok_button_text = "Prepare update"
 		_native_update_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		add_child(_native_update_dialog)
-	for connection in _native_update_dialog.confirmed.get_connections(): _native_update_dialog.confirmed.disconnect(connection.callable)
+	for connection in _native_update_dialog.confirmed.get_connections():
+		_native_update_dialog.confirmed.disconnect(connection.callable)
 	var source_id := _native_controller.get_instance_id()
 	var id := _native_server_id
-	_native_update_dialog.dialog_text = 'Prepare the current module for "%s"?\n\nYour colony data is kept. Publication refuses any schema change that requires deleting data. Other servers keep their existing modules.\n\nThe server stays stopped until you choose Start local server to publish the update.' % entry.name
-	_native_update_dialog.confirmed.connect(func() -> void:
-		var target = instance_from_id(source_id)
-		if _closing or _exit_requested or not is_instance_valid(target) or not _native_controllers.has(id) or _native_controllers[id] != target or target.cached_state() != "offline" or _native_deleting.has(id) or _native_updating.has(id): return
-		_native_updating[id] = true
-		if not target.request_module_update():
-			_native_updating.erase(id)
-			_server_management.set_status("Module update could not be queued; refresh and retry.", true)
-		else:
-			_refresh_native_browser()
-			_server_management.set_status("Preparing the module update for %s..." % entry.name))
+	_native_update_dialog.dialog_text = (
+		'Prepare the current module for "%s"?\n\nYour colony data is kept. Publication refuses any schema change that requires deleting data. Other servers keep their existing modules.\n\nThe server stays stopped until you choose Start local server to publish the update.'
+		% entry.name
+	)
+	_native_update_dialog.confirmed.connect(
+		func() -> void:
+			var target = instance_from_id(source_id)
+			if (
+				_closing
+				or _exit_requested
+				or not is_instance_valid(target)
+				or not _native_controllers.has(id)
+				or _native_controllers[id] != target
+				or target.cached_state() != "offline"
+				or _native_deleting.has(id)
+				or _native_updating.has(id)
+			):
+				return
+			_native_updating[id] = true
+			if not target.request_module_update():
+				_native_updating.erase(id)
+				_server_management.set_status(
+					"Module update could not be queued; refresh and retry.", true
+				)
+			else:
+				_refresh_native_browser()
+				_server_management.set_status("Preparing the module update for %s..." % entry.name)
+	)
 	_popup_native_confirmation(_native_update_dialog)
 
+
 func _popup_native_confirmation(dialog: ConfirmationDialog) -> void:
-	var available_width := maxi(1, int(get_window().size.x / get_window().content_scale_factor) - 24)
+	var available_width := maxi(
+		1, int(get_window().size.x / get_window().content_scale_factor) - 24
+	)
 	dialog.get_label().custom_minimum_size.x = minf(_metrics.px(260), maxf(1, available_width - 32))
 	dialog.popup_centered(Vector2i(mini(_metrics.px(440), available_width), 0))
 
+
 func _on_native_module_updated(error: String, id: String, source_id: int) -> void:
-	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	if (
+		not _native_controllers.has(id)
+		or not is_instance_valid(_native_controllers[id])
+		or _native_controllers[id].get_instance_id() != source_id
+	):
+		return
 	_native_updating.erase(id)
 	_refresh_native_browser()
 	var entry := _native_catalog.entry(id)
-	_server_management.set_status(error if not error.is_empty() else "Module prepared for %s. Start this server to publish it without deleting colony data." % entry.get("name", id), not error.is_empty())
+	(
+		_server_management
+		. set_status(
+			(
+				error
+				if not error.is_empty()
+				else (
+					"Module prepared for %s. Start this server to publish it without deleting colony data."
+					% entry.get("name", id)
+				)
+			),
+			not error.is_empty()
+		)
+	)
 	_native_controllers[id].request_autostart_status()
 
+
 func _on_native_deleted(error: String, id: String, source_id: int) -> void:
-	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	if (
+		not _native_controllers.has(id)
+		or not is_instance_valid(_native_controllers[id])
+		or _native_controllers[id].get_instance_id() != source_id
+	):
+		return
 	_native_deleting.erase(id)
 	if not error.is_empty():
 		_refresh_native_browser()
@@ -631,7 +867,13 @@ func _on_native_deleted(error: String, id: String, source_id: int) -> void:
 	var entry := _native_catalog.entry(id)
 	if _native_catalog.remove(id) != OK:
 		_refresh_native_browser()
-		_server_management.set_status("Server data was deleted, but its list entry could not be removed. Fix directory permissions and retry Delete.", true)
+		(
+			_server_management
+			. set_status(
+				"Server data was deleted, but its list entry could not be removed. Fix directory permissions and retry Delete.",
+				true
+			)
+		)
 		return
 	var controller: ContinuumNativeServerController = _native_controllers[id]
 	controller.request_shutdown()
@@ -644,39 +886,69 @@ func _on_native_deleted(error: String, id: String, source_id: int) -> void:
 	var history_error := false
 	for saved in _server_history.entries():
 		if _matches_native_endpoint(saved.endpoint, saved.database, int(entry.port)):
-			if saved.favorite and _server_history.remove_favorite(saved.key) != OK: history_error = true
-			if _server_history.remove_history(saved.key) != OK: history_error = true
+			if saved.favorite and _server_history.remove_favorite(saved.key) != OK:
+				history_error = true
+			if _server_history.remove_history(saved.key) != OK:
+				history_error = true
 	if _matches_native_endpoint(_settings.server_host, _settings.database, int(entry.port)):
 		_settings.server_host = ""
 		_settings.database = ""
-		if _settings.save_to(_cli_option("--settings-file", ClientSettings.path_from_args())) != OK: history_error = true
+		if _settings.save_to(_cli_option("--settings-file", ClientSettings.path_from_args())) != OK:
+			history_error = true
 		_menu._refresh_last_button()
 	if id == _native_server_id:
 		_native_controller = null
 		_native_server_id = ""
 		var remaining := _native_catalog.entries()
-		if not remaining.is_empty(): _select_native_server(str(remaining[0].id))
+		if not remaining.is_empty():
+			_select_native_server(str(remaining[0].id))
 	_refresh_native_browser()
 	_server_management._refresh_history_list()
-	_server_management.set_status("Deleted %s and its colony data.%s" % [str(entry.name), " Could not clear all saved connection metadata; update connection settings or remove remaining history manually." if history_error else ""], history_error)
+	(
+		_server_management
+		. set_status(
+			(
+				"Deleted %s and its colony data.%s"
+				% [
+					str(entry.name),
+					(
+						" Could not clear all saved connection metadata; update connection settings or remove remaining history manually."
+						if history_error
+						else ""
+					)
+				]
+			),
+			history_error
+		)
+	)
+
 
 func _retire_native_controller(controller: ContinuumNativeServerController) -> void:
 	while is_instance_valid(controller) and not controller.finish_shutdown():
 		await get_tree().process_frame
 	_retiring_native_controllers.erase(controller)
-	if is_instance_valid(controller): controller.queue_free()
+	if is_instance_valid(controller):
+		controller.queue_free()
+
 
 func _native_refresh() -> void:
 	if _native_controller != null:
 		_native_controller.request_status()
 		_native_controller.request_autostart_status()
 
-func _on_native_ready(value_host: String, value_database: String, epoch: int,
-		source_id: int) -> void:
-	if _closing or _exit_requested: return
+
+func _on_native_ready(
+	value_host: String, value_database: String, epoch: int, source_id: int
+) -> void:
+	if _closing or _exit_requested:
+		return
 	if epoch != _native_join_epoch or _native_join_generation != _session_generation:
 		return
-	if not is_instance_valid(_native_controller) or _native_controller.get_instance_id() != source_id or not _native_controller.is_startup_current(epoch):
+	if (
+		not is_instance_valid(_native_controller)
+		or _native_controller.get_instance_id() != source_id
+		or not _native_controller.is_startup_current(epoch)
+	):
 		return
 	_invalidate_native_join()
 	_show_server_management()
@@ -684,6 +956,7 @@ func _on_native_ready(value_host: String, value_database: String, epoch: int,
 	_server_management.set_busy(true)
 	_server_management.set_status("Native server ready. Joining...")
 	configure_connection(value_host, value_database, _profile)
+
 
 func _on_native_state(value: String, message: String) -> void:
 	if _exit_requested:
@@ -694,15 +967,38 @@ func _on_native_state(value: String, message: String) -> void:
 	var display := "Native server: %s" % value
 	if message.is_empty():
 		match value:
-			"offline": message = "This server is stopped. Starting it preserves its colony. Update module… prepares the current module if the client reports a schema mismatch. Deleting permanently removes colony data."
-			"conflict": message = "Native ownership does not match this configuration. Local start and stop are unavailable; you can still join manually."
-			"unhealthy": message = "The owned native server did not pass its health check."
-	if not message.is_empty(): display += " | " + message
-	_server_management.set_local_management_state({"state": value, "can_start": can_start, "can_stop": can_stop,
-		"can_force_stop": can_force, "can_delete": value in ["offline", "deleted"], "can_update": value == "offline", "startup_pending": _native_join_epoch >= 0, "module_update_pending": _native_updating.has(_native_server_id), "message": display})
-	var busy := not _native_deleting.is_empty() or not _native_updating.is_empty() or value in ["installing", "preparing", "starting", "deleting"]
+			"offline":
+				message = "This server is stopped. Starting it preserves its colony. Update module… prepares the current module if the client reports a schema mismatch. Deleting permanently removes colony data."
+			"conflict":
+				message = "Native ownership does not match this configuration. Local start and stop are unavailable; you can still join manually."
+			"unhealthy":
+				message = "The owned native server did not pass its health check."
+	if not message.is_empty():
+		display += " | " + message
+	_server_management.set_local_management_state(
+		{
+			"state": value,
+			"can_start": can_start,
+			"can_stop": can_stop,
+			"can_force_stop": can_force,
+			"can_delete": value in ["offline", "deleted"],
+			"can_update": value == "offline",
+			"startup_pending": _native_join_epoch >= 0,
+			"module_update_pending": _native_updating.has(_native_server_id),
+			"message": display
+		}
+	)
+	var busy := (
+		not _native_deleting.is_empty()
+		or not _native_updating.is_empty()
+		or value in ["installing", "preparing", "starting", "deleting"]
+	)
 	for controller in _all_native_controllers():
-		if controller != _native_controller and controller.cached_state() in ["installing", "preparing", "starting", "deleting"]: busy = true
+		if (
+			controller != _native_controller
+			and controller.cached_state() in ["installing", "preparing", "starting", "deleting"]
+		):
+			busy = true
 	_server_management.set_native_busy(busy)
 	if not _session_requested:
 		_menu.set_busy(busy)
@@ -716,9 +1012,11 @@ func configure_diagnostics(show: bool, graph: bool, persist := true) -> Error:
 	return apply_settings(settings, persist)
 
 
-func configure_connection(host: String, database: String, profile := ContinuumClientProfile.NORMAL,
-		direct_launch := false) -> void:
-	if _closing or _exit_requested: return
+func configure_connection(
+	host: String, database: String, profile := ContinuumClientProfile.NORMAL, direct_launch := false
+) -> void:
+	if _closing or _exit_requested:
+		return
 	_end_session_observations()
 	_invalidate_native_join()
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
@@ -752,7 +1050,8 @@ func configure_connection(host: String, database: String, profile := ContinuumCl
 
 
 func _replace_client_and_connect(generation: int) -> void:
-	if not _session_epoch_current(generation): return
+	if not _session_epoch_current(generation):
+		return
 	map.reset_world()
 	var old_client: ContinuumModuleClient = SpacetimeDB.Continuum
 	_unbind_client(old_client)
@@ -763,7 +1062,9 @@ func _replace_client_and_connect(generation: int) -> void:
 	if old_client.get_parent() != null:
 		old_client.get_parent().remove_child(old_client)
 	old_client.queue_free()
-	var fresh_client: ContinuumModuleClient = preload("res://spacetime_bindings/schema/module_continuum_client.gd").new()
+	var fresh_client: ContinuumModuleClient = (
+		preload("res://spacetime_bindings/schema/module_continuum_client.gd").new()
+	)
 	SpacetimeDB.Continuum = fresh_client
 	SpacetimeDB.add_child(fresh_client)
 	_bind_client(fresh_client)
@@ -776,7 +1077,9 @@ func _replace_client_and_connect(generation: int) -> void:
 func _start_configured_client(client: ContinuumModuleClient, generation: int) -> void:
 	if not _client_epoch_current(client, generation):
 		return
-	ContinuumClientProfile.configure_credentials(client, _profile, _host, _database, _native_catalog)
+	ContinuumClientProfile.configure_credentials(
+		client, _profile, _host, _database, _native_catalog
+	)
 	client.handle_window_close = false
 	_access = _create_access(client)
 	_bind_access(_access, client, generation)
@@ -786,7 +1089,9 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 	options.debug_mode = false
 	options.one_time_token = false
 	options.save_token = true
-	_set_connection_text("Connecting · %s / %s" % [_host, _database], ThemeTokens.color("ink-muted"))
+	_set_connection_text(
+		"Connecting · %s / %s" % [_host, _database], ThemeTokens.color("ink-muted")
+	)
 	if client.is_connected_db():
 		_on_connected(client.get_local_identity(), str(client.get_token()))
 	else:
@@ -794,37 +1099,78 @@ func _start_configured_client(client: ContinuumModuleClient, generation: int) ->
 
 
 func _bind_access(access: ContinuumAccess, client: ContinuumModuleClient, generation: int) -> void:
-	access.changed.connect(func(role: String, can_operate: bool, is_admin: bool) -> void:
-		if _client_epoch_current(client, generation): _set_permissions(role, can_operate, is_admin))
+	access.changed.connect(
+		func(role: String, can_operate: bool, is_admin: bool) -> void:
+			if _client_epoch_current(client, generation):
+				_set_permissions(role, can_operate, is_admin)
+	)
+
 
 func _bind_client(client: ContinuumModuleClient) -> void:
-	if _bound_client != null: _unbind_client(_bound_client)
+	if _bound_client != null:
+		_unbind_client(_bound_client)
 	_bound_client = client
 	var generation := _session_generation
-	_bind_client_signal(client.connected, func(identity: PackedByteArray, token: String) -> void:
-		if _client_epoch_current(client, generation): _on_connected(identity, token))
-	_bind_client_signal(client.disconnected, func() -> void:
-		if _client_epoch_current(client, generation): _on_disconnected())
-	_bind_client_signal(client.connection_error, func(code: int, reason: String) -> void:
-		if _client_epoch_current(client, generation): _on_connection_error(code, reason))
-	_bind_client_signal(client.row_inserted, func(table_name: String, _row: Resource) -> void:
-		if _client_epoch_current(client, generation): _on_table_changed(table_name, _row))
-	_bind_client_signal(client.row_updated, func(table_name: String, _old: Resource, _new: Resource) -> void:
-		if _client_epoch_current(client, generation):
-			_on_table_changed(table_name, _old)
-			_on_table_changed(table_name, _new))
-	_bind_client_signal(client.row_deleted, func(table_name: String, _row: Resource) -> void:
-		if _client_epoch_current(client, generation): _on_table_changed(table_name, _row))
+	_bind_client_signal(
+		client.connected,
+		func(identity: PackedByteArray, token: String) -> void:
+			if _client_epoch_current(client, generation):
+				_on_connected(identity, token)
+	)
+	_bind_client_signal(
+		client.disconnected,
+		func() -> void:
+			if _client_epoch_current(client, generation):
+				_on_disconnected()
+	)
+	_bind_client_signal(
+		client.connection_error,
+		func(code: int, reason: String) -> void:
+			if _client_epoch_current(client, generation):
+				_on_connection_error(code, reason)
+	)
+	_bind_client_signal(
+		client.row_inserted,
+		func(table_name: String, _row: Resource) -> void:
+			if _client_epoch_current(client, generation):
+				_on_table_changed(table_name, _row)
+	)
+	_bind_client_signal(
+		client.row_updated,
+		func(table_name: String, _old: Resource, _new: Resource) -> void:
+			if _client_epoch_current(client, generation):
+				_on_table_changed(table_name, _old)
+				_on_table_changed(table_name, _new)
+	)
+	_bind_client_signal(
+		client.row_deleted,
+		func(table_name: String, _row: Resource) -> void:
+			if _client_epoch_current(client, generation):
+				_on_table_changed(table_name, _row)
+	)
+
 
 func _bind_client_signal(source: Signal, callback: Callable) -> void:
 	source.connect(callback)
 	_client_bindings.append({"source": source, "callback": callback})
 
+
 func _session_epoch_current(generation: int) -> bool:
-	return generation == _session_generation and _session_requested and not _closing and not _exit_requested
+	return (
+		generation == _session_generation
+		and _session_requested
+		and not _closing
+		and not _exit_requested
+	)
+
 
 func _client_epoch_current(client: ContinuumModuleClient, generation: int) -> bool:
-	return _session_epoch_current(generation) and is_instance_valid(client) and client == SpacetimeDB.Continuum
+	return (
+		_session_epoch_current(generation)
+		and is_instance_valid(client)
+		and client == SpacetimeDB.Continuum
+	)
+
 
 func _clear_pending_requests() -> void:
 	_cancel_production_requests()
@@ -834,14 +1180,16 @@ func _clear_pending_requests() -> void:
 
 
 func _unbind_client(client: ContinuumModuleClient) -> void:
-	if client != _bound_client: return
+	if client != _bound_client:
+		return
 	if _session_ping != null:
 		_session_ping.dispose()
 		_session_ping = null
 	for binding in _client_bindings:
 		var source: Signal = binding.source
 		var callback: Callable = binding.callback
-		if source.is_connected(callback): source.disconnect(callback)
+		if source.is_connected(callback):
+			source.disconnect(callback)
 	_client_bindings.clear()
 	_bound_client = null
 
@@ -875,18 +1223,35 @@ func leave_session() -> void:
 func _on_menu_join_requested(host: String, database: String) -> void:
 	configure_connection(host, database, _profile, false)
 
+
 func _can_resume_colony() -> bool:
-	if _resume_context.is_empty() or not _session_epoch_current(int(_resume_context.generation)) or not _state_ready:
+	if (
+		_resume_context.is_empty()
+		or not _session_epoch_current(int(_resume_context.generation))
+		or not _state_ready
+	):
 		return false
 	if not is_instance_valid(_resume_context.client):
 		return false
 	var client: ContinuumModuleClient = _resume_context.client
-	return is_instance_valid(client) and client == SpacetimeDB.Continuum and client == _bound_client \
-		and client.is_connected_db() and _subscription != null and _subscription == _resume_context.subscription \
-		and _subscription.active and not _subscription.ended and _subscription.error == OK \
-		and _host == _resume_context.host and _database == _resume_context.database \
-		and _settings.server_host.strip_edges() == _host and _settings.database.strip_edges() == _database \
-		and client.base_url == _host.trim_suffix("/") and client.database_name == _database.to_lower()
+	return (
+		is_instance_valid(client)
+		and client == SpacetimeDB.Continuum
+		and client == _bound_client
+		and client.is_connected_db()
+		and _subscription != null
+		and _subscription == _resume_context.subscription
+		and _subscription.active
+		and not _subscription.ended
+		and _subscription.error == OK
+		and _host == _resume_context.host
+		and _database == _resume_context.database
+		and _settings.server_host.strip_edges() == _host
+		and _settings.database.strip_edges() == _database
+		and client.base_url == _host.trim_suffix("/")
+		and client.database_name == _database.to_lower()
+	)
+
 
 func _on_menu_resume_requested() -> void:
 	if not _can_resume_colony():
@@ -894,11 +1259,13 @@ func _on_menu_resume_requested() -> void:
 		return
 	_menu.visible = false
 
+
 func _show_server_management() -> void:
 	_menu.visible = false
 	_server_management.visible = true
 	_server_management.set_busy(_manual_connection_busy())
 	_server_management.set_browser_visible(true)
+
 
 func _hide_server_management() -> void:
 	if _server_management == null:
@@ -911,16 +1278,27 @@ func _hide_server_management() -> void:
 		_menu.visible = true
 		_menu.set_busy(_manual_connection_busy() or _server_management._native_busy)
 
+
 func _manual_connection_busy() -> bool:
-	return _session_requested and not _state_ready and not _direct_launch \
+	return (
+		_session_requested
+		and not _state_ready
+		and not _direct_launch
 		and (_failed_bootstrap == null or _subscription != _failed_bootstrap)
+	)
+
 
 func _sync_menu_input() -> void:
-	var blocked := _menu.visible or _server_management.visible or (is_instance_valid(_digest_overlay) and _digest_overlay.visible)
+	var blocked := (
+		_menu.visible
+		or _server_management.visible
+		or (is_instance_valid(_digest_overlay) and _digest_overlay.visible)
+	)
 	if blocked:
 		map.cancel_gestures()
 	map.process_mode = Node.PROCESS_MODE_DISABLED if blocked else Node.PROCESS_MODE_INHERIT
 	workspace.process_mode = Node.PROCESS_MODE_DISABLED if blocked else Node.PROCESS_MODE_INHERIT
+
 
 func _on_server_management_join_requested(target: Dictionary) -> void:
 	var host := str(target.get("endpoint", ""))
@@ -935,11 +1313,13 @@ func _has_cli_connection() -> bool:
 			return true
 	return _profile == ContinuumClientProfile.ADMIN
 
+
 func apply_font_size(value: int, persist := true) -> Error:
 	var settings := _settings.clone()
 	settings.font_size = value
 	settings.ui_scale_percent = ClientSettings.legacy_ui_scale(value)
 	return apply_settings(settings, persist)
+
 
 ## Apply only the authenticated sender-scoped role view. The backend remains
 ## authoritative; this state only controls what the UI exposes.
@@ -956,7 +1336,9 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 	_role_name = normalized_role.capitalize()
 	_is_admin = role_is_admin and normalized_role != "unknown"
 	_can_operate = role_can_operate and normalized_role != "unknown"
-	var permissions_changed := old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name
+	var permissions_changed := (
+		old_can_operate != _can_operate or old_is_admin != _is_admin or old_role != _role_name
+	)
 	if permissions_changed:
 		_permission_revision += 1
 		_cancel_production_requests()
@@ -969,7 +1351,11 @@ func _set_permissions(role_name: String, can_operate: bool, is_admin: bool) -> v
 		_ack_requests.clear()
 	if lost_operator and map.interaction_mode != &"select":
 		_set_mode(&"select")
-		_set_feedback(_intent_feedback, "Tool cancelled", "Operator permission was lost. Any already sent request has an unknown outcome; inspect server state.")
+		_set_feedback(
+			_intent_feedback,
+			"Tool cancelled",
+			"Operator permission was lost. Any already sent request has an unknown outcome; inspect server state."
+		)
 		_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_refresh_permissions()
 	_refresh_controls()
@@ -998,7 +1384,8 @@ func _process(delta: float) -> void:
 	if _exit_requested:
 		var finished := true
 		for controller in _all_native_controllers():
-			if not controller.finish_shutdown(): finished = false
+			if not controller.finish_shutdown():
+				finished = false
 		if finished:
 			get_tree().quit()
 		return
@@ -1014,20 +1401,35 @@ func _process(delta: float) -> void:
 		_intent_seconds -= delta
 		if _intent_seconds <= 0.0:
 			_intent_request = null
-			_set_feedback(_intent_feedback, "No response", "%s: no response. Outcome unknown; check server state before retrying." % _intent_name)
+			_set_feedback(
+				_intent_feedback,
+				"No response",
+				(
+					"%s: no response. Outcome unknown; check server state before retrying."
+					% _intent_name
+				)
+			)
 			_dirty = true
 	if _haul_request != null:
 		_haul_request_seconds -= delta
 		if _haul_request_seconds <= 0.0:
 			_haul_request = null
-			_set_feedback(_haul_feedback, "No response", "No response received. Outcome unknown; check the server mode before retrying.")
+			_set_feedback(
+				_haul_feedback,
+				"No response",
+				"No response received. Outcome unknown; check the server mode before retrying."
+			)
 			_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 			_dirty = true
 	if _meal_request != null:
 		_meal_request_seconds -= delta
 		if _meal_request_seconds <= 0.0:
 			_meal_request = null
-			_set_feedback(_meal_feedback, "No response", "No response received. Outcome unknown; check the server meal policy before retrying.")
+			_set_feedback(
+				_meal_feedback,
+				"No response",
+				"No response received. Outcome unknown; check the server meal policy before retrying."
+			)
 			_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 			_dirty = true
 	_refresh_timer -= delta
@@ -1075,28 +1477,89 @@ func _exit_tree() -> void:
 func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	if not _session_requested:
 		return
+
 	_authenticated_identity = identity.hex_encode()
-	_return_key = ReturnStore.context_key(_host, _database, _profile, _authenticated_identity)
+	_return_key = (
+		ReturnStore
+		. context_key(
+			_host,
+			_database,
+			_profile,
+			_authenticated_identity,
+		)
+	)
+
 	if _session_ping == null:
-		_session_ping = SessionPingTransport.new(SpacetimeDB.Continuum, _session_diagnostics)
+		_session_ping = (
+			SessionPingTransport
+			. new(
+				SpacetimeDB.Continuum,
+				_session_diagnostics,
+			)
+		)
+
 	_cancel_reconnect()
 	_session_diagnostics.set_connected(true)
-	print("Continuum identity: %s" % identity.hex_encode())
-	_set_connection_text("Connected · %s · waiting for colony state" % identity.hex_encode().substr(0, 12),
-			ThemeTokens.color("ink-muted"))
+
+	print("Continuum identity: %s" % _authenticated_identity)
+	_set_connection_text(
+		"Connected · %s · waiting for colony state" % _authenticated_identity.substr(0, 12),
+		ThemeTokens.color("ink-muted"),
+	)
+
 	_release_main_subscription()
+
+	var queries := _build_bootstrap_queries()
+	_subscription = SpacetimeDB.Continuum.subscribe(queries)
+
+	if _subscription.error != OK:
+		_set_connection_text(
+			"Subscription failed · %d" % _subscription.error,
+			ThemeTokens.color("critical"),
+		)
+		_fail_manual_session(
+			"Could not subscribe to colony state: %s." % error_string(_subscription.error),
+			true,
+		)
+		return
+
+	_connect_subscription_handlers()
+
+
+func _build_bootstrap_queries() -> Array:
 	var queries := SUBSCRIPTION_QUERIES.duplicate()
+
 	for table: String in ["building", "building_thermal_property"]:
 		if LayeredTerrainModel.field(SpacetimeDB.Continuum.db, table) != null:
 			queries.append("SELECT * FROM " + table)
-	_subscription = SpacetimeDB.Continuum.subscribe(LargeWorldSession.bootstrap_queries(SpacetimeDB.Continuum.db, queries))
-	if _subscription.error != OK:
-		_set_connection_text("Subscription failed · %d" % _subscription.error, ThemeTokens.color("critical"))
-		_fail_manual_session("Could not subscribe to colony state: %s." % error_string(_subscription.error), true)
-		return
+
+	return (
+		LargeWorldSession
+		. bootstrap_queries(
+			SpacetimeDB.Continuum.db,
+			queries,
+		)
+	)
+
+
+func _connect_subscription_handlers() -> void:
 	_subscription.applied.connect(_on_subscription_applied.bind(_subscription, _session_generation))
 	_subscription.end.connect(_on_bootstrap_ended.bind(_subscription, _session_generation))
-	get_tree().create_timer(15.0).timeout.connect(_on_bootstrap_timeout.bind(weakref(_subscription), _session_generation))
+	(
+		get_tree()
+		. create_timer(15.0)
+		. timeout
+		. connect(
+			(
+				_on_bootstrap_timeout
+				. bind(
+					weakref(_subscription),
+					_session_generation,
+				)
+			)
+		)
+	)
+
 
 func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int) -> void:
 	if _subscription != subscription or not _session_epoch_current(generation):
@@ -1104,12 +1567,17 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 	if subscription.error != OK:
 		var message := "Server rejected the colony subscription: %s" % subscription.error_message
 		if subscription.error_message.contains("no such table"):
-			message = "The server module does not match this client: %s\n\nFor a managed local server, stop it, choose Update module…, then start it again. Updates never delete colony data. For a remote server, ask its owner to publish the matching module." % subscription.error_message
+			message = (
+				"The server module does not match this client: %s\n\nFor a managed local server, stop it, choose Update module…, then start it again. Updates never delete colony data. For a remote server, ask its owner to publish the matching module."
+				% subscription.error_message
+			)
 		_set_connection_text(message, ThemeTokens.color("critical"))
 		_fail_manual_session(message, true)
 		return
 	_state_ready = false
-	_set_connection_text("World subscription ended; reconnect required.", ThemeTokens.color("critical"))
+	_set_connection_text(
+		"World subscription ended; reconnect required.", ThemeTokens.color("critical")
+	)
 	_failed_bootstrap = subscription
 	_resume_context.clear()
 	map.set_process_input(false)
@@ -1122,13 +1590,21 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 	_server_management.set_busy(false)
 	_server_management.set_status("World subscription failed or ended. You can retry.", true)
 
+
 func _on_bootstrap_timeout(subscription: Variant, generation: int) -> void:
 	if subscription is WeakRef:
 		subscription = subscription.get_ref()
 	if not is_instance_valid(subscription):
 		return
-	if _subscription == subscription and _session_epoch_current(generation) and not subscription.active:
-		_fail_manual_session("Timed out waiting for colony state. Check that the server module matches this client, then retry.", true)
+	if (
+		_subscription == subscription
+		and _session_epoch_current(generation)
+		and not subscription.active
+	):
+		_fail_manual_session(
+			"Timed out waiting for colony state. Check that the server module matches this client, then retry.",
+			true
+		)
 
 
 func _release_main_subscription() -> void:
@@ -1143,7 +1619,11 @@ func _release_main_subscription() -> void:
 
 
 func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if subscription == _failed_bootstrap or _subscription != subscription or not _session_epoch_current(generation):
+	if (
+		subscription == _failed_bootstrap
+		or _subscription != subscription
+		or not _session_epoch_current(generation)
+	):
 		return
 	if _large_world != null and _large_world.start(SpacetimeDB.Continuum, generation):
 		visible = true
@@ -1154,18 +1634,30 @@ func _on_subscription_applied(subscription: SpacetimeDBSubscription, generation:
 		return
 	_finish_subscription_ready(subscription, generation)
 
+
 func _finish_subscription_ready(subscription: SpacetimeDBSubscription, generation: int) -> void:
-	if subscription == _failed_bootstrap or _subscription != subscription or not _session_epoch_current(generation):
+	if (
+		subscription == _failed_bootstrap
+		or _subscription != subscription
+		or not _session_epoch_current(generation)
+	):
 		return
 	_state_ready = true
 	map.set_process_input(true)
-	_resume_context = {"client": SpacetimeDB.Continuum, "generation": generation,
-		"subscription": subscription, "host": _host, "database": _database}
+	_resume_context = {
+		"client": SpacetimeDB.Continuum,
+		"generation": generation,
+		"subscription": subscription,
+		"host": _host,
+		"database": _database
+	}
 	_full_ui_refresh = true
 	_dirty = true
 	_map_dirty = true
 	_settings.remember_server(_host, _database)
-	_server_history.record_successful_subscription(_host, _database, ConnectionHistoryModel.DEFAULT_WORLD)
+	_server_history.record_successful_subscription(
+		_host, _database, ConnectionHistoryModel.DEFAULT_WORLD
+	)
 	_menu.set_status("Connected to %s / %s" % [_host, _database])
 	_menu.set_busy(false)
 	_menu.visible = false
@@ -1187,10 +1679,13 @@ func _on_disconnected() -> void:
 	_set_permissions("Unknown", false, false)
 	_history.reset()
 	_history_chart.set_points([])
-	_set_connection_text("Offline · the colony keeps running without us",
-			ThemeTokens.color("critical"))
+	_set_connection_text(
+		"Offline · the colony keeps running without us", ThemeTokens.color("critical")
+	)
 	if _session_requested and _direct_launch:
-		_server_management.set_status("Disconnected. Retrying in the background; you can join another server.", true)
+		_server_management.set_status(
+			"Disconnected. Retrying in the background; you can join another server.", true
+		)
 		_server_management.set_busy(false)
 		_menu.set_busy(_server_management._native_busy)
 		_schedule_reconnect()
@@ -1202,11 +1697,19 @@ func _on_connection_error(code: int, reason: String) -> void:
 	_session_diagnostics.set_connected(false)
 	_reset_diagnostics_samples()
 	_release_main_subscription()
-	_set_connection_text("Connection error · %d: %s" % [code, reason], ThemeTokens.color("critical"))
+	_set_connection_text(
+		"Connection error · %d: %s" % [code, reason], ThemeTokens.color("critical")
+	)
 	if _session_requested and code in [401, 403]:
 		_fail_manual_session("Authentication failed (%d): %s" % [code, reason], true)
 	elif _session_requested and _direct_launch:
-		_server_management.set_status("Connection error %d: %s. Retrying in the background; you can join another server." % [code, reason], true)
+		_server_management.set_status(
+			(
+				"Connection error %d: %s. Retrying in the background; you can join another server."
+				% [code, reason]
+			),
+			true
+		)
 		_server_management.set_busy(false)
 		_menu.set_busy(_server_management._native_busy)
 		_schedule_reconnect()
@@ -1247,7 +1750,11 @@ func _fail_manual_session(message: String, terminal := false) -> void:
 
 
 func _close_failed_client(client: ContinuumModuleClient, generation: int) -> void:
-	if generation == _session_generation and not _session_requested and client == SpacetimeDB.Continuum:
+	if (
+		generation == _session_generation
+		and not _session_requested
+		and client == SpacetimeDB.Continuum
+	):
 		if client.is_connected_db():
 			client.disconnect_db()
 
@@ -1257,19 +1764,33 @@ func _schedule_reconnect() -> void:
 	_refresh_guidance()
 	if _intent_request != null:
 		_intent_request = null
-		_set_feedback(_intent_feedback, "Connection lost", "%s: connection lost; outcome unknown. Waiting for server state." % _intent_name)
+		_set_feedback(
+			_intent_feedback,
+			"Connection lost",
+			"%s: connection lost; outcome unknown. Waiting for server state." % _intent_name
+		)
 	if _haul_request != null:
 		_haul_request = null
-		_set_feedback(_haul_feedback, "Connection lost", "Connection lost. Hauling request outcome unknown; waiting for server state.")
+		_set_feedback(
+			_haul_feedback,
+			"Connection lost",
+			"Connection lost. Hauling request outcome unknown; waiting for server state."
+		)
 		_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if _meal_request != null:
 		_meal_request = null
-		_set_feedback(_meal_feedback, "Connection lost", "Connection lost. Meal policy outcome unknown; waiting for server state.")
+		_set_feedback(
+			_meal_feedback,
+			"Connection lost",
+			"Connection lost. Meal policy outcome unknown; waiting for server state."
+		)
 		_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_dirty = true
 	if _closing or _reconnect_timer != null:
 		return
-	_set_connection_text("Reconnecting · retrying in %.0f s" % RECONNECT_DELAY, ThemeTokens.color("warn"))
+	_set_connection_text(
+		"Reconnecting · retrying in %.0f s" % RECONNECT_DELAY, ThemeTokens.color("warn")
+	)
 	_reconnect_timer = get_tree().create_timer(RECONNECT_DELAY)
 	_reconnect_timer.timeout.connect(_retry_connection.bind(_reconnect_timer))
 
@@ -1279,7 +1800,12 @@ func _cancel_reconnect() -> void:
 
 
 func _retry_connection(timer: SceneTreeTimer) -> void:
-	if timer != _reconnect_timer or not _session_requested or not _direct_launch or SpacetimeDB.Continuum.is_connected_db():
+	if (
+		timer != _reconnect_timer
+		or not _session_requested
+		or not _direct_launch
+		or SpacetimeDB.Continuum.is_connected_db()
+	):
 		return
 	_reconnect_timer = null
 	var options := SpacetimeDBConnectionOptions.new()
@@ -1309,9 +1835,12 @@ func _configure_diagnostics_overlay() -> void:
 	if _diagnostics_overlay == null:
 		return
 	_diagnostics_overlay.apply_metrics(_metrics)
-	_diagnostics_overlay.configure(_settings.diagnostics_enabled,
-		_settings.diagnostics_graph_enabled)
-	workspace.set_diagnostics_visible(_settings.diagnostics_enabled, _settings.diagnostics_graph_enabled)
+	_diagnostics_overlay.configure(
+		_settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
+	)
+	workspace.set_diagnostics_visible(
+		_settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
+	)
 	if not _settings.diagnostics_enabled:
 		_reset_diagnostics_samples()
 
@@ -1341,23 +1870,57 @@ func _process_diagnostics() -> void:
 		return
 	var now_usec := Time.get_ticks_usec()
 	_diagnostics_stats.observe_tick(now_usec)
-	if _diagnostics_last_refresh >= 0 and now_usec - _diagnostics_last_refresh < DiagnosticsStats.DEFAULT_REFRESH_USEC:
+	if (
+		_diagnostics_last_refresh >= 0
+		and now_usec - _diagnostics_last_refresh < DiagnosticsStats.DEFAULT_REFRESH_USEC
+	):
 		return
 	_diagnostics_last_tick = now_usec
 	_diagnostics_last_refresh = now_usec
 	_session_diagnostics.advance(now_usec)
 	_session_diagnostics.pump(now_usec)
-	_diagnostics_overlay.set_snapshots(_diagnostics_stats.refresh(now_usec),
-		_session_diagnostics.snapshot(now_usec))
+	_diagnostics_overlay.set_snapshots(
+		_diagnostics_stats.refresh(now_usec), _session_diagnostics.snapshot(now_usec)
+	)
 
 
 func _on_table_changed(table_name: String, row: Variant = null) -> void:
-	if _large_world != null and table_name in ["world_generation", "terrain_column_chunk", "terrain_overview_chunk", "terrain_chunk", "terrain_material", "world_geometry"]:
+	if (
+		_large_world != null
+		and (
+			table_name
+			in [
+				"world_generation",
+				"terrain_column_chunk",
+				"terrain_overview_chunk",
+				"terrain_chunk",
+				"terrain_material",
+				"world_geometry"
+			]
+		)
+	):
 		_large_world.mark_changed(table_name, row)
 	_dirty = true
 	_ui_tables_changed[table_name] = true
-	if table_name in ["tile", "terrain", "world_seed", "colonist", "item_stack", "work_order", "colony", "config",
-		"world_geometry", "terrain_chunk", "terrain_material", "excavation_designation", "building", "building_thermal_property"]:
+	if (
+		table_name
+		in [
+			"tile",
+			"terrain",
+			"world_seed",
+			"colonist",
+			"item_stack",
+			"work_order",
+			"colony",
+			"config",
+			"world_geometry",
+			"terrain_chunk",
+			"terrain_material",
+			"excavation_designation",
+			"building",
+			"building_thermal_property"
+		]
+	):
 		_map_dirty = true
 		_map_tables_changed[table_name] = true
 
@@ -1375,7 +1938,9 @@ func _on_rectangle_selected(rect: Rect2i) -> void:
 	map.set_selected_rect(rect)
 	_selected_rect = map.selected_rect()
 	_selected_surface = map.terrain_model.capture_selection(_selected_rect) if map.layered else {}
-	var tile: ContinuumTile = _tile_at(_selected_rect.position) if _selected_rect.has_area() else null
+	var tile: ContinuumTile = (
+		_tile_at(_selected_rect.position) if _selected_rect.has_area() else null
+	)
 	_selected_tile_id = tile.id if tile != null else -1
 	map.selected_tile_id = _selected_tile_id
 	_refresh_controls()
@@ -1389,13 +1954,18 @@ func _tile_at(pos: Vector2i) -> ContinuumTile:
 
 
 func _on_build_rectangle_requested(rect: Rect2i) -> void:
-	if _planning_system not in [&"construction", &"zones"]: return
+	if _planning_system not in [&"construction", &"zones"]:
+		return
 	_selected_rect = rect
 	map.set_selected_rect(rect)
 	_selected_surface = map.terrain_model.capture_selection(rect) if map.layered else {}
 	_refresh_controls()
 	if not _planning_allowed():
-		_set_feedback(_intent_feedback, "Request blocked", "Operator access, live world state and no pending request are required.")
+		_set_feedback(
+			_intent_feedback,
+			"Request blocked",
+			"Operator access, live world state and no pending request are required."
+		)
 		return
 	var error := _planning_error(rect)
 	if not error.is_empty():
@@ -1408,119 +1978,259 @@ func _on_build_rectangle_requested(rect: Rect2i) -> void:
 		_dispatch_vertical("construct_room", payload, "Construct insulated room")
 	else:
 		payload.append(ContinuumTileKind.create(_zone_kind))
-		_dispatch_vertical("designate_zone_at", payload, "Designate " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower())
+		_dispatch_vertical(
+			"designate_zone_at",
+			payload,
+			"Designate " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower()
+		)
 
 
 ## Every public handler rechecks permission and attached, current world provenance.
 func _planning_allowed() -> bool:
-	return is_inside_tree() and _can_operate and _state_ready and _session_requested \
-		and _intent_request == null and SpacetimeDB.Continuum.db != null and map.has_world_snapshot()
+	return (
+		is_inside_tree()
+		and _can_operate
+		and _state_ready
+		and _session_requested
+		and _intent_request == null
+		and SpacetimeDB.Continuum.db != null
+		and map.has_world_snapshot()
+	)
+
 
 func _planning_error(rect: Rect2i) -> String:
 	var error := PlanningModel.rectangle_error(rect, map.grid_bounds())
-	if not error.is_empty(): return error
-	var height := _room_clearance if _planning_system == &"construction" else PlanningModel.MIN_CLEARANCE
+	if not error.is_empty():
+		return error
+	var height := (
+		_room_clearance if _planning_system == &"construction" else PlanningModel.MIN_CLEARANCE
+	)
 	var z: Variant = map.terrain_model.uniform_base(rect) if map.layered else 0
-	if z == null: return "Mixed elevations or unknown floors. Choose one exposed floor."
+	if z == null:
+		return "Mixed elevations or unknown floors. Choose one exposed floor."
 	if map.layered and not map.terrain_model.placement_clear(rect, z, height):
-		return "Requires supported air through %d clearance layers. Excavate solid terrain first." % height
+		return (
+			"Requires supported air through %d clearance layers. Excavate solid terrain first."
+			% height
+		)
 	if _planning_system == &"construction":
 		var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 		var cost := rect.size.x * rect.size.y * PlanningModel.WOOD_PER_CELL
-		if colony == null or colony.wood < cost: return "Needs %.0f wood; stored %.0f." % [cost, 0 if colony == null else colony.wood]
+		if colony == null or colony.wood < cost:
+			return "Needs %.0f wood; stored %.0f." % [cost, 0 if colony == null else colony.wood]
 	else:
 		return PlanningModel.zone_conflict(rect, z, _zone_kind, map.facility_tiles())
 	return ""
 
+
 func _planning_preview(rect: Rect2i) -> String:
-	if _planning_system not in [&"construction", &"zones"]: return ""
-	if _intent_request != null: return "Request pending · wait for server response"
-	if not _can_operate or not _state_ready: return "Planning unavailable · Operator access and live state required"
+	if _planning_system not in [&"construction", &"zones"]:
+		return ""
+	if _intent_request != null:
+		return "Request pending · wait for server response"
+	if not _can_operate or not _state_ready:
+		return "Planning unavailable · Operator access and live state required"
 	var copy := PlanningModel.preview(_planning_system, rect, _zone_kind)
-	var error := _planning_error(rect) if SpacetimeDB.Continuum.db != null else "Waiting for colony state"
-	return copy + (" · " + error if not error.is_empty() else ("" if map._dragging else " · drag to request"))
+	var error := (
+		_planning_error(rect) if SpacetimeDB.Continuum.db != null else "Waiting for colony state"
+	)
+	return (
+		copy
+		+ (
+			" · " + error
+			if not error.is_empty()
+			else ("" if map._dragging else " · drag to request")
+		)
+	)
+
 
 func _activate_planning(system: StringName) -> void:
 	if system == &"":
 		_set_mode(&"select")
 		return
-	if system not in [&"construction", &"zones"] or not _planning_allowed(): return
+	if system not in [&"construction", &"zones"] or not _planning_allowed():
+		return
 	_planning_system = system
 	map.set_build_kind(_zone_kind if system == &"zones" else ContinuumTileKind.Options.empty)
 	_set_mode(&"build")
 	_reveal_planning_map("construction" if system == &"construction" else "operations")
 
+
 func _reveal_planning_map(key: String) -> void:
-	if workspace.compact and workspace.windows[key].is_visible_in_tree() and not workspace.state(key).minimized:
+	if (
+		workspace.compact
+		and workspace.windows[key].is_visible_in_tree()
+		and not workspace.state(key).minimized
+	):
 		workspace.toggle_panel(key)
 
+
 func _input(event: InputEvent) -> void:
-	if _planning_system == &"" or not is_instance_valid(_menu) or _menu.visible or _server_management.visible: return
+	if (
+		_planning_system == &""
+		or not is_instance_valid(_menu)
+		or _menu.visible
+		or _server_management.visible
+	):
+		return
 	var cancel: bool = event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE
-	cancel = cancel or (event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT)
-	if not cancel: return
+	cancel = (
+		cancel
+		or (
+			event is InputEventMouseButton
+			and event.pressed
+			and event.button_index == MOUSE_BUTTON_RIGHT
+		)
+	)
+	if not cancel:
+		return
 	var focus := get_viewport().gui_get_focus_owner()
-	if focus is LineEdit or focus is TextEdit: return
+	if focus is LineEdit or focus is TextEdit:
+		return
 	_set_mode(&"select")
 	get_viewport().set_input_as_handled()
 
+
 func _choose_zone(kind: int) -> void:
-	if not PlanningModel.ZONES.has(kind) or not _planning_allowed(): return
+	if not PlanningModel.ZONES.has(kind) or not _planning_allowed():
+		return
 	_zone_kind = kind
-	if _planning_system == &"zones": map.set_build_kind(kind)
+	if _planning_system == &"zones":
+		map.set_build_kind(kind)
 	map.cancel_gestures()
-	if _planning_system == &"zones": _set_mode(&"build")
-	else: _refresh_planning()
+	if _planning_system == &"zones":
+		_set_mode(&"build")
+	else:
+		_refresh_planning()
+
 
 func _planning_rows(table: String) -> Array:
-	if planning_rows_override.is_valid(): return planning_rows_override.call(table)
+	if planning_rows_override.is_valid():
+		return planning_rows_override.call(table)
 	return ColonyMap.table_rows(SpacetimeDB.Continuum.db, table)
+
 
 func _selected_rooms() -> Array:
 	var result: Array = []
-	if not map.has_world_snapshot() or not _selected_rect.has_area(): return result
+	if not map.has_world_snapshot() or not _selected_rect.has_area():
+		return result
 	for room in _planning_rows("building"):
-		if not _selected_rect.intersects(PlanningModel.footprint(room)): continue
-		if map.layered and (map.terrain_model.base_at(_selected_rect.position) != int(room.z) or not map.terrain_model.entity_visible(room)): continue
+		if not _selected_rect.intersects(PlanningModel.footprint(room)):
+			continue
+		if (
+			map.layered
+			and (
+				map.terrain_model.base_at(_selected_rect.position) != int(room.z)
+				or not map.terrain_model.entity_visible(room)
+			)
+		):
+			continue
 		result.append(room)
 	return result
 
+
 func _selected_usage() -> ContinuumTile:
-	if not _selected_rect.has_area(): return null
+	if not _selected_rect.has_area():
+		return null
 	var tile := map.tile_at(_selected_rect.position)
-	if tile == null or tile.kind.value == ContinuumTileKind.Options.empty: return null
+	if tile == null or tile.kind.value == ContinuumTileKind.Options.empty:
+		return null
 	return tile if ColonyMap.tile_footprint(tile).encloses(_selected_rect) else null
 
+
 func _remove_planning_selection(system: StringName) -> void:
-	if not _planning_allowed(): return
-	if map.layered and not map.terrain_model.selection_valid(_selected_surface): return
+	if not _planning_allowed():
+		return
+	if map.layered and not map.terrain_model.selection_valid(_selected_surface):
+		return
 	if system == &"construction":
 		var rooms := _selected_rooms()
-		if rooms.size() == 1: _dispatch_vertical("demolish_building", [int(rooms[0].id)], "Demolish room · no refund")
+		if rooms.size() == 1:
+			_dispatch_vertical("demolish_building", [int(rooms[0].id)], "Demolish room · no refund")
 	elif system == &"zones":
 		var tile := _selected_usage()
-		if tile != null: _dispatch_vertical("clear_zone", [tile.id], "Clear usage · room retained")
+		if tile != null:
+			_dispatch_vertical("clear_zone", [tile.id], "Clear usage · room retained")
+
 
 func _refresh_planning() -> void:
-	if _construction_panel == null: return
-	var ready := _state_ready and _session_requested and SpacetimeDB.Continuum.db != null and map.has_world_snapshot()
+	if _construction_panel == null:
+		return
+	var ready := (
+		_state_ready
+		and _session_requested
+		and SpacetimeDB.Continuum.db != null
+		and map.has_world_snapshot()
+	)
 	var rooms := _selected_rooms() if ready else []
 	var tile := _selected_usage() if ready else null
 	var room_copy := "No room selected."
 	if rooms.size() == 1:
 		var room: Variant = rooms[0]
 		var resistance := "Insulation: awaiting property"
-		for property: ContinuumBuildingThermalProperty in _planning_rows("building_thermal_property"):
-			if property.building_id == int(room.id): resistance = "Insulation R %.1f m²·K/W" % property.thermal_resistance_m_2_k_per_w
-		room_copy = "Room #%d · %d×%d · z=%d\n%s\nClearance %.1fm · traversable\nBuilt for %.0f wood" % [room.id, room.width, room.depth, room.z, resistance, room.clearance_height * 0.5, room.wood_cost]
-	elif rooms.size() > 1: room_copy = "%d rooms selected. Select one to demolish." % rooms.size()
+		for property: ContinuumBuildingThermalProperty in _planning_rows(
+			"building_thermal_property"
+		):
+			if property.building_id == int(room.id):
+				resistance = "Insulation R %.1f m²·K/W" % property.thermal_resistance_m_2_k_per_w
+		room_copy = (
+			"Room #%d · %d×%d · z=%d\n%s\nClearance %.1fm · traversable\nBuilt for %.0f wood"
+			% [
+				room.id,
+				room.width,
+				room.depth,
+				room.z,
+				resistance,
+				room.clearance_height * 0.5,
+				room.wood_cost
+			]
+		)
+	elif rooms.size() > 1:
+		room_copy = "%d rooms selected. Select one to demolish." % rooms.size()
 	var usage_copy := "No single usage selected."
 	if tile != null:
-		usage_copy = "%s · cell #%d · %s" % [PlanningModel.ZONES.get(tile.kind.value, ["Unknown"])[0], tile.id, "enabled" if tile.enabled else "disabled"]
-		if tile.kind.value == ContinuumTileKind.Options.storage: usage_copy += "\nShared stock destination; no spoilage simulation."
-	var estimate := "%d×%d selection · %.0f wood" % [_selected_rect.size.x, _selected_rect.size.y, _selected_rect.get_area() * PlanningModel.WOOD_PER_CELL] if _selected_rect.has_area() else "5 wood / cell · drag to estimate"
-	_construction_panel.present(_planning_system, _zone_kind, _can_operate, ready, _intent_request != null, room_copy, rooms.size() == 1, estimate)
-	_zones_panel.present(_planning_system, _zone_kind, _can_operate, ready, _intent_request != null, usage_copy, tile != null, "%s · Free · clearance 2m" % PlanningModel.ZONES[_zone_kind][0])
+		usage_copy = (
+			"%s · cell #%d · %s"
+			% [
+				PlanningModel.ZONES.get(tile.kind.value, ["Unknown"])[0],
+				tile.id,
+				"enabled" if tile.enabled else "disabled"
+			]
+		)
+		if tile.kind.value == ContinuumTileKind.Options.storage:
+			usage_copy += "\nShared stock destination; no spoilage simulation."
+	var estimate := (
+		(
+			"%d×%d selection · %.0f wood"
+			% [
+				_selected_rect.size.x,
+				_selected_rect.size.y,
+				_selected_rect.get_area() * PlanningModel.WOOD_PER_CELL
+			]
+		)
+		if _selected_rect.has_area()
+		else "5 wood / cell · drag to estimate"
+	)
+	_construction_panel.present(
+		_planning_system,
+		_zone_kind,
+		_can_operate,
+		ready,
+		_intent_request != null,
+		room_copy,
+		rooms.size() == 1,
+		estimate
+	)
+	_zones_panel.present(
+		_planning_system,
+		_zone_kind,
+		_can_operate,
+		ready,
+		_intent_request != null,
+		usage_copy,
+		tile != null,
+		"%s · Free · clearance 2m" % PlanningModel.ZONES[_zone_kind][0]
+	)
 	_room_selection.text = room_copy + "\nUsage: " + usage_copy
 	_room_overlay.rooms = _planning_rows("building") if ready else []
 	_room_overlay.selected_id = int(rooms[0].id) if rooms.size() == 1 else -1
@@ -1533,65 +2243,135 @@ static func can_send_map_intent(state_ready: bool, pending: bool) -> bool:
 
 func _set_mode(mode: StringName) -> void:
 	if mode != &"select" and not _can_operate:
-		_set_feedback(_intent_feedback, "Operator permission required", "Build mode requires operator permission.")
+		_set_feedback(
+			_intent_feedback,
+			"Operator permission required",
+			"Build mode requires operator permission."
+		)
 		return
-	if mode != &"build": _planning_system = &"excavate" if mode == &"excavate" else &""
+	if mode != &"build":
+		_planning_system = &"excavate" if mode == &"excavate" else &""
 	map.set_interaction_mode(mode)
 	for key: StringName in _mode_buttons:
 		_mode_buttons[key].set_pressed_no_signal(key == mode)
 	if mode == &"build":
-		_set_feedback(_intent_feedback, "Construction · draw room" if _planning_system == &"construction" else "Zones · draw " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower(), "Drag on one exposed floor. Release to request; Esc/right-click cancels.")
+		_set_feedback(
+			_intent_feedback,
+			(
+				"Construction · draw room"
+				if _planning_system == &"construction"
+				else "Zones · draw " + str(PlanningModel.ZONES[_zone_kind][0]).to_lower()
+			),
+			"Drag on one exposed floor. Release to request; Esc/right-click cancels."
+		)
 	else:
-		_set_feedback(_intent_feedback, "Select: drag rectangle", "Drag a rectangle to control the whole block.")
+		_set_feedback(
+			_intent_feedback,
+			"Select: drag rectangle",
+			"Drag a rectangle to control the whole block."
+		)
 	if mode == &"excavate":
-		_set_feedback(_intent_feedback, "Excavate: drag solids", "Bottom is the clicked visible/base z; height extends upward in 0.5m cells. Cut changes cancel drags.")
+		_set_feedback(
+			_intent_feedback,
+			"Excavate: drag solids",
+			"Bottom is the clicked visible/base z; height extends upward in 0.5m cells. Cut changes cancel drags."
+		)
 	elif mode == &"facility":
-		_set_feedback(_intent_feedback, "Place complete facility", "Click an exposed floor; width/depth/clearance are reserved in full.")
+		_set_feedback(
+			_intent_feedback,
+			"Place complete facility",
+			"Click an exposed floor; width/depth/clearance are reserved in full."
+		)
 	_refresh_planning()
 
 
 func _dispatch_vertical(reducer: String, payload: Array, description: String) -> void:
 	if map.terrain_model.presentation_mode == &"overview":
-		_set_feedback(_intent_feedback, "Zoom into terrain", "Overview samples are not physical editing targets.")
+		_set_feedback(
+			_intent_feedback,
+			"Zoom into terrain",
+			"Overview samples are not physical editing targets."
+		)
 		return
 	if not _planning_allowed():
-		_set_feedback(_intent_feedback, "Request blocked", "Operator permission, ready subscription, and no pending request are required.")
+		_set_feedback(
+			_intent_feedback,
+			"Request blocked",
+			"Operator permission, ready subscription, and no pending request are required."
+		)
 		return
 	if map.layered and reducer in ["construct_room", "designate_zone_at", "designate_excavation"]:
-		if payload.size() < 4 or not payload[0] is int or not payload[1] is int or not payload[2] is int or not payload[3] is int:
-			_set_feedback(_intent_feedback, "Invalid terrain request", "An exact integer terrain rectangle is required.")
+		if (
+			payload.size() < 4
+			or not payload[0] is int
+			or not payload[1] is int
+			or not payload[2] is int
+			or not payload[3] is int
+		):
+			_set_feedback(
+				_intent_feedback,
+				"Invalid terrain request",
+				"An exact integer terrain rectangle is required."
+			)
 			return
-		var rect := MapUiModel.normalize_rect(Vector2i(payload[0], payload[1]), Vector2i(payload[2], payload[3]))
+		var rect := MapUiModel.normalize_rect(
+			Vector2i(payload[0], payload[1]), Vector2i(payload[2], payload[3])
+		)
 		if not map.terrain_model.coverage_ready(rect):
-			_set_feedback(_intent_feedback, "Terrain pending", "Waiting for authoritative terrain and edit snapshots.")
+			_set_feedback(
+				_intent_feedback,
+				"Terrain pending",
+				"Waiting for authoritative terrain and edit snapshots."
+			)
 			return
 	if map_intent_override.is_valid():
 		map_intent_override.call(reducer, payload)
 		return
 	var reducers: Object = SpacetimeDB.Continuum.reducers
 	if not reducers.has_method(reducer):
-		_set_feedback(_intent_feedback, "Bindings unavailable", "Regenerate matching bindings for %s." % reducer)
+		_set_feedback(
+			_intent_feedback,
+			"Bindings unavailable",
+			"Regenerate matching bindings for %s." % reducer
+		)
 		return
 	_track_intent(reducers.callv(reducer, payload), description)
 
 
 func _on_excavation_requested(rect: Rect2i, bottom: int, height: int) -> void:
-	if _planning_system != &"excavate" or not _planning_allowed(): return
+	if _planning_system != &"excavate" or not _planning_allowed():
+		return
 	if not map.layered:
-		_set_feedback(_intent_feedback, "Terrain unavailable", "Excavation needs authoritative voxel terrain.")
+		_set_feedback(
+			_intent_feedback, "Terrain unavailable", "Excavation needs authoritative voxel terrain."
+		)
 		return
 	if not map.terrain_model.coverage_ready(rect):
-		_set_feedback(_intent_feedback, "Terrain pending", "Waiting for authoritative terrain and edit snapshots.")
+		_set_feedback(
+			_intent_feedback,
+			"Terrain pending",
+			"Waiting for authoritative terrain and edit snapshots."
+		)
 		return
 	var payload := map.terrain_model.excavation_payload(rect, bottom, height)
 	if payload.is_empty():
-		_set_feedback(_intent_feedback, "Invalid excavation", "Height must be positive and fit within world bounds.")
+		_set_feedback(
+			_intent_feedback,
+			"Invalid excavation",
+			"Height must be positive and fit within world bounds."
+		)
 		return
-	_dispatch_vertical("designate_excavation", payload, "Excavate z=%d through %d" % [bottom, bottom + height - 1])
+	_dispatch_vertical(
+		"designate_excavation", payload, "Excavate z=%d through %d" % [bottom, bottom + height - 1]
+	)
 
 
 func _on_facility_requested(cell: Vector3i) -> void:
-	_set_feedback(_intent_feedback, "Choose a planning tool", "Open Construction for rooms or Zones for usage.")
+	_set_feedback(
+		_intent_feedback,
+		"Choose a planning tool",
+		"Open Construction for rooms or Zones for usage."
+	)
 
 
 func _recreation_tiles() -> Array[ContinuumTile]:
@@ -1606,22 +2386,39 @@ func _toggle_recreation_zone() -> void:
 	if not _can_operate:
 		return
 	if map.layered:
-		_set_feedback(_intent_feedback, "Use exposed block controls", "Select recreation facilities on one visible floor, then enable/disable the block.")
+		_set_feedback(
+			_intent_feedback,
+			"Use exposed block controls",
+			"Select recreation facilities on one visible floor, then enable/disable the block."
+		)
 		return
 	var any_enabled: bool = false
 	for tile: ContinuumTile in _recreation_tiles():
 		if tile.enabled:
 			any_enabled = true
 			break
-	_report(SpacetimeDB.Continuum.reducers.set_zone_enabled(
-			ContinuumTileKind.create_recreation(), not any_enabled), "set_zone_enabled")
+	_report(
+		SpacetimeDB.Continuum.reducers.set_zone_enabled(
+			ContinuumTileKind.create_recreation(), not any_enabled
+		),
+		"set_zone_enabled"
+	)
 
 
 func _change_speed(speed: float) -> void:
-	if not _is_admin or not _state_ready or _intent_request != null or SpacetimeDB.Continuum.db == null:
+	if (
+		not _is_admin
+		or not _state_ready
+		or _intent_request != null
+		or SpacetimeDB.Continuum.db == null
+	):
 		return
 	_refresh_controls()
-	if _state_ready and _intent_request == null and SpacetimeDB.Continuum.db.config.id.find(0) != null:
+	if (
+		_state_ready
+		and _intent_request == null
+		and SpacetimeDB.Continuum.db.config.id.find(0) != null
+	):
 		_track_intent(SpacetimeDB.Continuum.reducers.set_time_scale(speed), "Simulation speed")
 
 
@@ -1629,33 +2426,63 @@ func _track_intent(call: SpacetimeDBReducerCall, description: String) -> void:
 	var generation := _session_generation
 	_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
-		_set_feedback(_intent_feedback, "Send failed", "%s could not be sent (%d)." % [description, call.error])
+		_set_feedback(
+			_intent_feedback,
+			"Send failed",
+			"%s could not be sent (%d)." % [description, call.error]
+		)
 		_refresh_controls()
 		return
 	_intent_request = call
 	_intent_name = description
 	_intent_seconds = 10.0
-	_set_feedback(_intent_feedback, "Pending", "%s: pending. Displayed values follow the server." % description)
-	call.response.connect(func(response: ReducerResultMessage) -> void:
-		if _intent_request != call or not _session_epoch_current(generation):
-			return
-		_intent_request = null
-		_dirty = true
-		_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
-		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-			_set_feedback(_intent_feedback, "Rejected", "%s rejected: %s" % [description, response.reducer_result.get_err()])
-		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-			_set_feedback(_intent_feedback, "Failed", "%s failed: %s" % [description, response.reducer_result.get_internal_error()])
-		else:
-			_set_feedback(_intent_feedback, "Accepted", "%s accepted. Values follow server state." % description)
-			_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
-		_refresh_controls()
-	, CONNECT_ONE_SHOT)
+	_set_feedback(
+		_intent_feedback,
+		"Pending",
+		"%s: pending. Displayed values follow the server." % description
+	)
+	call.response.connect(
+		func(response: ReducerResultMessage) -> void:
+			if _intent_request != call or not _session_epoch_current(generation):
+				return
+			_intent_request = null
+			_dirty = true
+			_intent_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
+			if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+				_set_feedback(
+					_intent_feedback,
+					"Rejected",
+					"%s rejected: %s" % [description, response.reducer_result.get_err()]
+				)
+			elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+				_set_feedback(
+					_intent_feedback,
+					"Failed",
+					"%s failed: %s" % [description, response.reducer_result.get_internal_error()]
+				)
+			else:
+				_set_feedback(
+					_intent_feedback,
+					"Accepted",
+					"%s accepted. Values follow server state." % description
+				)
+				_intent_feedback.add_theme_color_override(
+					"font_color", ThemeTokens.color("ink-muted")
+				)
+			_refresh_controls(),
+		CONNECT_ONE_SHOT
+	)
 	_refresh_controls()
 
 
 func _acknowledge(alert_id: Variant) -> void:
-	if not alert_id is int or not _can_operate or not _state_ready or SpacetimeDB.Continuum.db == null or _ack_requests.has(alert_id):
+	if (
+		not alert_id is int
+		or not _can_operate
+		or not _state_ready
+		or SpacetimeDB.Continuum.db == null
+		or _ack_requests.has(alert_id)
+	):
 		return
 	var alert: ContinuumAlert = SpacetimeDB.Continuum.db.alert.id.find(alert_id)
 	if alert == null or not alert.active or alert.acknowledged:
@@ -1667,21 +2494,30 @@ func _acknowledge(alert_id: Variant) -> void:
 	var generation := _session_generation
 	_ack_requests[alert_id] = {"call": call, "remaining": 10.0, "accepted": false}
 	_alert_box.set_acknowledgement_state(alert_id, true)
-	call.response.connect(func(response: ReducerResultMessage) -> void:
-		if not _can_operate or not _session_epoch_current(generation) or not _ack_requests.has(alert_id) or _ack_requests[alert_id].call != call:
-			return
-		var error := ""
-		if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-			error = "Acknowledgement rejected: " + str(response.reducer_result.get_err())
-		elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-			error = "Acknowledgement failed: " + str(response.reducer_result.get_internal_error())
-		if not error.is_empty():
-			_ack_requests.erase(alert_id)
-			_alert_box.set_acknowledgement_state(alert_id, false, error)
-		else:
-			_ack_requests[alert_id].accepted = true
-			_dirty = true
-	, CONNECT_ONE_SHOT)
+	call.response.connect(
+		func(response: ReducerResultMessage) -> void:
+			if (
+				not _can_operate
+				or not _session_epoch_current(generation)
+				or not _ack_requests.has(alert_id)
+				or _ack_requests[alert_id].call != call
+			):
+				return
+			var error := ""
+			if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
+				error = "Acknowledgement rejected: " + str(response.reducer_result.get_err())
+			elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
+				error = (
+					"Acknowledgement failed: " + str(response.reducer_result.get_internal_error())
+				)
+			if not error.is_empty():
+				_ack_requests.erase(alert_id)
+				_alert_box.set_acknowledgement_state(alert_id, false, error)
+			else:
+				_ack_requests[alert_id].accepted = true
+				_dirty = true,
+		CONNECT_ONE_SHOT
+	)
 
 
 func _dispatch_acknowledgement(alert_id: int) -> SpacetimeDBReducerCall:
@@ -1693,7 +2529,14 @@ func _process_acknowledgements(delta: float) -> void:
 		_ack_requests[id].remaining -= delta
 		if _ack_requests[id].remaining <= 0.0:
 			_ack_requests.erase(id)
-			_alert_box.set_acknowledgement_state(id, false, "No shared acknowledgement observed · outcome unknown; check server state before retrying.")
+			(
+				_alert_box
+				. set_acknowledgement_state(
+					id,
+					false,
+					"No shared acknowledgement observed · outcome unknown; check server state before retrying."
+				)
+			)
 
 
 func _toggle_haul_policy() -> void:
@@ -1708,28 +2551,52 @@ func _toggle_haul_policy() -> void:
 	var call := SpacetimeDB.Continuum.reducers.set_haul_policy(policy)
 	_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
-		_set_feedback(_haul_feedback, "Send failed", "Hauling mode could not be sent (%d)." % call.error)
+		_set_feedback(
+			_haul_feedback, "Send failed", "Hauling mode could not be sent (%d)." % call.error
+		)
 		return
 	_haul_request = call
 	_haul_request_seconds = 10.0
-	_set_feedback(_haul_feedback, "Pending", "Request sent. Waiting for the server; displayed mode is not changed locally.")
-	call.response.connect(_on_haul_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT)
+	_set_feedback(
+		_haul_feedback,
+		"Pending",
+		"Request sent. Waiting for the server; displayed mode is not changed locally."
+	)
+	call.response.connect(
+		_on_haul_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT
+	)
 	_dirty = true
 	_haul_button.disabled = true
 
 
-func _on_haul_policy_response(response: ReducerResultMessage, request_id: int, generation: int) -> void:
-	if not _session_epoch_current(generation) or _haul_request == null or request_id != _haul_request.request_id:
+func _on_haul_policy_response(
+	response: ReducerResultMessage, request_id: int, generation: int
+) -> void:
+	if (
+		not _session_epoch_current(generation)
+		or _haul_request == null
+		or request_id != _haul_request.request_id
+	):
 		return
 	_haul_request = null
 	_dirty = true
 	_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_set_feedback(_haul_feedback, "Rejected", "Hauling mode rejected: %s" % response.reducer_result.get_err())
+		_set_feedback(
+			_haul_feedback,
+			"Rejected",
+			"Hauling mode rejected: %s" % response.reducer_result.get_err()
+		)
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_set_feedback(_haul_feedback, "Failed", "Hauling mode failed: %s" % response.reducer_result.get_internal_error())
+		_set_feedback(
+			_haul_feedback,
+			"Failed",
+			"Hauling mode failed: %s" % response.reducer_result.get_internal_error()
+		)
 	else:
-		_set_feedback(_haul_feedback, "Accepted", "Request accepted. The mode above follows server state.")
+		_set_feedback(
+			_haul_feedback, "Accepted", "Request accepted. The mode above follows server state."
+		)
 		_haul_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 
 
@@ -1745,29 +2612,53 @@ func _set_meal_policy(policy: int) -> void:
 	var call := SpacetimeDB.Continuum.reducers.set_meal_policy(ContinuumMealPolicy.create(policy))
 	_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	if call.error != OK:
-		_set_feedback(_meal_feedback, "Send failed", "Meal policy could not be sent (%d)." % call.error)
+		_set_feedback(
+			_meal_feedback, "Send failed", "Meal policy could not be sent (%d)." % call.error
+		)
 		_refresh_controls()
 		return
 	_meal_request = call
 	_meal_request_seconds = 10.0
-	_set_feedback(_meal_feedback, "Pending", "Request sent. Waiting for the server; displayed policy is not changed locally.")
-	call.response.connect(_on_meal_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT)
+	_set_feedback(
+		_meal_feedback,
+		"Pending",
+		"Request sent. Waiting for the server; displayed policy is not changed locally."
+	)
+	call.response.connect(
+		_on_meal_policy_response.bind(call.request_id, _session_generation), CONNECT_ONE_SHOT
+	)
 	_dirty = true
 	_refresh_controls()
 
 
-func _on_meal_policy_response(response: ReducerResultMessage, request_id: int, generation: int) -> void:
-	if not _session_epoch_current(generation) or _meal_request == null or request_id != _meal_request.request_id:
+func _on_meal_policy_response(
+	response: ReducerResultMessage, request_id: int, generation: int
+) -> void:
+	if (
+		not _session_epoch_current(generation)
+		or _meal_request == null
+		or request_id != _meal_request.request_id
+	):
 		return
 	_meal_request = null
 	_dirty = true
 	_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("critical"))
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_set_feedback(_meal_feedback, "Rejected", "Meal policy rejected: %s" % response.reducer_result.get_err())
+		_set_feedback(
+			_meal_feedback,
+			"Rejected",
+			"Meal policy rejected: %s" % response.reducer_result.get_err()
+		)
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_set_feedback(_meal_feedback, "Failed", "Meal policy failed: %s" % response.reducer_result.get_internal_error())
+		_set_feedback(
+			_meal_feedback,
+			"Failed",
+			"Meal policy failed: %s" % response.reducer_result.get_internal_error()
+		)
 	else:
-		_set_feedback(_meal_feedback, "Accepted", "Request accepted. The policy above follows server state.")
+		_set_feedback(
+			_meal_feedback, "Accepted", "Request accepted. The policy above follows server state."
+		)
 		_meal_feedback.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 
 
@@ -1781,42 +2672,68 @@ func _report(call: SpacetimeDBReducerCall, reducer_name: String) -> void:
 		_show_action_error("%s could not be sent (%d)" % [reducer_name, call.error])
 		return
 	var response: ReducerResultMessage = await call.response
-	if not _client_epoch_current(client, generation) or not _can_operate or permission_revision != _permission_revision: return
+	if (
+		not _client_epoch_current(client, generation)
+		or not _can_operate
+		or permission_revision != _permission_revision
+	):
+		return
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
-		_show_action_error("%s was rejected: %s" % [reducer_name, response.reducer_result.get_err()])
+		_show_action_error(
+			"%s was rejected: %s" % [reducer_name, response.reducer_result.get_err()]
+		)
 	elif response.reducer_result.value == ReducerOutcomeEnum.Options.internalError:
-		_show_action_error("%s failed: %s" % [reducer_name, response.reducer_result.get_internal_error()])
+		_show_action_error(
+			"%s failed: %s" % [reducer_name, response.reducer_result.get_internal_error()]
+		)
+
 
 func _show_action_error(copy: String) -> void:
 	_action_error.text = "Action failed · " + copy
 	_layout_action_feedback()
 	_action_feedback.show()
 
+
 func _layout_action_feedback() -> void:
-	if not is_instance_valid(_action_feedback): return
+	if not is_instance_valid(_action_feedback):
+		return
 	var available := maxf(1, workspace.area.size.x - 32)
 	_action_feedback.custom_minimum_size.x = minf(280, available)
 	_action_feedback.size.x = minf(600, available)
-	var button_parent: Container = _action_feedback.get_child(0) if available < 360 else _action_error.get_parent()
+	var button_parent: Container = (
+		_action_feedback.get_child(0) if available < 360 else _action_error.get_parent()
+	)
 	if _action_dismiss.get_parent() != button_parent:
 		_action_dismiss.reparent(button_parent)
 	if not _action_fit_pending:
 		_action_fit_pending = true
 		get_tree().process_frame.connect(_fit_action_feedback_height.bind(2), CONNECT_ONE_SHOT)
 
+
 func _fit_action_feedback_height(settling_frames: int) -> void:
-	if not is_inside_tree(): return
+	if not is_inside_tree():
+		return
 	if settling_frames > 0:
-		get_tree().process_frame.connect(_fit_action_feedback_height.bind(settling_frames - 1), CONNECT_ONE_SHOT)
+		get_tree().process_frame.connect(
+			_fit_action_feedback_height.bind(settling_frames - 1), CONNECT_ONE_SHOT
+		)
 		return
 	_action_fit_pending = false
 	_action_feedback.size.y = _action_feedback.get_combined_minimum_size().y
 	_action_feedback.position.y = clampf(workspace.area.size.y - _action_feedback.size.y - 4, 0, 64)
 
+
 func _build_action_feedback() -> void:
 	_action_feedback = PanelContainer.new()
 	_action_feedback.name = "ActionFailure"
-	_action_feedback.add_theme_stylebox_override("panel", DeckTheme.box(ThemeTokens.color("critical-soft"), ThemeTokens.color("critical"), int(ThemeTokens.number("space-2"))))
+	_action_feedback.add_theme_stylebox_override(
+		"panel",
+		DeckTheme.box(
+			ThemeTokens.color("critical-soft"),
+			ThemeTokens.color("critical"),
+			int(ThemeTokens.number("space-2"))
+		)
+	)
 	var stack := _map_toolbar.get_parent()
 	stack.add_child(_action_feedback)
 	_action_feedback.z_index = 20
@@ -1959,10 +2876,12 @@ func _build_panels() -> void:
 	_construction_panel.setup(&"construction")
 	_construction_panel.tool_requested.connect(_activate_planning)
 	_construction_panel.remove_requested.connect(_remove_planning_selection.bind(&"construction"))
-	_construction_panel.clearance_changed.connect(func(value: int) -> void:
-		_room_clearance = value
-		map.cancel_gestures()
-		_refresh_planning())
+	_construction_panel.clearance_changed.connect(
+		func(value: int) -> void:
+			_room_clearance = value
+			map.cancel_gestures()
+			_refresh_planning()
+	)
 	_zones_panel = PlanningPanelControl.new()
 	_sections["operations"].add_child(_zones_panel)
 	_zones_panel.setup(&"zones")
@@ -1981,10 +2900,12 @@ func _build_panels() -> void:
 	excavate.text = "Excavate terrain"
 	excavate.toggle_mode = true
 	excavate.custom_minimum_size.y = 32
-	excavate.pressed.connect(func() -> void:
-		if _planning_allowed():
-			_set_mode(&"excavate")
-			_reveal_planning_map("construction"))
+	excavate.pressed.connect(
+		func() -> void:
+			if _planning_allowed():
+				_set_mode(&"excavate")
+				_reveal_planning_map("construction")
+	)
 	side.add_child(excavate)
 	_mode_buttons[&"excavate"] = excavate
 	_build_vertical_controls(side)
@@ -2004,8 +2925,12 @@ func _build_panels() -> void:
 		enabled_row.add_child(button)
 		_block_controls["enabled_%s" % enabled] = button
 	_block_box.add_child(enabled_row)
-	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
-			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
+	for work: int in [
+		ContinuumWorkType.Options.farming,
+		ContinuumWorkType.Options.logging,
+		ContinuumWorkType.Options.mining,
+		ContinuumWorkType.Options.hunting
+	]:
 		var row := HFlowContainer.new()
 		var label := Label.new()
 		label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
@@ -2031,7 +2956,14 @@ func _build_panels() -> void:
 		pause.text = "Pause"
 		pause.pressed.connect(_set_block_work.bind(work, 2, false))
 		row.add_child(pause)
-		_block_controls[work] = {"row": row, "label": label, "count": count_label, "set": add, "priority": priority_buttons, "pause": pause}
+		_block_controls[work] = {
+			"row": row,
+			"label": label,
+			"count": count_label,
+			"set": add,
+			"priority": priority_buttons,
+			"pause": pause
+		}
 		_block_box.add_child(row)
 	side.add_child(_block_box)
 
@@ -2128,8 +3060,13 @@ func _build_developer_panel() -> void:
 	side.add_child(_developer_summary)
 	for action: String in ["copy", "refresh", "fit", "camera", "samples"]:
 		var button := Button.new()
-		button.text = {"copy": "Copy sanitized summary", "refresh": "Refresh local view/cache",
-			"fit": "Fit map camera", "camera": "Reset camera to 1:1", "samples": "Reset diagnostic samples"}[action]
+		button.text = {
+			"copy": "Copy sanitized summary",
+			"refresh": "Refresh local view/cache",
+			"fit": "Fit map camera",
+			"camera": "Reset camera to 1:1",
+			"samples": "Reset diagnostic samples"
+		}[action]
 		button.pressed.connect(_developer_action.bind(action))
 		side.add_child(button)
 	_developer_diagnostics = CheckBox.new()
@@ -2150,12 +3087,26 @@ func _build_developer_panel() -> void:
 func _developer_summary_text() -> String:
 	if _profile != ContinuumClientProfile.DEVELOPER:
 		return ""
-	var frame: Dictionary = _diagnostics_overlay.frame_snapshot if is_instance_valid(_diagnostics_overlay) else {}
-	var rtt: Dictionary = _diagnostics_overlay.rtt_snapshot if is_instance_valid(_diagnostics_overlay) else {}
-	var lines: Array[String] = ["Continuum local diagnostics", "Endpoint: %s" % _sanitized_endpoint(_host),
-		"Database: %s" % _safe_summary_identifier(_database), "Client profile: developer",
-		"Verified role: %s" % (_role_name if _role_name in ["Viewer", "Operator", "Admin"] else "Unknown"),
-		"Session: %s" % ("state ready" if _state_ready else ("joining" if _session_requested else "offline"))]
+	var frame: Dictionary = (
+		_diagnostics_overlay.frame_snapshot if is_instance_valid(_diagnostics_overlay) else {}
+	)
+	var rtt: Dictionary = (
+		_diagnostics_overlay.rtt_snapshot if is_instance_valid(_diagnostics_overlay) else {}
+	)
+	var lines: Array[String] = [
+		"Continuum local diagnostics",
+		"Endpoint: %s" % _sanitized_endpoint(_host),
+		"Database: %s" % _safe_summary_identifier(_database),
+		"Client profile: developer",
+		(
+			"Verified role: %s"
+			% (_role_name if _role_name in ["Viewer", "Operator", "Admin"] else "Unknown")
+		),
+		(
+			"Session: %s"
+			% ("state ready" if _state_ready else ("joining" if _session_requested else "offline"))
+		)
+	]
 	for key: String in ["mean_fps", "p50_frame_ms", "p95_frame_ms", "p99_frame_ms"]:
 		var value: Variant = frame.get(key)
 		if (value is float or value is int) and is_finite(float(value)):
@@ -2185,7 +3136,11 @@ func _sanitized_endpoint(value: String) -> String:
 	for delimiter: String in ["/", "?", "#"]:
 		authority = authority.get_slice(delimiter, 0)
 	authority = authority.get_slice("@", authority.get_slice_count("@") - 1)
-	return scheme + _safe_summary_identifier(authority) if not authority.is_empty() else "(not configured)"
+	return (
+		scheme + _safe_summary_identifier(authority)
+		if not authority.is_empty()
+		else "(not configured)"
+	)
 
 
 func _refresh_developer_summary() -> void:
@@ -2203,15 +3158,19 @@ func _developer_action(action: String) -> void:
 	if _profile != ContinuumClientProfile.DEVELOPER or _closing or _exit_requested:
 		return
 	match action:
-		"copy": DisplayServer.clipboard_set(_developer_summary_text())
+		"copy":
+			DisplayServer.clipboard_set(_developer_summary_text())
 		"refresh":
 			_full_ui_refresh = true
 			_dirty = true
 			_map_dirty = true
 			_map_tables_changed.clear()
-		"fit": map.fit_camera()
-		"camera": map.reset_camera()
-		"samples": _reset_diagnostics_samples()
+		"fit":
+			map.fit_camera()
+		"camera":
+			map.reset_camera()
+		"samples":
+			_reset_diagnostics_samples()
 	_refresh_developer_summary()
 
 
@@ -2251,10 +3210,20 @@ func _build_telemetry() -> void:
 	_resource_group.add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
 	_resource_group.add_theme_constant_override("v_separation", 4)
 	workspace.telemetry.add_child(_resource_group)
-	for kind: int in [ContinuumResourceKind.Options.food, ContinuumResourceKind.Options.wood, ContinuumResourceKind.Options.stone, ContinuumResourceKind.Options.meat]:
+	for kind: int in [
+		ContinuumResourceKind.Options.food,
+		ContinuumResourceKind.Options.wood,
+		ContinuumResourceKind.Options.stone,
+		ContinuumResourceKind.Options.meat
+	]:
 		var card := ResourceControl.new()
-		card.tooltip_text = "Stored %s. Ground stacks and carried cargo are separate." % ContinuumResourceKind.parse_enum_name(kind)
-		card.set_model({"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()}, {"compact": true})
+		card.tooltip_text = (
+			"Stored %s. Ground stacks and carried cargo are separate."
+			% ContinuumResourceKind.parse_enum_name(kind)
+		)
+		card.set_model(
+			{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()}, {"compact": true}
+		)
 		_resource_group.add_child(card)
 		_resource_labels[kind] = card
 	_rates_status = Label.new()
@@ -2294,13 +3263,16 @@ func _build_telemetry() -> void:
 	popup.add_item("Settings / servers / disconnect", 2)
 	popup.add_separator("Stored resources")
 	for kind: int in _resource_labels:
-		popup.add_item(ContinuumResourceKind.parse_enum_name(kind).capitalize() + " · unavailable", 10 + kind)
+		popup.add_item(
+			ContinuumResourceKind.parse_enum_name(kind).capitalize() + " · unavailable", 10 + kind
+		)
 		popup.set_item_disabled(popup.item_count - 1, true)
 	popup.id_pressed.connect(_session_menu_action)
 	workspace.utility_row.add_child(_session_menu)
 	workspace.area.resized.connect(func() -> void: _refresh_status.call_deferred())
 	workspace.diagnostics_host.resized.connect(func() -> void: _refresh_status.call_deferred())
 	workspace.header_layout_changed.connect(func() -> void: _refresh_status.call_deferred())
+
 
 func _status_surface(node_name: String) -> PanelContainer:
 	var panel := PanelContainer.new()
@@ -2313,12 +3285,16 @@ func _status_surface(node_name: String) -> PanelContainer:
 	panel.add_theme_stylebox_override("panel", surface)
 	return panel
 
+
 func _session_menu_action(id: int) -> void:
 	match id:
-		0: _show_away_digest()
+		0:
+			_show_away_digest()
 		1:
-			if not _authenticated_identity.is_empty(): DisplayServer.clipboard_set(_authenticated_identity)
-		2: _menu.show_menu()
+			if not _authenticated_identity.is_empty():
+				DisplayServer.clipboard_set(_authenticated_identity)
+		2:
+			_menu.show_menu()
 
 
 func _build_map_toolbar() -> void:
@@ -2332,41 +3308,85 @@ func _build_map_toolbar() -> void:
 	_map_toolbar.add_child(flow)
 	var layer_row := HBoxContainer.new()
 	flow.add_child(layer_row)
-	var down := _map_navigation_button(layer_row, "↓", "Layer down by 0.5m (PgDn / [)", func() -> void: map.set_cut(map.terrain_model.cut - 1))
+	var down := _map_navigation_button(
+		layer_row,
+		"↓",
+		"Layer down by 0.5m (PgDn / [)",
+		func() -> void: map.set_cut(map.terrain_model.cut - 1)
+	)
 	_map_layer_label = Label.new()
 	_map_layer_label.tooltip_text = "Inclusive cut layer z; every layer is 0.5 metres. Navigation is available to Viewers too."
 	ThemeTokens.apply_label(_map_layer_label, "readout")
 	layer_row.add_child(_map_layer_label)
-	var up := _map_navigation_button(layer_row, "↑", "Layer up by 0.5m (PgUp / ])", func() -> void: map.set_cut(map.terrain_model.cut + 1))
+	var up := _map_navigation_button(
+		layer_row,
+		"↑",
+		"Layer up by 0.5m (PgUp / ])",
+		func() -> void: map.set_cut(map.terrain_model.cut + 1)
+	)
 	_map_layer_buttons = {-1: down, 1: up}
 	var zoom_row := HBoxContainer.new()
 	flow.add_child(zoom_row)
-	_map_navigation_button(zoom_row, "−", "Zoom out; mouse wheel anchors at the cursor", func() -> void: map.zoom_at(1.0 / 1.2, map.size * 0.5))
+	_map_navigation_button(
+		zoom_row,
+		"−",
+		"Zoom out; mouse wheel anchors at the cursor",
+		func() -> void: map.zoom_at(1.0 / 1.2, map.size * 0.5)
+	)
 	_map_zoom_label = Label.new()
 	_map_zoom_label.tooltip_text = "Zoom relative to native 32px cells. Middle-drag pans the map; Fit recentres it."
 	ThemeTokens.apply_label(_map_zoom_label, "readout")
 	zoom_row.add_child(_map_zoom_label)
-	_map_navigation_button(zoom_row, "+", "Zoom in; middle-drag pans without editing", func() -> void: map.zoom_at(1.2, map.size * 0.5))
-	_map_zoom_buttons["reset"] = _map_navigation_button(zoom_row, "1:1", "Reset to native 100% zoom and centre", map.reset_camera)
-	_map_zoom_buttons["fit"] = _map_navigation_button(zoom_row, "Fit", "Fit the entire map and centre it", map.fit_camera)
+	_map_navigation_button(
+		zoom_row,
+		"+",
+		"Zoom in; middle-drag pans without editing",
+		func() -> void: map.zoom_at(1.2, map.size * 0.5)
+	)
+	_map_zoom_buttons["reset"] = _map_navigation_button(
+		zoom_row, "1:1", "Reset to native 100% zoom and centre", map.reset_camera
+	)
+	_map_zoom_buttons["fit"] = _map_navigation_button(
+		zoom_row, "Fit", "Fit the entire map and centre it", map.fit_camera
+	)
 	_sync_map_toolbar()
+
 
 func _map_input_blocked(point: Vector2) -> bool:
 	if is_instance_valid(_session_menu) and _session_menu.get_popup().visible:
 		return true
 	if workspace.blocks_map_input(point):
 		return true
-	for overlay: Control in [_map_toolbar, _action_feedback, _intent_feedback.get_parent() if is_instance_valid(_intent_feedback) else null]:
-		if is_instance_valid(overlay) and overlay.is_visible_in_tree() and overlay.get_global_rect().has_point(point):
+	for overlay: Control in [
+		_map_toolbar,
+		_action_feedback,
+		_intent_feedback.get_parent() if is_instance_valid(_intent_feedback) else null
+	]:
+		if (
+			is_instance_valid(overlay)
+			and overlay.is_visible_in_tree()
+			and overlay.get_global_rect().has_point(point)
+		):
 			return true
 	return false
 
 
-func _map_navigation_button(parent: Control, caption: String, hint: String, callback: Callable) -> Button:
+func _map_navigation_button(
+	parent: Control, caption: String, hint: String, callback: Callable
+) -> Button:
 	var button := Button.new()
 	button.text = caption
 	button.theme_type_variation = "ButtonQuiet"
-	var icon_name: String = {"↓": "chevron-down", "↑": "chevron-up", "−": "chevron-left", "+": "plus", "Fit": "camera-fit"}.get(caption, "")
+	var icon_name: String = (
+		{
+			"↓": "chevron-down",
+			"↑": "chevron-up",
+			"−": "chevron-left",
+			"+": "plus",
+			"Fit": "camera-fit"
+		}
+		. get(caption, "")
+	)
 	if not icon_name.is_empty():
 		button.icon = InterfaceIcons.texture(icon_name)
 		button.text = ""
@@ -2385,9 +3405,18 @@ func _sync_map_toolbar() -> void:
 		return
 	if _toolbar_metric_font != _metrics.base_font_size:
 		_toolbar_metric_font = _metrics.base_font_size
-		_map_toolbar.add_theme_stylebox_override("panel", DeckTheme.box(DeckTheme.PANEL_GROUND, DeckTheme.LINE, int(ThemeTokens.number("space-1"))))
-		_map_toolbar.get_child(0).add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
-		_map_toolbar.get_child(0).add_theme_constant_override("v_separation", int(ThemeTokens.number("space-1")))
+		_map_toolbar.add_theme_stylebox_override(
+			"panel",
+			DeckTheme.box(
+				DeckTheme.PANEL_GROUND, DeckTheme.LINE, int(ThemeTokens.number("space-1"))
+			)
+		)
+		_map_toolbar.get_child(0).add_theme_constant_override(
+			"h_separation", int(ThemeTokens.number("space-2"))
+		)
+		_map_toolbar.get_child(0).add_theme_constant_override(
+			"v_separation", int(ThemeTokens.number("space-1"))
+		)
 		for button in _map_navigation_buttons:
 			for state in ["normal", "hover", "pressed", "disabled"]:
 				var style: StyleBox = theme.get_stylebox(state, "ButtonQuiet").duplicate()
@@ -2396,10 +3425,20 @@ func _sync_map_toolbar() -> void:
 				style.set_content_margin(SIDE_LEFT, ThemeTokens.number("space-1"))
 				style.set_content_margin(SIDE_RIGHT, ThemeTokens.number("space-1"))
 				button.add_theme_stylebox_override(state, style)
-	_map_layer_label.text = "z=%d · %.1fm" % [map.terrain_model.cut, map.terrain_model.cut * LayeredTerrainModel.METRES_PER_LAYER]
+	_map_layer_label.text = (
+		"z=%d · %.1fm"
+		% [map.terrain_model.cut, map.terrain_model.cut * LayeredTerrainModel.METRES_PER_LAYER]
+	)
 	_map_zoom_label.text = "%d%%" % roundi(map.zoom_percent())
 	for step: int in _map_layer_buttons:
-		_map_layer_buttons[step].disabled = not map.layered or (map.terrain_model.cut <= map.terrain_model.min_z if step < 0 else map.terrain_model.cut >= map.terrain_model.max_z)
+		_map_layer_buttons[step].disabled = (
+			not map.layered
+			or (
+				map.terrain_model.cut <= map.terrain_model.min_z
+				if step < 0
+				else map.terrain_model.cut >= map.terrain_model.max_z
+			)
+		)
 
 
 func _refresh_permissions() -> void:
@@ -2451,7 +3490,12 @@ func _set_connection_text(text: String, colour: Color) -> void:
 func _set_feedback(label: Label, compact: String, details: String) -> void:
 	if label == _intent_feedback:
 		if _construction_panel != null:
-			var is_instruction := compact == "Select: drag rectangle" or compact.begins_with("Construction ·") or compact.begins_with("Zones ·") or compact.begins_with("Excavate:")
+			var is_instruction := (
+				compact == "Select: drag rectangle"
+				or compact.begins_with("Construction ·")
+				or compact.begins_with("Zones ·")
+				or compact.begins_with("Excavate:")
+			)
 			_construction_panel.show_feedback("" if is_instruction else details)
 			_zones_panel.show_feedback("" if is_instruction else details)
 		label.visible = _planning_system != &""
@@ -2464,21 +3508,45 @@ func _set_feedback(label: Label, compact: String, details: String) -> void:
 func _render_connection_role() -> void:
 	if _connection_label == null:
 		return
-	_connection_label.text = "Live" if _state_ready else (_connection_message if _connection_message.length() <= 18 else "Connection problem")
+	_connection_label.text = (
+		"Live"
+		if _state_ready
+		else (_connection_message if _connection_message.length() <= 18 else "Connection problem")
+	)
 	_connection_label.tooltip_text = "%s\nRole: %s" % [_connection_message, _role_name]
-	var token := "ink-muted" if _state_ready else ("critical" if _connection_colour == ThemeTokens.color("critical") else ("warn" if _connection_colour == ThemeTokens.color("warn") else "ink-muted"))
+	var token := (
+		"ink-muted"
+		if _state_ready
+		else (
+			"critical"
+			if _connection_colour == ThemeTokens.color("critical")
+			else ("warn" if _connection_colour == ThemeTokens.color("warn") else "ink-muted")
+		)
+	)
 	_connection_label.add_theme_color_override("font_color", ThemeTokens.color(token))
-	_connection_glyph.texture = ThemeTokens.glyph(token if token in ["warn", "critical"] else "notice")
+	_connection_glyph.texture = ThemeTokens.glyph(
+		token if token in ["warn", "critical"] else "notice"
+	)
 	var role_caption := "Read-only" if _role_name == "Viewer" else _role_name
 	var role_help := "Colony controls stay disabled until the server confirms your access."
 	match _role_name:
-		"Viewer": role_help = "Read-only access. An admin can grant Operator access to manage this colony."
-		"Operator": role_help = "Colony management access. Speed, pause and server administration require Admin."
-		"Admin": role_help = "Colony management and server administration access. F9 opens administration."
-	_identity_label.text = role_caption + (" · dev" if _profile == ContinuumClientProfile.DEVELOPER else "")
-	_identity_label.tooltip_text = "%s\nVerified server role: %s\nLocal profile: %s\nAuthenticated identity: %s" % [role_help, _role_name, _profile, _authenticated_identity]
+		"Viewer":
+			role_help = "Read-only access. An admin can grant Operator access to manage this colony."
+		"Operator":
+			role_help = "Colony management access. Speed, pause and server administration require Admin."
+		"Admin":
+			role_help = "Colony management and server administration access. F9 opens administration."
+	_identity_label.text = (
+		role_caption + (" · dev" if _profile == ContinuumClientProfile.DEVELOPER else "")
+	)
+	_identity_label.tooltip_text = (
+		"%s\nVerified server role: %s\nLocal profile: %s\nAuthenticated identity: %s"
+		% [role_help, _role_name, _profile, _authenticated_identity]
+	)
 	if is_instance_valid(_session_menu):
-		_session_menu.tooltip_text = _identity_label.tooltip_text + "\n" + _clock.text + " · " + _population.text
+		_session_menu.tooltip_text = (
+			_identity_label.tooltip_text + "\n" + _clock.text + " · " + _population.text
+		)
 		_session_menu.get_popup().set_item_disabled(1, _authenticated_identity.is_empty())
 
 
@@ -2509,56 +3577,89 @@ func _refresh() -> void:
 func _production_policy_rows() -> Array:
 	var db := SpacetimeDB.Continuum.db
 	var rows: Array = []
-	if db == null or db.production_policy == null: return rows
+	if db == null or db.production_policy == null:
+		return rows
 	for row: ContinuumProductionPolicy in db.production_policy.iter():
-		rows.append({"resource": row.resource.value if row.resource != null else null, "target": row.target})
+		rows.append(
+			{"resource": row.resource.value if row.resource != null else null, "target": row.target}
+		)
 	return rows
+
 
 ## Missing subscription/config/colony are not a known empty policy snapshot.
 func _production_ready() -> bool:
 	var db := SpacetimeDB.Continuum.db
-	return _state_ready and db != null and db.production_policy != null \
-		and db.config.id.find(0) != null and db.colony.id.find(0) != null
+	return (
+		_state_ready
+		and db != null
+		and db.production_policy != null
+		and db.config.id.find(0) != null
+		and db.colony.id.find(0) != null
+	)
+
 
 func _refresh_production_targets() -> void:
-	if not is_instance_valid(_production_targets): return
+	if not is_instance_valid(_production_targets):
+		return
 	var ready := _production_ready()
 	var supply := {}
 	if ready:
 		var db := SpacetimeDB.Continuum.db
 		var colony: ContinuumColony = db.colony.id.find(0)
-		var stored := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
+		var stored := {
+			"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat
+		}
 		for kind in 4:
 			var name: String = OperationsModel.RESOURCE[kind]
 			var amounts: Array = [stored[name]]
 			for stack: ContinuumItemStack in db.item_stack.iter():
-				if stack.kind != null and stack.kind.value == kind: amounts.append(stack.amount)
+				if stack.kind != null and stack.kind.value == kind:
+					amounts.append(stack.amount)
 			for person: ContinuumColonist in db.colonist.iter():
-				if person.carried_kind != null and person.carried_kind.value == kind: amounts.append(person.carried_amount)
+				if person.carried_kind != null and person.carried_kind.value == kind:
+					amounts.append(person.carried_amount)
 			var valid := true
 			for amount: Variant in amounts:
-				if not OperationsModel._number(amount): valid = false
+				if not OperationsModel._number(amount):
+					valid = false
 			supply[kind] = OperationsModel._sum(amounts) if valid else NAN
 	_production_targets.set_snapshot(_production_policy_rows(), supply, _can_operate, ready)
 
+
 func _request_production_target(resource: int, target: float) -> void:
-	if resource < 0 or resource > 3: return
-	if not is_finite(target) or target < ProductionTargets.MIN_TARGET or target > ProductionTargets.MAX_TARGET: return
-	_dispatch_production_policy("set_production_policy", resource, [ContinuumResourceKind.create(resource), target])
+	if resource < 0 or resource > 3:
+		return
+	if (
+		not is_finite(target)
+		or target < ProductionTargets.MIN_TARGET
+		or target > ProductionTargets.MAX_TARGET
+	):
+		return
+	_dispatch_production_policy(
+		"set_production_policy", resource, [ContinuumResourceKind.create(resource), target]
+	)
+
 
 func _remove_production_target(resource: int) -> void:
-	if resource < 0 or resource > 3: return
-	_dispatch_production_policy("remove_production_policy", resource, [ContinuumResourceKind.create(resource)])
+	if resource < 0 or resource > 3:
+		return
+	_dispatch_production_policy(
+		"remove_production_policy", resource, [ContinuumResourceKind.create(resource)]
+	)
+
 
 ## Re-check access at dispatch, even for programmatically emitted control signals.
 func _dispatch_production_policy(reducer: String, resource: int, payload: Array) -> void:
-	if not _production_ready() or not _can_operate or resource < 0 or resource > 3: return
+	if not _production_ready() or not _can_operate or resource < 0 or resource > 3:
+		return
 	if _production_requests.has(resource):
 		_production_targets.request_failed(resource, "A request is still awaiting acknowledgement.")
 		return
 	var call: SpacetimeDBReducerCall = _call_production_reducer(reducer, payload)
 	if call == null:
-		_production_targets.request_failed(resource, "Request was not sent; inspect connection and bindings.")
+		_production_targets.request_failed(
+			resource, "Request was not sent; inspect connection and bindings."
+		)
 		return
 	if call.error != OK:
 		_production_targets.request_failed(resource, "Request could not be sent (%d)." % call.error)
@@ -2569,9 +3670,11 @@ func _dispatch_production_policy(reducer: String, resource: int, payload: Array)
 	var revision := _permission_revision
 	_production_requests[resource] = call
 	var response: ReducerResultMessage = await call.response
-	if not _client_epoch_current(client, generation) or _production_requests.get(resource) != call: return
+	if not _client_epoch_current(client, generation) or _production_requests.get(resource) != call:
+		return
 	_production_requests.erase(resource)
-	if revision != _permission_revision or not _production_ready() or not _can_operate: return
+	if revision != _permission_revision or not _production_ready() or not _can_operate:
+		return
 	if response.reducer_result.value == ReducerOutcomeEnum.Options.err:
 		var message := "Production policy rejected: %s" % response.reducer_result.get_err()
 		_production_targets.request_failed(resource, message)
@@ -2582,21 +3685,29 @@ func _dispatch_production_policy(reducer: String, resource: int, payload: Array)
 		_show_action_error(message)
 	_dirty = true
 
+
 func _call_production_reducer(reducer: String, payload: Array) -> SpacetimeDBReducerCall:
-	if production_intent_override.is_valid(): return production_intent_override.call(reducer, payload)
+	if production_intent_override.is_valid():
+		return production_intent_override.call(reducer, payload)
 	var reducers := SpacetimeDB.Continuum.reducers
 	var resource: ContinuumResourceKind = payload[0]
 	match reducer:
-		"set_production_policy": return reducers.set_production_policy(resource, payload[1])
-		"remove_production_policy": return reducers.remove_production_policy(resource)
+		"set_production_policy":
+			return reducers.set_production_policy(resource, payload[1])
+		"remove_production_policy":
+			return reducers.remove_production_policy(resource)
 	return SpacetimeDBReducerCall.fail(ERR_INVALID_PARAMETER)
+
 
 func _cancel_production_requests() -> void:
 	_production_requests.clear()
-	if is_instance_valid(_production_targets): _production_targets.cancel_pending()
+	if is_instance_valid(_production_targets):
+		_production_targets.cancel_pending()
+
 
 func _refresh_guidance() -> void:
-	if not is_instance_valid(_operations_panel): return
+	if not is_instance_valid(_operations_panel):
+		return
 	_refresh_production_targets()
 	var db := SpacetimeDB.Continuum.db
 	var config: ContinuumConfig = db.config.id.find(0) if db != null else null
@@ -2608,33 +3719,61 @@ func _refresh_guidance() -> void:
 	var orders: Array = db.work_order.iter()
 	var colonists: Array = db.colonist.iter()
 	var stacks: Array = db.item_stack.iter()
-	var resources := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
-	var context := {"physical_world": not db.world_geometry.iter().is_empty(),
-		"excavation_designations": db.excavation_designation.iter()}
-	var operations: Array = _operations_model.snapshot(tiles, orders, colonists, stacks, resources,
-		_production_policy_rows(), context)
-	_operations_panel.set_model(_guidance.snapshot(config.game_seconds, config.generation,
-		 tiles, orders, colonists, stacks, resources, operations), _can_operate)
+	var resources := {
+		"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat
+	}
+	var context := {
+		"physical_world": not db.world_geometry.iter().is_empty(),
+		"excavation_designations": db.excavation_designation.iter()
+	}
+	var operations: Array = _operations_model.snapshot(
+		tiles, orders, colonists, stacks, resources, _production_policy_rows(), context
+	)
+	_operations_panel.set_model(
+		_guidance.snapshot(
+			config.game_seconds,
+			config.generation,
+			tiles,
+			orders,
+			colonists,
+			stacks,
+			resources,
+			operations
+		),
+		_can_operate
+	)
 
 
 ## Resolve targets again at click time. Navigation never dispatches an intent,
 ## and permission/readiness changes cannot resurrect stale operator controls.
 func _navigate_guidance(panel: String, tile_id: int, colonist_id: int) -> void:
-	if not _state_ready or SpacetimeDB.Continuum.db == null: return
-	if panel not in ["inspector", "people", "operations", "policies", "trends"]: return
-	if not _can_operate and panel in ["operations", "policies"]: panel = "inspector"
+	if not _state_ready or SpacetimeDB.Continuum.db == null:
+		return
+	if panel not in ["inspector", "people", "operations", "policies", "trends"]:
+		return
+	if not _can_operate and panel in ["operations", "policies"]:
+		panel = "inspector"
 	_set_mode(&"select")
 	if tile_id >= 0:
 		var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(tile_id)
 		if tile != null:
-			if map.layered: map.set_cut(tile.z)
+			if map.layered:
+				map.set_cut(tile.z)
 			map.selected_tile_id = tile.id
 			_selected_rect = ColonyMap.tile_footprint(tile)
 			map.set_selected_rect(_selected_rect)
 			_on_tile_selected(tile.id)
-			map.pan_by(map.size * 0.5 - map.world_to_screen(Vector2(tile.x, tile.y) + Vector2(0.5, 0.5)))
-	if colonist_id >= 0: _goto_colonist(colonist_id)
-	if workspace.map_only or not workspace.state(panel).open or workspace.state(panel).minimized or (workspace.compact and workspace._compact_panel != panel):
+			map.pan_by(
+				map.size * 0.5 - map.world_to_screen(Vector2(tile.x, tile.y) + Vector2(0.5, 0.5))
+			)
+	if colonist_id >= 0:
+		_goto_colonist(colonist_id)
+	if (
+		workspace.map_only
+		or not workspace.state(panel).open
+		or workspace.state(panel).minimized
+		or (workspace.compact and workspace._compact_panel != panel)
+	):
 		workspace.toggle_panel(panel)
 	else:
 		workspace.focus_panel(panel)
@@ -2653,15 +3792,25 @@ func _refresh_status() -> void:
 	var second_of_day: float = fmod(config.game_seconds, 86400.0)
 	var hour: int = int(second_of_day / 3600.0)
 	var minute: int = int(fmod(second_of_day, 3600.0) / 60.0)
-	_clock.text = "Day %02d  %02d:%02d%s" % [day, hour, minute, " · stale" if not _state_ready else ""]
+	_clock.text = (
+		"Day %02d  %02d:%02d%s" % [day, hour, minute, " · stale" if not _state_ready else ""]
+	)
 	var warming := 0
 	var usable := 0
 	var budget := workspace.status_width()
 	var wide := budget >= 850
 	for kind: int in _resource_labels:
 		var resource := ContinuumResourceKind.parse_enum_name(kind)
-		var observed := _session_observations.resource(resource) if config.time_scale > 0.0 else {"rate_available": false}
-		var data := {"name": resource.capitalize(), "value": float(colony.get(resource)), "availability": "warming" if _state_ready and config.time_scale > 0.0 else "unavailable"}
+		var observed := (
+			_session_observations.resource(resource)
+			if config.time_scale > 0.0
+			else {"rate_available": false}
+		)
+		var data := {
+			"name": resource.capitalize(),
+			"value": float(colony.get(resource)),
+			"availability": "warming" if _state_ready and config.time_scale > 0.0 else "unavailable"
+		}
 		if observed.rate_available and _state_ready and config.time_scale > 0.0:
 			usable += 1
 			data.rate_per_game_hour = observed.rate
@@ -2669,39 +3818,80 @@ func _refresh_status() -> void:
 				data.eta_game_hours = maxf(0.0, float(colony.get(resource))) / -float(observed.rate)
 		else:
 			warming += 1
-		var base_config := {"compact": true, "show_rate": wide, "narrow": budget < 800, "stack_warning": budget < 350}
-		var effective: Dictionary = _status_effective_configs.get(kind, base_config) if data == _status_resource_inputs.get(kind) and base_config == _status_resource_configs.get(kind) else base_config
+		var base_config := {
+			"compact": true,
+			"show_rate": wide,
+			"narrow": budget < 800,
+			"stack_warning": budget < 350
+		}
+		var effective: Dictionary = (
+			_status_effective_configs.get(kind, base_config)
+			if (
+				data == _status_resource_inputs.get(kind)
+				and base_config == _status_resource_configs.get(kind)
+			)
+			else base_config
+		)
 		_resource_labels[kind].set_model(data, effective)
 		_status_effective_configs[kind] = effective
 		_resource_labels[kind].show()
 		_status_resource_inputs[kind] = data
 		_status_resource_configs[kind] = base_config
 		var entry: int = _session_menu.get_popup().get_item_index(10 + kind)
-		_session_menu.get_popup().set_item_text(entry, "%s · %.1f stored" % [resource.capitalize(), data.value])
-		_resource_labels[kind].tooltip_text = "%s stored: %s · %s\nMeasured per game hour since connection. Ground stacks and carried cargo are separate." % [resource.capitalize(), str(data.value), _resource_labels[kind].model.rate_copy]
-	_rates_status.text = "Rates warming" if usable == 0 and _state_ready and config.time_scale > 0 else ("Rates unavailable" if usable == 0 else ("Rates partial" if warming > 0 else ""))
-	_rates_status.tooltip_text = "Observed rates require a usable game hour since connection. %d of 4 rates available; paused clocks have no rate or ETA." % usable
+		_session_menu.get_popup().set_item_text(
+			entry, "%s · %.1f stored" % [resource.capitalize(), data.value]
+		)
+		_resource_labels[kind].tooltip_text = (
+			"%s stored: %s · %s\nMeasured per game hour since connection. Ground stacks and carried cargo are separate."
+			% [resource.capitalize(), str(data.value), _resource_labels[kind].model.rate_copy]
+		)
+	_rates_status.text = (
+		"Rates warming"
+		if usable == 0 and _state_ready and config.time_scale > 0
+		else ("Rates unavailable" if usable == 0 else ("Rates partial" if warming > 0 else ""))
+	)
+	_rates_status.tooltip_text = (
+		"Observed rates require a usable game hour since connection. %d of 4 rates available; paused clocks have no rate or ETA."
+		% usable
+	)
 	_rates_status.hide()
 	_clock.tooltip_text = _rates_status.tooltip_text
 	_population.show()
 	_identity_label.show()
 	_population.text = "Crew %02d" % colony.population
 	workspace.set_panel_live_count("people", colony.population)
-	_status_label.text = "Average mood %.0f%%\nAverage output %.0f%%\nGround stocks and cargo tracked separately." % [clampf(colony.avg_mood, 0, 100), clampf(colony.avg_productivity, 0, 100)]
+	_status_label.text = (
+		"Average mood %.0f%%\nAverage output %.0f%%\nGround stocks and cargo tracked separately."
+		% [clampf(colony.avg_mood, 0, 100), clampf(colony.avg_productivity, 0, 100)]
+	)
 	_render_connection_role()
 	_queue_status_balance()
 
+
 func _queue_status_balance() -> void:
-	if _status_balance_pending or not is_instance_valid(_resource_group): return
+	if _status_balance_pending or not is_instance_valid(_resource_group):
+		return
 	_status_balance_pending = true
 	get_tree().process_frame.connect(_balance_status, CONNECT_ONE_SHOT)
 
+
 func _balance_status() -> void:
 	_status_balance_pending = false
-	if not is_inside_tree() or not is_instance_valid(_resource_group): return
+	if not is_inside_tree() or not is_instance_valid(_resource_group):
+		return
 	var budget := workspace.status_width()
-	var signature := JSON.stringify([_status_resource_inputs, _status_resource_configs, budget, _connection_label.text, _identity_label.text, _clock.get_combined_minimum_size().x])
-	if signature == _status_balance_signature: return
+	var signature := JSON.stringify(
+		[
+			_status_resource_inputs,
+			_status_resource_configs,
+			budget,
+			_connection_label.text,
+			_identity_label.text,
+			_clock.get_combined_minimum_size().x
+		]
+	)
+	if signature == _status_balance_signature:
+		return
 	_status_balance_signature = signature
 	_clock.show()
 	_population.show()
@@ -2710,10 +3900,15 @@ func _balance_status() -> void:
 	var spacing := float(workspace.telemetry.get_theme_constant("separation"))
 	_resource_group.add_theme_constant_override("h_separation", 4 if budget < 550 else 8)
 	var stocks_width := float(_resource_group.get_theme_constant("h_separation")) * 3
-	for card: ResourceReadout in _resource_labels.values(): stocks_width += card.get_combined_minimum_size().x
-	var metadata := _clock_group.get_combined_minimum_size().x + _session_group.get_combined_minimum_size().x
+	for card: ResourceReadout in _resource_labels.values():
+		stocks_width += card.get_combined_minimum_size().x
+	var metadata := (
+		_clock_group.get_combined_minimum_size().x + _session_group.get_combined_minimum_size().x
+	)
 	var split_metadata := metadata + spacing > budget
-	var session_parent: Container = workspace.status_content if split_metadata else workspace.telemetry
+	var session_parent: Container = (
+		workspace.status_content if split_metadata else workspace.telemetry
+	)
 	if _session_group.get_parent() != session_parent:
 		_session_group.reparent(session_parent)
 	if split_metadata:
@@ -2730,7 +3925,9 @@ func _balance_status() -> void:
 		if _resource_group.get_parent() != workspace.status_content:
 			_resource_group.reparent(workspace.status_content)
 		_resource_group.columns = 4
-		while _resource_group.columns > 1 and _resource_group.get_combined_minimum_size().x > budget:
+		while (
+			_resource_group.columns > 1 and _resource_group.get_combined_minimum_size().x > budget
+		):
 			_resource_group.columns = maxi(1, _resource_group.columns / 2)
 	else:
 		if _resource_group.get_parent() != workspace.telemetry:
@@ -2746,10 +3943,17 @@ func _sample_history() -> void:
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	if config == null or colony == null:
 		return
-	if _history.sample(config.game_seconds, {
-		"mood": colony.smoothed_mood,
-		"productivity": colony.smoothed_productivity,
-	}, config.generation):
+	if (
+		_history
+		. sample(
+			config.game_seconds,
+			{
+				"mood": colony.smoothed_mood,
+				"productivity": colony.smoothed_productivity,
+			},
+			config.generation
+		)
+	):
 		_history_chart.set_points(_history.points())
 
 
@@ -2771,13 +3975,21 @@ func _build_vertical_controls(side: Control) -> void:
 	_cell_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_cell_label.text = "Select a visible surface"
 	side.add_child(_cell_label)
-	_dimension_inputs["excavation"] = _dimension_control(side, "Excavation height (0.5m layers)", 6, 1, 256,
-		func(value: float) -> void: map.excavation_height = int(value))
+	_dimension_inputs["excavation"] = _dimension_control(
+		side,
+		"Excavation height (0.5m layers)",
+		6,
+		1,
+		256,
+		func(value: float) -> void: map.excavation_height = int(value)
+	)
 	_excavation_list = VBoxContainer.new()
 	side.add_child(_excavation_list)
 
 
-func _dimension_control(side: Control, caption: String, value: int, minimum: int, maximum: int, changed: Callable) -> SpinBox:
+func _dimension_control(
+	side: Control, caption: String, value: int, minimum: int, maximum: int, changed: Callable
+) -> SpinBox:
 	var row := VBoxContainer.new()
 	var label := Label.new()
 	label.text = caption
@@ -2797,9 +4009,24 @@ func _dimension_control(side: Control, caption: String, value: int, minimum: int
 
 func _refresh_excavations() -> void:
 	var rows := ColonyMap.table_rows(SpacetimeDB.Continuum.db, "excavation_designation")
-	var signature: Array = [map.layered, map.terrain_model.revision, _can_operate, _state_ready, _intent_request != null]
+	var signature: Array = [
+		map.layered, map.terrain_model.revision, _can_operate, _state_ready, _intent_request != null
+	]
 	for row in rows:
-		signature.append([row.id, row.x_0, row.y_0, row.x_1, row.y_1, row.bottom_z, row.height, row.enabled, row.completed_cells, row.total_cells])
+		signature.append(
+			[
+				row.id,
+				row.x_0,
+				row.y_0,
+				row.x_1,
+				row.y_1,
+				row.bottom_z,
+				row.height,
+				row.enabled,
+				row.completed_cells,
+				row.total_cells
+			]
+		)
 	if signature == _excavation_signature:
 		return
 	_excavation_signature = signature
@@ -2814,24 +4041,44 @@ func _refresh_excavations() -> void:
 		for y in range(area.position.y, area.end.y):
 			for x in range(area.position.x, area.end.x):
 				var surface: Variant = map.terrain_model.surface_at(Vector2i(x, y))
-				if surface != null and surface.z >= designation.bottom_z and surface.z < designation.bottom_z + designation.height:
+				if (
+					surface != null
+					and surface.z >= designation.bottom_z
+					and surface.z < designation.bottom_z + designation.height
+				):
 					exposed = true
 		if not exposed:
 			continue
 		var row := HFlowContainer.new()
 		var label := Label.new()
-		label.text = "Dig #%d z=%d h=%d: %d/%d" % [designation.id, designation.bottom_z,
-			designation.height, designation.completed_cells, designation.total_cells]
+		label.text = (
+			"Dig #%d z=%d h=%d: %d/%d"
+			% [
+				designation.id,
+				designation.bottom_z,
+				designation.height,
+				designation.completed_cells,
+				designation.total_cells
+			]
+		)
 		row.add_child(label)
 		var toggle := Button.new()
 		toggle.text = "Pause" if designation.enabled else "Resume"
 		toggle.disabled = not _can_operate or not _state_ready or _intent_request != null
-		toggle.pressed.connect(_dispatch_vertical.bind("set_excavation_enabled", [designation.id, not designation.enabled], "Toggle excavation"))
+		toggle.pressed.connect(
+			_dispatch_vertical.bind(
+				"set_excavation_enabled",
+				[designation.id, not designation.enabled],
+				"Toggle excavation"
+			)
+		)
 		row.add_child(toggle)
 		var cancel := Button.new()
 		cancel.text = "Cancel"
 		cancel.disabled = toggle.disabled
-		cancel.pressed.connect(_dispatch_vertical.bind("cancel_excavation", [designation.id], "Cancel excavation"))
+		cancel.pressed.connect(
+			_dispatch_vertical.bind("cancel_excavation", [designation.id], "Cancel excavation")
+		)
 		row.add_child(cancel)
 		_excavation_list.add_child(row)
 
@@ -2841,7 +4088,11 @@ func _selection_z() -> Variant:
 		_selected_rect = Rect2i()
 		_selected_surface = {}
 		map.clear_selection()
-		_set_feedback(_intent_feedback, "Selection changed", "The selected surface changed; select the exposed floor again.")
+		_set_feedback(
+			_intent_feedback,
+			"Selection changed",
+			"The selected surface changed; select the exposed floor again."
+		)
 		return null
 	return _selected_surface.get("base")
 
@@ -2854,32 +4105,81 @@ func _set_block_enabled(enabled: bool) -> void:
 	if map.layered:
 		var z: Variant = _selection_z()
 		if z == null:
-			_set_feedback(_intent_feedback, "Mixed elevations", "Block controls require one exposed floor elevation.")
+			_set_feedback(
+				_intent_feedback,
+				"Mixed elevations",
+				"Block controls require one exposed floor elevation."
+			)
 			return
-		_dispatch_vertical("set_tile_block_enabled_at", [_selected_rect.position.x, _selected_rect.position.y,
-			_selected_rect.end.x - 1, _selected_rect.end.y - 1, int(z), enabled], "Set visible block enabled")
+		_dispatch_vertical(
+			"set_tile_block_enabled_at",
+			[
+				_selected_rect.position.x,
+				_selected_rect.position.y,
+				_selected_rect.end.x - 1,
+				_selected_rect.end.y - 1,
+				int(z),
+				enabled
+			],
+			"Set visible block enabled"
+		)
 		return
-	_track_intent(SpacetimeDB.Continuum.reducers.set_tile_block_enabled(
-		_selected_rect.position.x, _selected_rect.position.y, _selected_rect.end.x - 1,
-		_selected_rect.end.y - 1, enabled), "Set block %s" % ("enabled" if enabled else "disabled"))
+	_track_intent(
+		SpacetimeDB.Continuum.reducers.set_tile_block_enabled(
+			_selected_rect.position.x,
+			_selected_rect.position.y,
+			_selected_rect.end.x - 1,
+			_selected_rect.end.y - 1,
+			enabled
+		),
+		"Set block %s" % ("enabled" if enabled else "disabled")
+	)
 
 
 func _set_block_work(work: int, priority: int, enabled: bool) -> void:
-	if not _can_operate or _selected_rect.size == Vector2i.ZERO or not _state_ready or _intent_request != null:
+	if (
+		not _can_operate
+		or _selected_rect.size == Vector2i.ZERO
+		or not _state_ready
+		or _intent_request != null
+	):
 		return
 	if map.layered:
 		var z: Variant = _selection_z()
 		if z == null:
-			_set_feedback(_intent_feedback, "Mixed elevations", "Work controls require one exposed floor elevation.")
+			_set_feedback(
+				_intent_feedback,
+				"Mixed elevations",
+				"Work controls require one exposed floor elevation."
+			)
 			return
-		_dispatch_vertical("set_block_work_order_at", [_selected_rect.position.x, _selected_rect.position.y,
-			_selected_rect.end.x - 1, _selected_rect.end.y - 1, int(z), ContinuumWorkType.create(work), priority, enabled],
-			"Set visible block work")
+		_dispatch_vertical(
+			"set_block_work_order_at",
+			[
+				_selected_rect.position.x,
+				_selected_rect.position.y,
+				_selected_rect.end.x - 1,
+				_selected_rect.end.y - 1,
+				int(z),
+				ContinuumWorkType.create(work),
+				priority,
+				enabled
+			],
+			"Set visible block work"
+		)
 		return
-	_track_intent(SpacetimeDB.Continuum.reducers.set_block_work_order(
-		_selected_rect.position.x, _selected_rect.position.y, _selected_rect.end.x - 1,
-		_selected_rect.end.y - 1, ContinuumWorkType.create(work), priority, enabled),
-		"Set %s work for block" % ContinuumWorkType.parse_enum_name(work).capitalize())
+	_track_intent(
+		SpacetimeDB.Continuum.reducers.set_block_work_order(
+			_selected_rect.position.x,
+			_selected_rect.position.y,
+			_selected_rect.end.x - 1,
+			_selected_rect.end.y - 1,
+			ContinuumWorkType.create(work),
+			priority,
+			enabled
+		),
+		"Set %s work for block" % ContinuumWorkType.parse_enum_name(work).capitalize()
+	)
 
 
 func _map_soil_name(fertility: float, moisture: float) -> String:
@@ -2900,8 +4200,9 @@ func _map_cover_name(density: float) -> String:
 
 func _refresh_colonists() -> void:
 	var colonists: Array[ContinuumColonist] = SpacetimeDB.Continuum.db.colonist.iter()
-	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
-		return a.id < b.id)
+	colonists.sort_custom(
+		func(a: ContinuumColonist, b: ContinuumColonist) -> bool: return a.id < b.id
+	)
 	for id in _colonist_cards.keys():
 		if SpacetimeDB.Continuum.db.colonist.id.find(id) == null:
 			var removed: PanelContainer = _colonist_cards[id]
@@ -2920,7 +4221,10 @@ func _refresh_colonists() -> void:
 		_colonist_empty.queue_free()
 		_colonist_empty = null
 
-	if _selected_colonist >= 0 and SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist) == null:
+	if (
+		_selected_colonist >= 0
+		and SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist) == null
+	):
 		_selected_colonist = -1
 	var index := 0
 	for colonist: ContinuumColonist in colonists:
@@ -2932,13 +4236,19 @@ func _refresh_colonists() -> void:
 		var card: RosterRow = _colonist_cards[colonist.id]
 		_colonist_box.move_child(card, index)
 		index += 1
-		var data := UiData.colonist(colonist, _session_observations, colonist.id == _selected_colonist)
+		var data := UiData.colonist(
+			colonist, _session_observations, colonist.id == _selected_colonist
+		)
 		if card.get_meta("live_input", {}) != data:
 			card.set_meta("live_input", data.duplicate(true))
 			card.set_model(data)
 	_selected_card.visible = _selected_colonist >= 0
 	if _selected_card.visible:
-		var data := UiData.colonist(SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist), _session_observations, true)
+		var data := UiData.colonist(
+			SpacetimeDB.Continuum.db.colonist.id.find(_selected_colonist),
+			_session_observations,
+			true
+		)
 		if _selected_card.get_meta("live_input", {}) != data:
 			_selected_card.set_meta("live_input", data.duplicate(true))
 			_selected_card.set_model(data)
@@ -2946,7 +4256,12 @@ func _refresh_colonists() -> void:
 
 
 func _select_colonist(id: Variant) -> void:
-	if not id is int or SpacetimeDB.Continuum.db == null or not _state_ready or SpacetimeDB.Continuum.db.colonist.id.find(id) == null:
+	if (
+		not id is int
+		or SpacetimeDB.Continuum.db == null
+		or not _state_ready
+		or SpacetimeDB.Continuum.db.colonist.id.find(id) == null
+	):
 		return
 	_selected_colonist = id
 	_refresh_colonists()
@@ -2970,18 +4285,26 @@ func _refresh_controls() -> void:
 		map.bind_world_source(null)
 		_state_ready = false
 		_refresh_planning()
-		for button: Button in _mode_buttons.values(): button.disabled = true
-		for number: SpinBox in _dimension_inputs.values(): number.editable = false
+		for button: Button in _mode_buttons.values():
+			button.disabled = true
+		for number: SpinBox in _dimension_inputs.values():
+			number.editable = false
 		_sync_map_toolbar()
 		return
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	var busy := not _state_ready or _intent_request != null
 	_refresh_planning()
-	_layer_label.text = "Cut z=%d / %.1fm (inclusive)" % [map.terrain_model.cut, map.terrain_model.cut * 0.5]
+	_layer_label.text = (
+		"Cut z=%d / %.1fm (inclusive)" % [map.terrain_model.cut, map.terrain_model.cut * 0.5]
+	)
 	_sync_map_toolbar()
 	if map.layered:
-		_dimension_inputs["excavation"].max_value = map.terrain_model.max_z - map.terrain_model.min_z + 1
-		_construction_panel.clearance.max_value = maxi(4, map.terrain_model.max_z - map.terrain_model.min_z + 1)
+		_dimension_inputs["excavation"].max_value = (
+			map.terrain_model.max_z - map.terrain_model.min_z + 1
+		)
+		_construction_panel.clearance.max_value = maxi(
+			4, map.terrain_model.max_z - map.terrain_model.min_z + 1
+		)
 	for number: SpinBox in _dimension_inputs.values():
 		number.editable = _can_operate and not busy
 	for mode: StringName in _mode_buttons:
@@ -3007,8 +4330,10 @@ func _refresh_controls() -> void:
 					compatible_counts[work] = int(compatible_counts.get(work, 0)) + 1
 	var rect_text := "No rectangle selected."
 	if _selected_rect.size != Vector2i.ZERO:
-		rect_text = "%dx%d block: %d cells, %d occupied, %d enabled" % [
-			_selected_rect.size.x, _selected_rect.size.y, block_tiles, occupied, enabled_count]
+		rect_text = (
+			"%dx%d block: %d cells, %d occupied, %d enabled"
+			% [_selected_rect.size.x, _selected_rect.size.y, block_tiles, occupied, enabled_count]
+		)
 		rect_text += "\nControls skip empty cells; work controls skip incompatible zones."
 		var terrain_count := 0
 		var fertility := 0.0
@@ -3025,18 +4350,36 @@ func _refresh_controls() -> void:
 			fertility /= terrain_count
 			moisture /= terrain_count
 			cover /= terrain_count
-			rect_text += "\nSoil avg: %s (fertility %.2f, moisture %.2f) | Cover avg: %s (density %.2f)" % [
-				_map_soil_name(fertility, moisture), fertility, moisture, _map_cover_name(cover), cover]
+			rect_text += (
+				"\nSoil avg: %s (fertility %.2f, moisture %.2f) | Cover avg: %s (density %.2f)"
+				% [
+					_map_soil_name(fertility, moisture),
+					fertility,
+					moisture,
+					_map_cover_name(cover),
+					cover
+				]
+			)
 	_block_info.text = rect_text.get_slice("\n", 0)
 	_block_info.tooltip_text = rect_text
 	var block_busy := busy or not _can_operate or _selected_rect.size == Vector2i.ZERO
-	if map.layered and (not map.terrain_model.selection_valid(_selected_surface) or _selected_surface.get("base") == null):
+	if (
+		map.layered
+		and (
+			not map.terrain_model.selection_valid(_selected_surface)
+			or _selected_surface.get("base") == null
+		)
+	):
 		block_busy = true
 	for key: String in ["enabled_true", "enabled_false"]:
 		_block_controls[key].disabled = block_busy or occupied == 0
 		_block_controls[key].tooltip_text = "No facilities in selection" if occupied == 0 else ""
-	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging,
-			ContinuumWorkType.Options.mining, ContinuumWorkType.Options.hunting]:
+	for work: int in [
+		ContinuumWorkType.Options.farming,
+		ContinuumWorkType.Options.logging,
+		ContinuumWorkType.Options.mining,
+		ContinuumWorkType.Options.hunting
+	]:
 		var controls: Dictionary = _block_controls[work]
 		var count: int = compatible_counts.get(work, 0)
 		controls.label.text = ContinuumWorkType.parse_enum_name(work).capitalize()
@@ -3047,13 +4390,18 @@ func _refresh_controls() -> void:
 			priority_button.disabled = block_busy or count == 0
 		controls.row.tooltip_text = "Only compatible facility tiles are changed; unrelated jobs remain untouched."
 
-	_haul_button.disabled = not _can_operate or not _state_ready or config == null or _haul_request != null
+	_haul_button.disabled = (
+		not _can_operate or not _state_ready or config == null or _haul_request != null
+	)
 	if config != null:
 		var dedicated := config.haul_policy.value == ContinuumHaulPolicy.Options.dedicatedHaulers
 		_haul_button.text = "Paired" if dedicated else "Everyone"
 		_haul_description.text = "Producer + hauler" if dedicated else "Produce + haul"
-		_haul_description.tooltip_text = ("Each job's pair splits into one producer and one hauler. Haulers carry only their job's resource."
-			if dedicated else "All workers produce their job's resource and haul full stacks to storage.")
+		_haul_description.tooltip_text = (
+			"Each job's pair splits into one producer and one hauler. Haulers carry only their job's resource."
+			if dedicated
+			else "All workers produce their job's resource and haul full stacks to storage."
+		)
 		if not _state_ready:
 			_haul_description.text += " | stale"
 	else:
@@ -3067,9 +4415,14 @@ func _refresh_controls() -> void:
 		button.set_pressed_no_signal(config != null and config.meal_policy.value == policy)
 	if config != null:
 		var rationed := config.meal_policy.value == ContinuumMealPolicy.Options.rationed
-		_meal_description.text = "Cost 50% | recovery 65%" if rationed else "Normal cost | normal recovery"
-		_meal_description.tooltip_text = ("Rationed: 50% food cost per eating time, 65% hunger recovery; higher hunger can lower mood and productivity." if rationed
-				else "Normal: existing food cost and hunger recovery. No direct mood penalty either way.")
+		_meal_description.text = (
+			"Cost 50% | recovery 65%" if rationed else "Normal cost | normal recovery"
+		)
+		_meal_description.tooltip_text = (
+			"Rationed: 50% food cost per eating time, 65% hunger recovery; higher hunger can lower mood and productivity."
+			if rationed
+			else "Normal: existing food cost and hunger recovery. No direct mood penalty either way."
+		)
 		if not _state_ready:
 			_meal_description.text += " | stale"
 	else:
@@ -3088,18 +4441,28 @@ func _refresh_controls() -> void:
 		_recreation_button.disabled = true
 	else:
 		_recreation_button.disabled = not _can_operate or not _state_ready
-		_recreation_button.text = ("Disable recreation zone" if any_enabled
-				else "Enable recreation zone")
+		_recreation_button.text = (
+			"Disable recreation zone" if any_enabled else "Enable recreation zone"
+		)
 
-	_speed_label.text = "Config: waiting" if config == null else (
-		"Paused" if config.time_scale == 0.0 else "%.2fx" % (config.time_scale / BASE_TIME_SCALE))
+	_speed_label.text = (
+		"Config: waiting"
+		if config == null
+		else (
+			"Paused"
+			if config.time_scale == 0.0
+			else "%.2fx" % (config.time_scale / BASE_TIME_SCALE)
+		)
+	)
 	_speed_label.tooltip_text = "Server simulation speed. 1x equals four real hours per in-game day."
 	if not _state_ready and config != null:
 		_speed_label.text += " | stale"
 	for speed: int in _speed_buttons:
 		var speed_button: Button = _speed_buttons[speed]
 		speed_button.disabled = not _is_admin or not _state_ready or busy or config == null
-		speed_button.set_pressed_no_signal(config != null and is_equal_approx(config.time_scale, float(speed)))
+		speed_button.set_pressed_no_signal(
+			config != null and is_equal_approx(config.time_scale, float(speed))
+		)
 	var tile: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(_selected_tile_id)
 	if tile != null and not map.row_visible(tile):
 		tile = null
@@ -3111,31 +4474,55 @@ func _refresh_controls() -> void:
 		if order.enabled:
 			active_counts[order.work.value] = int(active_counts.get(order.work.value, 0)) + 1
 	var counts := PackedStringArray()
-	for work: int in [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.mining,
-			ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]:
+	for work: int in [
+		ContinuumWorkType.Options.farming,
+		ContinuumWorkType.Options.mining,
+		ContinuumWorkType.Options.logging,
+		ContinuumWorkType.Options.hunting
+	]:
 		var work_name := ContinuumWorkType.parse_enum_name(work).capitalize()
 		counts.append("%s %d" % [work_name, active_counts.get(work, 0)])
-	_order_summary.text = "Orders: %s%s" % [", ".join(counts), " | stale" if not _state_ready else ""]
+	_order_summary.text = (
+		"Orders: %s%s" % [", ".join(counts), " | stale" if not _state_ready else ""]
+	)
 	_order_summary.tooltip_text = "Enabled standing orders by work type. Values come from subscribed server rows."
 	if tile == null:
 		var surface_details := _selected_terrain_details()
-		_tile_info.text = surface_details if not surface_details.is_empty() else "Click a tile on the map to select it."
+		_tile_info.text = (
+			surface_details
+			if not surface_details.is_empty()
+			else "Click a tile on the map to select it."
+		)
 		_tile_info.tooltip_text = _tile_info.text
 		return
 
-	var tile_details := "Selected: %s tile #%d at (%d, %d) - %s" % [
-		ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.id, tile.x, tile.y,
-		"enabled" if tile.enabled else "disabled",
-	]
+	var tile_details := (
+		"Selected: %s tile #%d at (%d, %d) - %s"
+		% [
+			ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(),
+			tile.id,
+			tile.x,
+			tile.y,
+			"enabled" if tile.enabled else "disabled",
+		]
+	)
 	if map.layered:
-		tile_details += " | z=%d footprint %dx%d clearance %d" % [LayeredTerrainModel.field(tile, "z", 0),
-			LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1),
-			LayeredTerrainModel.field(tile, "clearance_height", 6)]
+		tile_details += (
+			" | z=%d footprint %dx%d clearance %d"
+			% [
+				LayeredTerrainModel.field(tile, "z", 0),
+				LayeredTerrainModel.field(tile, "width", 1),
+				LayeredTerrainModel.field(tile, "depth", 1),
+				LayeredTerrainModel.field(tile, "clearance_height", 6)
+			]
+		)
 		tile_details += "\n" + _selected_terrain_details(false)
 	for stack: ContinuumItemStack in SpacetimeDB.Continuum.db.item_stack.iter():
 		if map.row_visible(stack) and stack.x == tile.x and stack.y == tile.y:
-			tile_details += "\nGround: %.1f %s" % [stack.amount,
-				ContinuumResourceKind.parse_enum_name(stack.kind.value)]
+			tile_details += (
+				"\nGround: %.1f %s"
+				% [stack.amount, ContinuumResourceKind.parse_enum_name(stack.kind.value)]
+			)
 	if tile.kind.value == ContinuumTileKind.Options.storage:
 		tile_details += "\nStorage: shared unlimited stock"
 	if not compatible.is_empty() and not tile.enabled:
@@ -3144,9 +4531,16 @@ func _refresh_controls() -> void:
 		tile_details += "\nState: stale"
 	var terrain: ContinuumTerrain = SpacetimeDB.Continuum.db.terrain.tile_id.find(tile.id)
 	if terrain != null:
-		tile_details += "\n\nSoil: %s\nFertility: %.0f%%\nMoisture: %.0f%%\nCover: %s (%.0f%%)" % [
-			_map_soil_name(terrain.soil_fertility, terrain.moisture), terrain.soil_fertility * 100.0,
-			terrain.moisture * 100.0, _map_cover_name(terrain.forest_density), terrain.forest_density * 100.0]
+		tile_details += (
+			"\n\nSoil: %s\nFertility: %.0f%%\nMoisture: %.0f%%\nCover: %s (%.0f%%)"
+			% [
+				_map_soil_name(terrain.soil_fertility, terrain.moisture),
+				terrain.soil_fertility * 100.0,
+				terrain.moisture * 100.0,
+				_map_cover_name(terrain.forest_density),
+				terrain.forest_density * 100.0
+			]
+		)
 	_tile_info.text = tile_details
 	_tile_info.tooltip_text = tile_details
 
@@ -3159,14 +4553,31 @@ func _selected_terrain_details(include_identity := true) -> String:
 		return ""
 	var surface: Variant = map.terrain_model.surface_at(xy)
 	if surface == null:
-		return "No known surface at (%d, %d), cut z=%d\nTerrain unavailable or unsupported; no floor or tile inferred." % [xy.x, xy.y, map.terrain_model.cut]
+		return (
+			"No known surface at (%d, %d), cut z=%d\nTerrain unavailable or unsupported; no floor or tile inferred."
+			% [xy.x, xy.y, map.terrain_model.cut]
+		)
 	var material_id := map.terrain_model.material_at(surface)
 	var material: Variant = map.terrain_model.materials.get(material_id)
-	var details := "%s material #%d at (%d, %d, %d)\nElevation z=%d (%.1fm); base z=%d; depth %d" % [
-		LayeredTerrainModel.field(material, "name", "Unknown"), material_id, surface.x, surface.y, surface.z,
-		surface.z, surface.z * LayeredTerrainModel.METRES_PER_LAYER, map.terrain_model.base_at(xy), map.terrain_model.depth_at(xy)]
+	var details := (
+		"%s material #%d at (%d, %d, %d)\nElevation z=%d (%.1fm); base z=%d; depth %d"
+		% [
+			LayeredTerrainModel.field(material, "name", "Unknown"),
+			material_id,
+			surface.x,
+			surface.y,
+			surface.z,
+			surface.z,
+			surface.z * LayeredTerrainModel.METRES_PER_LAYER,
+			map.terrain_model.base_at(xy),
+			map.terrain_model.depth_at(xy)
+		]
+	)
 	if include_identity:
-		details = "Selected terrain at (%d, %d)\nNo replicated facility/tile row.\n" % [xy.x, xy.y] + details
+		details = (
+			"Selected terrain at (%d, %d)\nNo replicated facility/tile row.\n" % [xy.x, xy.y]
+			+ details
+		)
 		details += "\nEcology: no replicated tile-linked data available."
 	if not _state_ready:
 		details += "\nState: stale"
@@ -3194,8 +4605,7 @@ func _refresh_alerts() -> void:
 
 func _refresh_feed() -> void:
 	var events: Array[ContinuumEventLog] = SpacetimeDB.Continuum.db.event_log.iter()
-	events.sort_custom(func(a: ContinuumEventLog, b: ContinuumEventLog) -> bool:
-		return a.id < b.id)
+	events.sort_custom(func(a: ContinuumEventLog, b: ContinuumEventLog) -> bool: return a.id < b.id)
 	if events.size() > MAX_FEED_LINES:
 		events = events.slice(events.size() - MAX_FEED_LINES)
 
@@ -3213,11 +4623,18 @@ func _authoritative_snapshot() -> Dictionary:
 	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
 	if config == null or colony == null:
 		return {}
-	var resources := {"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat}
+	var resources := {
+		"food": colony.food, "wood": colony.wood, "stone": colony.stone, "meat": colony.meat
+	}
 	var watermark := 0
 	for event: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
 		watermark = maxi(watermark, event.id)
-	return {"resources": resources, "generation": config.generation, "game_seconds": config.game_seconds, "event_watermark": watermark}
+	return {
+		"resources": resources,
+		"generation": config.generation,
+		"game_seconds": config.game_seconds,
+		"event_watermark": watermark
+	}
 
 
 func _observe_session_state() -> void:
@@ -3231,13 +4648,17 @@ func _observe_session_state() -> void:
 			var field: String = descriptor[1]
 			raw[field] = row.get(field)
 		needs[row.id] = SessionObservations.satisfaction(raw)
-	if _session_observations.observe(snapshot.game_seconds, snapshot.generation, snapshot.resources, needs):
+	if _session_observations.observe(
+		snapshot.game_seconds, snapshot.generation, snapshot.resources, needs
+	):
 		_ui_tables_changed["colonist"] = true
 	if not _return_observed:
 		var events: Array = []
 		for row: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
 			events.append(UiData.event(row))
-		_return_digest = _return_snapshots.digest(_return_key, snapshot, _live_alert_models(), events)
+		_return_digest = _return_snapshots.digest(
+			_return_key, snapshot, _live_alert_models(), events
+		)
 		_return_digest["current_resources"] = snapshot.resources.duplicate()
 		_return_digest["captured_game_seconds"] = snapshot.game_seconds
 		_return_observed = true
@@ -3246,8 +4667,21 @@ func _observe_session_state() -> void:
 		if _return_digest.baseline_available:
 			_show_away_digest()
 	else:
-		if not _return_snapshot.is_empty() and (snapshot.generation != _return_snapshot.generation or snapshot.game_seconds < _return_snapshot.game_seconds or snapshot.event_watermark < _return_snapshot.event_watermark):
-			_return_digest = {"baseline_available": false, "state": "reset", "message": "Colony reset or clock moved backward · previous local baseline discarded.", "coverage_note": "Earlier events may be missing · up to 200 retained events"}
+		if (
+			not _return_snapshot.is_empty()
+			and (
+				snapshot.generation != _return_snapshot.generation
+				or snapshot.game_seconds < _return_snapshot.game_seconds
+				or snapshot.event_watermark < _return_snapshot.event_watermark
+			)
+		):
+			_return_digest = {
+				"baseline_available": false,
+				"state": "reset",
+				"message":
+				"Colony reset or clock moved backward · previous local baseline discarded.",
+				"coverage_note": "Earlier events may be missing · up to 200 retained events"
+			}
 			_return_snapshots.forget(_return_key)
 		_return_snapshot = snapshot
 	_sync_open_digest()
@@ -3296,7 +4730,9 @@ func _live_alert_models() -> Array:
 	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
 	for alert: ContinuumAlert in SpacetimeDB.Continuum.db.alert.iter():
 		if alert.active:
-			rows.append(UiData.alert(alert, config.game_seconds if config != null else null, _can_operate))
+			rows.append(
+				UiData.alert(alert, config.game_seconds if config != null else null, _can_operate)
+			)
 	return rows
 
 
@@ -3340,15 +4776,19 @@ func _create_away_digest() -> void:
 	_digest.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_digest)
 	_digest.dismiss_requested.connect(_hide_away_digest)
-	_digest.review_requested.connect(func(_ids: Array) -> void:
-		_hide_away_digest()
-		if not workspace.state("alerts").open:
-			workspace.toggle_panel("alerts")
-		workspace.focus_panel("alerts"))
-	_digest_overlay.gui_input.connect(func(event: InputEvent) -> void:
-		if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+	_digest.review_requested.connect(
+		func(_ids: Array) -> void:
 			_hide_away_digest()
-			_digest_overlay.accept_event())
+			if not workspace.state("alerts").open:
+				workspace.toggle_panel("alerts")
+			workspace.focus_panel("alerts")
+	)
+	_digest_overlay.gui_input.connect(
+		func(event: InputEvent) -> void:
+			if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+				_hide_away_digest()
+				_digest_overlay.accept_event()
+	)
 	_digest_overlay.resized.connect(_layout_away_digest)
 
 
@@ -3368,12 +4808,18 @@ func _show_away_digest() -> void:
 	_digest_overlay.grab_focus()
 	_sync_menu_input()
 
+
 func _sync_open_digest() -> void:
 	if is_instance_valid(_digest_overlay) and _digest_overlay.visible:
 		_digest.set_model(_away_digest_data())
 
+
 func _away_digest_data() -> Dictionary:
-	var data := {"span": "Waiting for authoritative colony state.", "coverage": "Locally observed last-session baseline. Earlier events may be missing · up to 200 retained events."}
+	var data := {
+		"span": "Waiting for authoritative colony state.",
+		"coverage":
+		"Locally observed last-session baseline. Earlier events may be missing · up to 200 retained events."
+	}
 	if _return_observed:
 		if _state_ready and SpacetimeDB.Continuum.db != null:
 			data.needs_you = _live_alert_models()
@@ -3382,16 +4828,41 @@ func _away_digest_data() -> Dictionary:
 				alert.erase("time_label")
 		else:
 			data.group_coverage = {"needs_you": {"status": "unavailable"}}
-		data.span = UiData.duration(_return_digest.away_game_seconds) + " since your local last session" if _return_digest.get("baseline_available", false) else _return_digest.get("message", "No local last-session baseline.")
-		data.coverage = "Locally observed last-session baseline. " + _return_digest.get("coverage_note", "Earlier events may be missing · up to 200 retained events") + "\nPlayer attribution and handled summaries are unavailable. Same-generation database replacements cannot always be detected."
+		data.span = (
+			UiData.duration(_return_digest.away_game_seconds) + " since your local last session"
+			if _return_digest.get("baseline_available", false)
+			else _return_digest.get("message", "No local last-session baseline.")
+		)
+		data.coverage = (
+			"Locally observed last-session baseline. "
+			+ _return_digest.get(
+				"coverage_note", "Earlier events may be missing · up to 200 retained events"
+			)
+			+ "\nPlayer attribution and handled summaries are unavailable. Same-generation database replacements cannot always be detected."
+		)
 		if _return_digest.has("persistence_note"):
 			data.coverage += "\n" + _return_digest.persistence_note
 		if _return_digest.get("baseline_available", false):
-			data.span += " · captured at game time " + UiData.duration(_return_digest.captured_game_seconds) + " on reconnect (frozen comparison)" if _return_digest.has("captured_game_seconds") else " · captured on reconnect (game time unavailable; frozen comparison)"
+			data.span += (
+				(
+					" · captured at game time "
+					+ UiData.duration(_return_digest.captured_game_seconds)
+					+ " on reconnect (frozen comparison)"
+				)
+				if _return_digest.has("captured_game_seconds")
+				else " · captured on reconnect (game time unavailable; frozen comparison)"
+			)
 			data.deltas = []
 			for resource: String in _return_digest.resource_deltas:
 				var current: float = _return_digest.current_resources[resource]
-				data.deltas.append({"name": resource.capitalize(), "current": current, "baseline": current - float(_return_digest.resource_deltas[resource]), "level": "notice"})
+				data.deltas.append(
+					{
+						"name": resource.capitalize(),
+						"current": current,
+						"baseline": current - float(_return_digest.resource_deltas[resource]),
+						"level": "notice"
+					}
+				)
 	return data
 
 

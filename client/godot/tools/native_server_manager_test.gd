@@ -2,6 +2,7 @@ extends SceneTree
 
 var failures := 0
 
+
 func _initialize() -> void:
 	await _first_use_is_locked_and_pinned()
 	await _rediscovery_does_not_start_second_process()
@@ -23,7 +24,10 @@ func _initialize() -> void:
 	_test_stop_refreshes_cached_process_identity()
 	_test_prepare_copy_failures_are_retryable()
 	if not OS.get_environment("NATIVE_MANAGER_REAL").is_empty():
-		if FileAccess.file_exists("/.dockerenv") and OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") == "private-pid-namespace":
+		if (
+			FileAccess.file_exists("/.dockerenv")
+			and OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") == "private-pid-namespace"
+		):
 			await _real_godot_manager_flow()
 		else:
 			_assert(false, "real signal tests require the private container harness")
@@ -33,6 +37,7 @@ func _initialize() -> void:
 	else:
 		print("NATIVE_SERVER_MANAGER_FAIL (%d failures)" % failures)
 		quit(1)
+
 
 func _manager(adapter: RefCounted, suffix: String):
 	var manager = load("res://scripts/native_server_manager.gd").new()
@@ -54,6 +59,7 @@ func _manager(adapter: RefCounted, suffix: String):
 	artifact.store_string("pinned module")
 	return manager
 
+
 func _first_use_is_locked_and_pinned() -> void:
 	var adapter := FakeNativeAdapter.new()
 	var manager = _manager(adapter, "first")
@@ -66,6 +72,7 @@ func _first_use_is_locked_and_pinned() -> void:
 	_assert(adapter.force_calls == 0, "graceful stop never force terminates")
 	DirAccess.remove_absolute(manager.lock_file)
 	DirAccess.remove_absolute(manager.manifest_file)
+
 
 func _rediscovery_does_not_start_second_process() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -81,6 +88,7 @@ func _rediscovery_does_not_start_second_process() -> void:
 	DirAccess.remove_absolute(first.lock_file)
 	DirAccess.remove_absolute(first.manifest_file)
 
+
 func _manager_without_cleanup(adapter: RefCounted, suffix: String):
 	var manager = load("res://scripts/native_server_manager.gd").new()
 	manager.platform_adapter = adapter
@@ -95,6 +103,7 @@ func _manager_without_cleanup(adapter: RefCounted, suffix: String):
 	manager.cli_executable = "fake-cli"
 	manager.supervisor = "fake-supervisor"
 	return manager
+
 
 func _real_manager(suffix: String, cleanup := true):
 	var manager = load("res://scripts/native_server_manager.gd").new()
@@ -112,16 +121,30 @@ func _real_manager(suffix: String, cleanup := true):
 		DirAccess.remove_absolute(manager.manifest_file)
 	return manager
 
+
 func _read_real_manifest(manager) -> Dictionary:
 	if not FileAccess.file_exists(manager.manifest_file):
 		return {}
 	var parsed = JSON.parse_string(FileAccess.get_file_as_string(manager.manifest_file))
 	return parsed if parsed is Dictionary else {}
 
+
 func _real_godot_manager_flow() -> void:
 	print("REAL_GODOT_PHASE=setup")
 	var manager = _real_manager("owned")
-	print("REAL_GODOT_SUPPORT=%s PROCESSOR=%s RUNTIME_EXISTS=%s CLI_EXISTS=%s SUPERVISOR_EXISTS=%s MODULE_EXISTS=%s" % [manager.platform_adapter.supports_native_hosting(), OS.get_processor_name(), FileAccess.file_exists(manager.executable), FileAccess.file_exists(manager.cli_executable), FileAccess.file_exists(manager.supervisor), FileAccess.file_exists(manager.module_artifact)])
+	print(
+		(
+			"REAL_GODOT_SUPPORT=%s PROCESSOR=%s RUNTIME_EXISTS=%s CLI_EXISTS=%s SUPERVISOR_EXISTS=%s MODULE_EXISTS=%s"
+			% [
+				manager.platform_adapter.supports_native_hosting(),
+				OS.get_processor_name(),
+				FileAccess.file_exists(manager.executable),
+				FileAccess.file_exists(manager.cli_executable),
+				FileAccess.file_exists(manager.supervisor),
+				FileAccess.file_exists(manager.module_artifact)
+			]
+		)
+	)
 	var real_failure := [""]
 	manager.failed.connect(func(message: String) -> void: real_failure[0] = message)
 	var started_at := Time.get_ticks_msec()
@@ -145,18 +168,41 @@ func _real_godot_manager_flow() -> void:
 	_assert(saw_provisioning, "real manager observes provisioning before publication")
 	_assert(became_online, "real manager reaches online through tick loop")
 	if not became_online:
-		print("REAL_GODOT_TIMEOUT state=%s manifest=%s" % [manager.state(), JSON.stringify(_read_real_manifest(manager))])
+		print(
+			(
+				"REAL_GODOT_TIMEOUT state=%s manifest=%s"
+				% [manager.state(), JSON.stringify(_read_real_manifest(manager))]
+			)
+		)
 		return
 	var online_manifest := _read_real_manifest(manager)
-	_assert(str(online_manifest.get("phase", "")) == "running", "online requires published running phase")
+	_assert(
+		str(online_manifest.get("phase", "")) == "running",
+		"online requires published running phase"
+	)
 	_assert(int(online_manifest.get("pid", -1)) == manager._pid, "manager owns the supervisor PID")
-	_assert(int(online_manifest.get("runtime_pid", -1)) != manager._pid, "manager metadata distinguishes runtime child PID")
+	_assert(
+		int(online_manifest.get("runtime_pid", -1)) != manager._pid,
+		"manager metadata distinguishes runtime child PID"
+	)
 	print("REAL_GODOT_START_TICK_ONLINE=pass ELAPSED_MS=%d" % (Time.get_ticks_msec() - started_at))
 	var sibling_data := "/fixture/godot-sibling/data"
 	var sibling_config := "/fixture/godot-sibling/config"
 	DirAccess.make_dir_recursive_absolute(sibling_data)
 	DirAccess.make_dir_recursive_absolute(sibling_config)
-	var sibling_pid := OS.create_process(manager.executable, ["start", "--listen-addr", "127.0.0.1:3002", "--data-dir", sibling_data, "--jwt-key-dir", sibling_config], false)
+	var sibling_pid := OS.create_process(
+		manager.executable,
+		[
+			"start",
+			"--listen-addr",
+			"127.0.0.1:3002",
+			"--data-dir",
+			sibling_data,
+			"--jwt-key-dir",
+			sibling_config
+		],
+		false
+	)
 	if sibling_pid <= 1:
 		_assert(false, "sibling runtime has a valid owned PID")
 		return
@@ -171,7 +217,10 @@ func _real_godot_manager_flow() -> void:
 	tampered_manifest["runtime_started_at"] = sibling_started_at
 	_write_manifest(manager.manifest_file, tampered_manifest)
 	var tampered = _real_manager("owned", false)
-	_assert(tampered.status() == "conflict", "same-binary runtime with the wrong parent role is rejected")
+	_assert(
+		tampered.status() == "conflict",
+		"same-binary runtime with the wrong parent role is rejected"
+	)
 	_write_manifest(manager.manifest_file, online_manifest)
 	if not _real_signal(manager, sibling_pid, sibling_started_at, manager.executable, "INT"):
 		return
@@ -184,7 +233,10 @@ func _real_godot_manager_flow() -> void:
 			break
 		await create_timer(0.05).timeout
 	var rediscovered = _real_manager("owned", false)
-	_assert(rediscovered.status() == "online", "fresh manager adopts the healthy runtime after supervisor death")
+	_assert(
+		rediscovered.status() == "online",
+		"fresh manager adopts the healthy runtime after supervisor death"
+	)
 	_assert(rediscovered._adopted_runtime, "fresh manager records runtime adoption")
 	_assert(not rediscovered.start(), "fresh manager does not launch a duplicate server")
 	print("REAL_GODOT_SUPERVISOR_KILL_RUNTIME_ADOPTION=pass")
@@ -205,7 +257,10 @@ func _real_godot_manager_flow() -> void:
 			break
 		await process_frame
 	_assert(rediscovered.status() == "offline", "real manager reaches offline after graceful stop")
-	_assert(not FileAccess.file_exists(rediscovered.manifest_file), "stopped manager clears owned metadata")
+	_assert(
+		not FileAccess.file_exists(rediscovered.manifest_file),
+		"stopped manager clears owned metadata"
+	)
 	_assert(rediscovered.start(), "lock is released after graceful stop")
 	for _i in range(1800):
 		rediscovered.tick()
@@ -217,7 +272,9 @@ func _real_godot_manager_flow() -> void:
 		return
 	_assert(not rediscovered.stop(true), "force stop is rejected before a real timeout")
 	var stopping_manifest := _read_real_manifest(rediscovered)
-	if not _real_signal(rediscovered, rediscovered._pid, rediscovered._started_at, rediscovered.supervisor, "STOP"):
+	if not _real_signal(
+		rediscovered, rediscovered._pid, rediscovered._started_at, rediscovered.supervisor, "STOP"
+	):
 		return
 	_assert(rediscovered.stop(false), "stalled supervisor accepts graceful stop request")
 	var stop_deadline := Time.get_ticks_msec() + 8000
@@ -227,8 +284,14 @@ func _real_godot_manager_flow() -> void:
 			break
 		await create_timer(0.05).timeout
 	_assert(rediscovered.state() == "stop_timeout", "stalled supervisor reaches stop timeout")
-	_assert(rediscovered.platform_adapter.process_exists(rediscovered._runtime_pid), "runtime remains alive while supervisor is stopped")
-	_assert(rediscovered.platform_adapter.health(rediscovered.host), "runtime remains healthy while supervisor is stopped")
+	_assert(
+		rediscovered.platform_adapter.process_exists(rediscovered._runtime_pid),
+		"runtime remains alive while supervisor is stopped"
+	)
+	_assert(
+		rediscovered.platform_adapter.health(rediscovered.host),
+		"runtime remains healthy while supervisor is stopped"
+	)
 	if failures > 0:
 		return
 	_assert(rediscovered.stop(true), "force stop is accepted only after timeout")
@@ -239,9 +302,18 @@ func _real_godot_manager_flow() -> void:
 			break
 		await create_timer(0.02).timeout
 	_assert(rediscovered.state() == "offline", "forced stop ends supervisor and runtime")
-	_assert(not rediscovered.platform_adapter.process_exists(int(stopping_manifest.pid)), "forced supervisor is actually gone")
-	_assert(not rediscovered.platform_adapter.process_exists(int(stopping_manifest.runtime_pid)), "forced runtime is actually gone")
-	_assert(not FileAccess.file_exists(rediscovered.manifest_file), "forced stop clears metadata after both owners die")
+	_assert(
+		not rediscovered.platform_adapter.process_exists(int(stopping_manifest.pid)),
+		"forced supervisor is actually gone"
+	)
+	_assert(
+		not rediscovered.platform_adapter.process_exists(int(stopping_manifest.runtime_pid)),
+		"forced runtime is actually gone"
+	)
+	_assert(
+		not FileAccess.file_exists(rediscovered.manifest_file),
+		"forced stop clears metadata after both owners die"
+	)
 	if failures > 0:
 		return
 	_assert(rediscovered.start(), "forced stop releases the runtime lock")
@@ -251,14 +323,20 @@ func _real_godot_manager_flow() -> void:
 			break
 		await process_frame
 	_assert(rediscovered.state() == "online", "server restarts after forced stop")
-	_assert(FileAccess.file_exists(rediscovered.data_dir + "/.continuum-module.sha256"), "forced stop preserves persisted module state")
+	_assert(
+		FileAccess.file_exists(rediscovered.data_dir + "/.continuum-module.sha256"),
+		"forced stop preserves persisted module state"
+	)
 	_assert(rediscovered.stop(false), "restarted manager stops gracefully")
 	for _i in range(120):
 		rediscovered.tick()
 		if rediscovered.state() == "offline":
 			break
 		await process_frame
-	_assert(rediscovered.state() == "offline", "restarted graceful stop completes before stale metadata test")
+	_assert(
+		rediscovered.state() == "offline",
+		"restarted graceful stop completes before stale metadata test"
+	)
 	print("REAL_GODOT_STOP_TIMEOUT_FORCE_RESTART_LOCK=pass")
 	var stale_manifest := online_manifest.duplicate()
 	stale_manifest["pid"] = 999991
@@ -268,8 +346,14 @@ func _real_godot_manager_flow() -> void:
 	stale_manifest["runtime_parent_pid"] = 999991
 	_write_manifest(rediscovered.manifest_file, stale_manifest)
 	var stale_manager = _real_manager("owned", false)
-	_assert(stale_manager.status() == "offline", "fresh manager identifies all-dead owner metadata as stale")
-	_assert(not FileAccess.file_exists(stale_manager.manifest_file), "fresh manager removes only the verified stale manifest")
+	_assert(
+		stale_manager.status() == "offline",
+		"fresh manager identifies all-dead owner metadata as stale"
+	)
+	_assert(
+		not FileAccess.file_exists(stale_manager.manifest_file),
+		"fresh manager removes only the verified stale manifest"
+	)
 	print("REAL_GODOT_STALE_OWNER_CLEANUP=pass")
 
 	var invalid = _real_manager("invalid")
@@ -280,11 +364,18 @@ func _real_godot_manager_flow() -> void:
 	_assert(Time.get_ticks_msec() - invalid_started < 5000, "invalid runtime failure is bounded")
 	print("REAL_GODOT_STARTUP_FAILURE_BOUNDED=pass")
 
+
 func _real_signal(manager, pid: int, token: String, binary: String, signal_name: String) -> bool:
-	var safe: bool = failures == 0 and FileAccess.file_exists("/.dockerenv") \
-		and OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") == "private-pid-namespace" \
-		and pid > 1 and ["INT", "KILL", "STOP"].has(signal_name) \
-		and manager.platform_adapter.is_process_identity(pid, token, binary, manager._file_sha256(binary))
+	var safe: bool = (
+		failures == 0
+		and FileAccess.file_exists("/.dockerenv")
+		and OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") == "private-pid-namespace"
+		and pid > 1
+		and ["INT", "KILL", "STOP"].has(signal_name)
+		and manager.platform_adapter.is_process_identity(
+			pid, token, binary, manager._file_sha256(binary)
+		)
+	)
 	if not safe:
 		_assert(false, "real signal requires a verified owned process in the private container")
 		return false
@@ -296,7 +387,9 @@ func _real_signal(manager, pid: int, token: String, binary: String, signal_name:
 	_assert(sent, "verified container process accepts " + signal_name)
 	return sent
 
-class FalseHealthAdapter extends RefCounted:
+
+class FalseHealthAdapter:
+	extends RefCounted
 	var inner: RefCounted
 
 	func _init(value: RefCounted) -> void:
@@ -308,26 +401,78 @@ class FalseHealthAdapter extends RefCounted:
 	func health(_host: String) -> bool:
 		return false
 
-	func launch(supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, startup_nonce: String) -> Dictionary:
-		return inner.launch(supervisor, runtime, cli, module, host, database, data_path, config_path, lock_path, log_path, manifest_path, module_sha256, startup_nonce)
+	func launch(
+		supervisor: String,
+		runtime: String,
+		cli: String,
+		module: String,
+		host: String,
+		database: String,
+		data_path: String,
+		config_path: String,
+		lock_path: String,
+		log_path: String,
+		manifest_path: String,
+		module_sha256: String,
+		startup_nonce: String
+	) -> Dictionary:
+		return inner.launch(
+			supervisor,
+			runtime,
+			cli,
+			module,
+			host,
+			database,
+			data_path,
+			config_path,
+			lock_path,
+			log_path,
+			manifest_path,
+			module_sha256,
+			startup_nonce
+		)
 
-	func is_process_identity(pid: int, started_at: String, expected_binary: String, expected_sha256: String, expected_parent_pid := -1) -> bool:
-		return inner.is_process_identity(pid, started_at, expected_binary, expected_sha256, expected_parent_pid)
+	func is_process_identity(
+		pid: int,
+		started_at: String,
+		expected_binary: String,
+		expected_sha256: String,
+		expected_parent_pid := -1
+	) -> bool:
+		return inner.is_process_identity(
+			pid, started_at, expected_binary, expected_sha256, expected_parent_pid
+		)
 
 	func process_exists(pid: int) -> bool:
 		return inner.process_exists(pid)
 
-	func cleanup_stale(supervisor: String, lock_path: String, manifest_path: String, manifest_sha256: String) -> bool:
+	func cleanup_stale(
+		supervisor: String, lock_path: String, manifest_path: String, manifest_sha256: String
+	) -> bool:
 		return inner.cleanup_stale(supervisor, lock_path, manifest_path, manifest_sha256)
 
-	func terminate(pid: int, force: bool, started_at: String, expected_binary: String, expected_sha256: String, expected_parent_pid := -1) -> bool:
-		return inner.terminate(pid, force, started_at, expected_binary, expected_sha256, expected_parent_pid)
+	func terminate(
+		pid: int,
+		force: bool,
+		started_at: String,
+		expected_binary: String,
+		expected_sha256: String,
+		expected_parent_pid := -1
+	) -> bool:
+		return inner.terminate(
+			pid, force, started_at, expected_binary, expected_sha256, expected_parent_pid
+		)
+
 
 func _test_unsupported_platform_message() -> void:
 	var manager = load("res://scripts/native_server_manager.gd").new()
 	var message := [""]
 	manager.failed.connect(func(value: String) -> void: message[0] = value)
-	_assert(manager._unsupported_reason().contains("Docker"), "unsupported platforms have actionable fallback")
+	_assert(
+		manager._unsupported_reason().contains("Docker"),
+		"unsupported platforms have actionable fallback"
+	)
+
 
 func _test_invalid_pid_never_reaches_termination() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -337,6 +482,7 @@ func _test_invalid_pid_never_reaches_termination() -> void:
 		manager._pid = invalid_pid
 		_assert(not manager.stop(true), "invalid pid %d cannot be force-stopped" % invalid_pid)
 	_assert(adapter.terminate_calls == 0, "invalid manager PIDs make no OS termination call")
+
 
 func _test_force_requires_timeout() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -351,10 +497,16 @@ func _test_force_requires_timeout() -> void:
 	manager.tick()
 	_assert(manager.state() == "stop_timeout", "graceful timeout is visible before force")
 	_assert(manager.stop(true), "force stop is accepted after timeout")
-	_assert(FileAccess.file_exists(manager.manifest_file), "force request does not clear live metadata")
+	_assert(
+		FileAccess.file_exists(manager.manifest_file), "force request does not clear live metadata"
+	)
 	adapter.healthy = false
 	manager.tick()
-	_assert(not FileAccess.file_exists(manager.manifest_file), "metadata clears only after process death")
+	_assert(
+		not FileAccess.file_exists(manager.manifest_file),
+		"metadata clears only after process death"
+	)
+
 
 func _test_force_waits_for_both_processes() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -367,16 +519,24 @@ func _test_force_waits_for_both_processes() -> void:
 	manager._stop_deadline = 0
 	manager.tick()
 	_assert(manager.stop(true), "force requests both owned process exits")
-	_assert(adapter.forced_pids == [4243, 4242], "force targets runtime before supervisor, independently")
+	_assert(
+		adapter.forced_pids == [4243, 4242],
+		"force targets runtime before supervisor, independently"
+	)
 	_assert(manager._stop_deadline > Time.get_ticks_msec(), "forced exit gets its own bounded wait")
 	adapter.supervisor_alive = false
 	manager.tick()
 	_assert(manager.state() == "stopping", "dead supervisor does not imply stopped runtime")
-	_assert(FileAccess.file_exists(manager.manifest_file), "live runtime retains ownership metadata")
+	_assert(
+		FileAccess.file_exists(manager.manifest_file), "live runtime retains ownership metadata"
+	)
 	adapter.runtime_alive = false
 	adapter.cleanup_allowed = false
 	manager.tick()
-	_assert(manager.state() == "stopping", "transient lock release is retried while the shutdown deadline remains")
+	_assert(
+		manager.state() == "stopping",
+		"transient lock release is retried while the shutdown deadline remains"
+	)
 	manager._stop_deadline = 0
 	manager.tick()
 	_assert(manager.state() == "conflict", "failed lock cleanup is not reported as offline")
@@ -385,7 +545,11 @@ func _test_force_waits_for_both_processes() -> void:
 	manager._state = manager.State.STOPPING
 	manager.tick()
 	_assert(manager.state() == "offline", "offline requires both exits and confirmed cleanup")
-	_assert(not FileAccess.file_exists(manager.manifest_file), "confirmed lock cleanup removes only the old manifest")
+	_assert(
+		not FileAccess.file_exists(manager.manifest_file),
+		"confirmed lock cleanup removes only the old manifest"
+	)
+
 
 func _test_shutdown_refuses_replacement_manifest() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -396,16 +560,21 @@ func _test_shutdown_refuses_replacement_manifest() -> void:
 	manager.stop()
 	manager._stop_deadline = 0
 	manager.tick()
-	var replacement: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(manager.manifest_file))
+	var replacement: Dictionary = JSON.parse_string(
+		FileAccess.get_file_as_string(manager.manifest_file)
+	)
 	replacement["startup_nonce"] = "another-owner"
 	_write_manifest(manager.manifest_file, replacement)
 	_assert(not manager.stop(true), "force refuses a replacement owner")
 	_assert(adapter.force_calls == 0, "replacement owner receives no force signal")
 	adapter.process_alive = false
 	manager.tick()
-	_assert(manager.state() == "conflict", "replacement manifest is not reported as our stopped server")
+	_assert(
+		manager.state() == "conflict", "replacement manifest is not reported as our stopped server"
+	)
 	_assert(FileAccess.file_exists(manager.manifest_file), "replacement manifest is preserved")
 	DirAccess.remove_absolute(manager.manifest_file)
+
 
 func _test_process_snapshot_reads_non_child() -> void:
 	if OS.get_name() != "Linux":
@@ -413,11 +582,20 @@ func _test_process_snapshot_reads_non_child() -> void:
 	var adapter = load("res://scripts/native_server_platform_adapter.gd").new()
 	var self_pid := OS.get_process_id()
 	_assert(adapter.process_exists(self_pid), "Linux liveness works without a child-process handle")
-	_assert(not adapter._process_start_token(self_pid).is_empty(), "procfs zero-length stat exposes a start token")
+	_assert(
+		not adapter._process_start_token(self_pid).is_empty(),
+		"procfs zero-length stat exposes a start token"
+	)
 	var parent: int = adapter._process_parent_pid(self_pid)
-	_assert(parent > 1 and adapter.process_exists(parent), "parent liveness is read without waitpid")
+	_assert(
+		parent > 1 and adapter.process_exists(parent), "parent liveness is read without waitpid"
+	)
 	for invalid_pid in [-1, 0, 1]:
-		_assert(not adapter.process_exists(invalid_pid), "invalid PID is never considered a managed process")
+		_assert(
+			not adapter.process_exists(invalid_pid),
+			"invalid PID is never considered a managed process"
+		)
+
 
 func _test_live_mismatch_keeps_manifest() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -433,6 +611,7 @@ func _test_live_mismatch_keeps_manifest() -> void:
 	adapter.healthy = false
 	DirAccess.remove_absolute(manager.manifest_file)
 
+
 func _test_conflict_never_clears_or_relaunches() -> void:
 	var adapter := FakeNativeAdapter.new()
 	var first = _manager(adapter, "conflict")
@@ -443,9 +622,12 @@ func _test_conflict_never_clears_or_relaunches() -> void:
 	_assert(second.status() == "conflict", "different manager identity becomes conflict")
 	_assert(not second.start(), "conflict cannot start a second supervisor")
 	_assert(adapter.launch_calls == 1, "conflict does not relaunch")
-	_assert(FileAccess.file_exists(second.manifest_file), "conflict retains the other manager manifest")
+	_assert(
+		FileAccess.file_exists(second.manifest_file), "conflict retains the other manager manifest"
+	)
 	adapter.healthy = false
 	DirAccess.remove_absolute(second.manifest_file)
+
 
 func _test_database_conflict_keeps_ownership_closed() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -455,11 +637,24 @@ func _test_database_conflict_keeps_ownership_closed() -> void:
 	var second = _manager_without_cleanup(adapter, "database-conflict")
 	second.database = "continuum-terrain-demo"
 	var before := FileAccess.get_file_as_string(second.manifest_file)
-	_assert(second.status() == "conflict", "a different configured database completes status as conflict")
-	_assert(not second.start() and not second.stop(false) and not second.stop(true), "database mismatch authorizes no launch or shutdown")
-	_assert(adapter.launch_calls == 1 and adapter.force_calls == 0, "database conflict does not launch or force terminate")
-	_assert(FileAccess.get_file_as_string(second.manifest_file) == before, "database conflict retains the original manifest unchanged")
+	_assert(
+		second.status() == "conflict",
+		"a different configured database completes status as conflict"
+	)
+	_assert(
+		not second.start() and not second.stop(false) and not second.stop(true),
+		"database mismatch authorizes no launch or shutdown"
+	)
+	_assert(
+		adapter.launch_calls == 1 and adapter.force_calls == 0,
+		"database conflict does not launch or force terminate"
+	)
+	_assert(
+		FileAccess.get_file_as_string(second.manifest_file) == before,
+		"database conflict retains the original manifest unchanged"
+	)
 	DirAccess.remove_absolute(second.manifest_file)
+
 
 func _test_owned_unhealthy_is_stoppable_not_startable() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -469,7 +664,9 @@ func _test_owned_unhealthy_is_stoppable_not_startable() -> void:
 	adapter.healthy = false
 	adapter.owned = true
 	adapter.phase = "running"
-	var manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(manager.manifest_file))
+	var manifest: Dictionary = JSON.parse_string(
+		FileAccess.get_file_as_string(manager.manifest_file)
+	)
 	manifest["phase"] = "running"
 	var manifest_file := FileAccess.open(manager.manifest_file, FileAccess.WRITE)
 	manifest_file.store_string(JSON.stringify(manifest))
@@ -479,6 +676,7 @@ func _test_owned_unhealthy_is_stoppable_not_startable() -> void:
 	_assert(not manager.start(), "owned unhealthy server cannot be started again")
 	_assert(manager.can_stop(), "owned unhealthy server remains stoppable")
 	DirAccess.remove_absolute(manager.manifest_file)
+
 
 func _test_provisioning_has_long_budget() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -492,12 +690,15 @@ func _test_provisioning_has_long_budget() -> void:
 	_assert(adapter.launch_calls == 1, "slow provisioning remains one owned supervisor")
 	DirAccess.remove_absolute(manager.manifest_file)
 
+
 func _test_manifest_validation_and_stale_cleanup() -> void:
 	var adapter := FakeNativeAdapter.new()
 	var manager = _manager(adapter, "manifest-validation")
 	_assert(manager.start(), "manifest validation fixture starts")
 	manager.tick()
-	var valid_manifest: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(manager.manifest_file))
+	var valid_manifest: Dictionary = JSON.parse_string(
+		FileAccess.get_file_as_string(manager.manifest_file)
+	)
 	var missing_manifest := valid_manifest.duplicate()
 	missing_manifest.erase("runtime_started_at")
 	_write_manifest(manager.manifest_file, missing_manifest)
@@ -511,20 +712,29 @@ func _test_manifest_validation_and_stale_cleanup() -> void:
 	_write_manifest(manager.manifest_file, valid_manifest)
 	adapter.process_alive = false
 	_assert(manager.status() == "offline", "dead owner metadata becomes stale")
-	_assert(not FileAccess.file_exists(manager.manifest_file), "stale dead-owner metadata is cleaned")
+	_assert(
+		not FileAccess.file_exists(manager.manifest_file), "stale dead-owner metadata is cleaned"
+	)
 	DirAccess.remove_absolute(manager.lock_file)
+
 
 func _write_manifest(path: String, value: Dictionary) -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_string(JSON.stringify(value))
 	file.close()
 
+
 func _test_manager_autostart_public_path() -> void:
 	var adapter := FakeNativeAdapter.new()
 	var manager = _manager(adapter, "autostart")
-	_assert(manager.set_autostart(true).ok, "manager autostart uses the platform adapter public path")
-	_assert(adapter.autostart_calls == 1, "manager autostart does not register a host process directly")
+	_assert(
+		manager.set_autostart(true).ok, "manager autostart uses the platform adapter public path"
+	)
+	_assert(
+		adapter.autostart_calls == 1, "manager autostart does not register a host process directly"
+	)
 	DirAccess.remove_absolute(manager.lock_file)
+
 
 func _test_status_poll_preserves_shutdown_state() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -536,8 +746,12 @@ func _test_status_poll_preserves_shutdown_state() -> void:
 	manager._stop_deadline = 0
 	manager.tick()
 	_assert(manager.status() == "stop_timeout", "status polling preserves STOP_TIMEOUT")
-	_assert(manager._active_binary_hash() == "unavailable", "graceful stop retains the stored supervisor hash")
+	_assert(
+		manager._active_binary_hash() == "unavailable",
+		"graceful stop retains the stored supervisor hash"
+	)
 	DirAccess.remove_absolute(manager.manifest_file)
+
 
 func _test_stop_refreshes_cached_process_identity() -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -547,17 +761,35 @@ func _test_stop_refreshes_cached_process_identity() -> void:
 	manager._pid = 3137
 	manager._started_at = "previous-runtime"
 	manager._shutdown_manifest = {"supervisor_sha256": "previous-helper"}
-	_assert(manager.can_stop(), "current verified ownership, not stale cached PID/hash, determines stoppability")
-	_assert(manager.stop(false), "explicit stop refreshes the process identity from the current manifest")
-	_assert(manager._pid == 4242 and manager._started_at == "fake-start" and adapter.terminate_calls == 1, "graceful stop targets only the current verified supervisor")
+	_assert(
+		manager.can_stop(),
+		"current verified ownership, not stale cached PID/hash, determines stoppability"
+	)
+	_assert(
+		manager.stop(false),
+		"explicit stop refreshes the process identity from the current manifest"
+	)
+	_assert(
+		(
+			manager._pid == 4242
+			and manager._started_at == "fake-start"
+			and adapter.terminate_calls == 1
+		),
+		"graceful stop targets only the current verified supervisor"
+	)
 	adapter.owned = false
-	_assert(not manager.can_stop() and not manager.stop(false), "stale-cache recovery never bypasses process identity validation")
+	_assert(
+		not manager.can_stop() and not manager.stop(false),
+		"stale-cache recovery never bypasses process identity validation"
+	)
 	_assert(adapter.terminate_calls == 1, "an unverified replacement receives no signal")
 	DirAccess.remove_absolute(manager.manifest_file)
+
 
 func _test_prepare_copy_failures_are_retryable() -> void:
 	_prepare_copy_failure("packaged", "packaged module")
 	_prepare_copy_failure("source-built", "source-built module")
+
 
 func _prepare_copy_failure(label: String, source_text: String) -> void:
 	var adapter := FakeNativeAdapter.new()
@@ -568,7 +800,9 @@ func _prepare_copy_failure(label: String, source_text: String) -> void:
 	source_file.store_string(source_text)
 	source_file.close()
 	manager.module_source_override = source
-	var blocked_parent := "/tmp/opencode/native-prepare-%d-%s-blocked" % [OS.get_process_id(), label]
+	var blocked_parent := (
+		"/tmp/opencode/native-prepare-%d-%s-blocked" % [OS.get_process_id(), label]
+	)
 	var blocked := FileAccess.open(blocked_parent, FileAccess.WRITE)
 	blocked.store_string("not a directory")
 	blocked.close()
@@ -577,29 +811,95 @@ func _prepare_copy_failure(label: String, source_text: String) -> void:
 	manager.progress.connect(func(message: String) -> void: progress_messages.append(message))
 	_assert(not manager.prepare_module(), "%s artifact copy failure is reported" % label)
 	_assert(manager.state() == "offline", "%s copy failure is retryable offline" % label)
-	_assert(not progress_messages.is_empty() and progress_messages[0].contains("Preparing"),
-		"%s copy failure reports preparation progress" % label)
+	_assert(
+		not progress_messages.is_empty() and progress_messages[0].contains("Preparing"),
+		"%s copy failure reports preparation progress" % label
+	)
 	DirAccess.remove_absolute(blocked_parent)
-	manager.module_artifact = "/tmp/opencode/native-prepare-%d-%s-retry/module.wasm" % [OS.get_process_id(), label]
+	manager.module_artifact = (
+		"/tmp/opencode/native-prepare-%d-%s-retry/module.wasm" % [OS.get_process_id(), label]
+	)
 	_assert(manager.prepare_module(), "%s preparation can be retried" % label)
 	_assert(manager.state() != "preparing", "%s retry does not remain preparing" % label)
 	DirAccess.remove_absolute(source)
 	DirAccess.remove_absolute(manager.module_artifact)
 
+
 func _test_systemd_path_validation() -> void:
 	var adapter = load("res://scripts/native_server_platform_adapter.gd").new()
-	var unit: String = adapter.linux_unit_contents("/tmp/super visor", "/tmp/runtime", "/tmp/cli", "/tmp/module.wasm", "127.0.0.1:3001", "continuum", "/tmp/data with spaces", "/tmp/config", "/tmp/lock", "/tmp/log", "/tmp/server.json", "abc123", "fake-nonce")
-	_assert(unit.contains('"/tmp/super visor" start "/tmp/runtime"'), "systemd uses the shared supervisor")
+	var unit: String = adapter.linux_unit_contents(
+		"/tmp/super visor",
+		"/tmp/runtime",
+		"/tmp/cli",
+		"/tmp/module.wasm",
+		"127.0.0.1:3001",
+		"continuum",
+		"/tmp/data with spaces",
+		"/tmp/config",
+		"/tmp/lock",
+		"/tmp/log",
+		"/tmp/server.json",
+		"abc123",
+		"fake-nonce"
+	)
+	_assert(
+		unit.contains('"/tmp/super visor" start "/tmp/runtime"'),
+		"systemd uses the shared supervisor"
+	)
 	_assert(unit.contains('"/tmp/data with spaces"'), "systemd quotes space-containing paths")
-	_assert(adapter.linux_unit_contents("/tmp/supervisor", "/tmp/runtime", "/tmp/cli", "/tmp/module", "http://127.0.0.1:3001", "continuum", "/tmp/data", "/tmp/config", "/tmp/lock", "/tmp/log", "/tmp/server", "abc123", "fake-nonce").contains("127.0.0.1:3001"), "autostart normalizes the manager host URL")
-	_assert(adapter.linux_unit_contents("/tmp/bad%path", "/tmp/runtime", "/tmp/cli", "/tmp/module", "127.0.0.1:3001", "continuum", "/tmp/data", "/tmp/config", "/tmp/lock", "/tmp/log", "/tmp/server", "abc123", "fake-nonce") == "", "systemd rejects percent injection")
+	_assert(
+		(
+			adapter
+			. linux_unit_contents(
+				"/tmp/supervisor",
+				"/tmp/runtime",
+				"/tmp/cli",
+				"/tmp/module",
+				"http://127.0.0.1:3001",
+				"continuum",
+				"/tmp/data",
+				"/tmp/config",
+				"/tmp/lock",
+				"/tmp/log",
+				"/tmp/server",
+				"abc123",
+				"fake-nonce"
+			)
+			. contains("127.0.0.1:3001")
+		),
+		"autostart normalizes the manager host URL"
+	)
+	_assert(
+		(
+			adapter.linux_unit_contents(
+				"/tmp/bad%path",
+				"/tmp/runtime",
+				"/tmp/cli",
+				"/tmp/module",
+				"127.0.0.1:3001",
+				"continuum",
+				"/tmp/data",
+				"/tmp/config",
+				"/tmp/lock",
+				"/tmp/log",
+				"/tmp/server",
+				"abc123",
+				"fake-nonce"
+			)
+			== ""
+		),
+		"systemd rejects percent injection"
+	)
+
 
 func _assert(condition: bool, description: String) -> void:
 	if not condition:
 		failures += 1
 		printerr("FAIL: %s" % description)
 
-class FakeNativeAdapter extends RefCounted:
+
+class FakeNativeAdapter:
+	extends RefCounted
 	var provision_calls := 0
 	var launch_calls := 0
 	var force_calls := 0
@@ -619,34 +919,98 @@ class FakeNativeAdapter extends RefCounted:
 	func supports_native_hosting() -> bool:
 		return true
 
-	func provision(_provisioner: String, _cli: String, _artifact: String, _host: String, _database: String, _config: String, _log: String) -> Dictionary:
+	func provision(
+		_provisioner: String,
+		_cli: String,
+		_artifact: String,
+		_host: String,
+		_database: String,
+		_config: String,
+		_log: String
+	) -> Dictionary:
 		provision_calls += 1
 		return {"ok": true, "pid": -1}
 
-	func launch(_supervisor: String, _runtime: String, _cli: String, _module: String, _host: String, _database: String, _data: String, _config: String, _lock: String, _log: String, manifest: String, module_sha256: String, startup_nonce: String) -> Dictionary:
+	func launch(
+		_supervisor: String,
+		_runtime: String,
+		_cli: String,
+		_module: String,
+		_host: String,
+		_database: String,
+		_data: String,
+		_config: String,
+		_lock: String,
+		_log: String,
+		manifest: String,
+		module_sha256: String,
+		startup_nonce: String
+	) -> Dictionary:
 		launch_calls += 1
 		healthy = phase != "provisioning"
 		var file := FileAccess.open(manifest, FileAccess.WRITE)
-		file.store_string(JSON.stringify({"phase":phase, "runtime":"2.10.0", "runtime_sha256":"unavailable", "cli_sha256":"unavailable", "supervisor_sha256":"unavailable", "module_sha256":module_sha256, "database":"continuum", "pid":4242, "runtime_pid":4243, "started_at":"fake-start", "runtime_started_at":"fake-runtime-start", "runtime_parent_pid":4242, "runtime_binary":"fake-spacetime", "startup_nonce":startup_nonce, "data_dir":_data, "host":"http://127.0.0.1:3001"}))
+		file.store_string(
+			JSON.stringify(
+				{
+					"phase": phase,
+					"runtime": "2.10.0",
+					"runtime_sha256": "unavailable",
+					"cli_sha256": "unavailable",
+					"supervisor_sha256": "unavailable",
+					"module_sha256": module_sha256,
+					"database": "continuum",
+					"pid": 4242,
+					"runtime_pid": 4243,
+					"started_at": "fake-start",
+					"runtime_started_at": "fake-runtime-start",
+					"runtime_parent_pid": 4242,
+					"runtime_binary": "fake-spacetime",
+					"startup_nonce": startup_nonce,
+					"data_dir": _data,
+					"host": "http://127.0.0.1:3001"
+				}
+			)
+		)
 		file.close()
 		return {"ok": true, "pid": 4242, "started_at": "fake-start"}
 
 	func health(_host: String) -> bool:
 		return healthy
 
-	func is_process_identity(pid: int, started: String, binary: String, _hash: String, parent_pid := -1) -> bool:
-		return process_exists(pid) and owned and ((pid == 4243 and binary == "fake-spacetime" and started == "fake-runtime-start" and (parent_pid <= 1 or parent_pid == 4242)) or (pid == 4242 and binary == "fake-supervisor" and started == "fake-start"))
+	func is_process_identity(
+		pid: int, started: String, binary: String, _hash: String, parent_pid := -1
+	) -> bool:
+		return (
+			process_exists(pid)
+			and owned
+			and (
+				(
+					pid == 4243
+					and binary == "fake-spacetime"
+					and started == "fake-runtime-start"
+					and (parent_pid <= 1 or parent_pid == 4242)
+				)
+				or (pid == 4242 and binary == "fake-supervisor" and started == "fake-start")
+			)
+		)
 
 	func process_exists(pid: int) -> bool:
-		return process_alive and ((pid == 4242 and supervisor_alive) or (pid == 4243 and runtime_alive))
+		return (
+			process_alive
+			and ((pid == 4242 and supervisor_alive) or (pid == 4243 and runtime_alive))
+		)
 
-	func cleanup_stale(_supervisor: String, _lock_path: String, manifest: String, _manifest_sha256: String) -> bool:
+	func cleanup_stale(
+		_supervisor: String, _lock_path: String, manifest: String, _manifest_sha256: String
+	) -> bool:
 		if not cleanup_allowed:
 			return false
 		DirAccess.remove_absolute(manifest)
 		return true
 
-	func terminate(pid: int, force: bool, _started: String, _binary: String, _hash: String, _parent_pid := -1) -> bool:
+	func terminate(
+		pid: int, force: bool, _started: String, _binary: String, _hash: String, _parent_pid := -1
+	) -> bool:
 		terminate_calls += 1
 		if force:
 			force_calls += 1
@@ -659,6 +1023,21 @@ class FakeNativeAdapter extends RefCounted:
 					healthy = false
 		return true
 
-	func set_autostart(_enabled: bool, _supervisor: String, _runtime: String, _cli: String, _module: String, _host: String, _database: String, _data: String, _config: String, _lock: String, _log: String, _manifest: String, _module_sha256: String, _startup_nonce: String) -> Dictionary:
+	func set_autostart(
+		_enabled: bool,
+		_supervisor: String,
+		_runtime: String,
+		_cli: String,
+		_module: String,
+		_host: String,
+		_database: String,
+		_data: String,
+		_config: String,
+		_lock: String,
+		_log: String,
+		_manifest: String,
+		_module_sha256: String,
+		_startup_nonce: String
+	) -> Dictionary:
 		autostart_calls += 1
 		return {"ok": true}

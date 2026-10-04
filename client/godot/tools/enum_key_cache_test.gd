@@ -12,27 +12,47 @@ func _initialize() -> void:
 	var schema := SpacetimeDBSchema.new("Continuum")
 	local_db = LocalDatabase.new(schema, null)
 	db = ContinuumModuleDb.new(local_db)
-	local_db.row_inserted.connect(func(t: String, _r: Resource):
-		if t == "production_policy": inserts += 1)
-	local_db.row_updated.connect(func(t: String, _p: Resource, _r: Resource):
-		if t == "production_policy": updates += 1)
-	local_db.row_deleted.connect(func(t: String, _r: Resource):
-		if t == "production_policy": deletes += 1)
+	local_db.row_inserted.connect(
+		func(t: String, _r: Resource):
+			if t == "production_policy":
+				inserts += 1
+	)
+	local_db.row_updated.connect(
+		func(t: String, _p: Resource, _r: Resource):
+			if t == "production_policy":
+				updates += 1
+	)
+	local_db.row_deleted.connect(
+		func(t: String, _r: Resource):
+			if t == "production_policy":
+				deletes += 1
+	)
 	for kind: int in ContinuumResourceKind.Options.values():
 		var original := _policy(kind, 20.0)
 		var replacement := _policy(kind, 30.0)
-		assert(original.resource != replacement.resource, "fixture must use distinct enum instances")
+		assert(
+			original.resource != replacement.resource, "fixture must use distinct enum instances"
+		)
 		_apply("production_policy", [original], [])
 		assert(db.production_policy.resource.find(ContinuumResourceKind.create(kind)) == original)
-		assert(local_db.get_row_by_pk("production_policy", ContinuumResourceKind.create(kind)) == original)
+		assert(
+			(
+				local_db.get_row_by_pk("production_policy", ContinuumResourceKind.create(kind))
+				== original
+			)
+		)
 		_apply("production_policy", [replacement], [_policy(kind, 20.0)])
 		assert(db.production_policy.iter().size() == 1)
-		assert(db.production_policy.resource.find(ContinuumResourceKind.create(kind)) == replacement)
+		assert(
+			db.production_policy.resource.find(ContinuumResourceKind.create(kind)) == replacement
+		)
 		assert(inserts == kind + 1 and updates == kind + 1 and deletes == kind)
 		_apply("production_policy", [], [_policy(kind, 30.0)])
 		assert(db.production_policy.iter().is_empty())
 		assert(db.production_policy.resource.find(ContinuumResourceKind.create(kind)) == null)
-		assert(local_db.get_row_by_pk("production_policy", ContinuumResourceKind.create(kind)) == null)
+		assert(
+			local_db.get_row_by_pk("production_policy", ContinuumResourceKind.create(kind)) == null
+		)
 	assert(inserts == 4 and updates == 4 and deletes == 4)
 	_apply("production_policy", [_policy(1, 40.0)], [])
 	local_db.clear_local_db()
@@ -42,7 +62,9 @@ func _initialize() -> void:
 	local_db.clear_local_db()
 	_check_primitive_indexes()
 	local_db.free()
-	print("ENUM_KEY_CACHE_PASS: all enum variants, replacement/delete signals, reload, primitive indexes")
+	print(
+		"ENUM_KEY_CACHE_PASS: all enum variants, replacement/delete signals, reload, primitive indexes"
+	)
 	quit(0)
 
 

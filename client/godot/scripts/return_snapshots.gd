@@ -12,7 +12,9 @@ var _baselines: Dictionary = {}
 
 ## Identity is the authenticated public identity, never a token or token hash.
 ## Reject credential-bearing endpoints rather than deriving a key from secrets.
-static func context_key(host: String, database: String, profile: String, identity: String) -> String:
+static func context_key(
+	host: String, database: String, profile: String, identity: String
+) -> String:
 	if host.is_empty() or database.is_empty() or profile.is_empty() or identity.is_empty():
 		return ""
 	if "@" in host or "?" in host or "#" in host:
@@ -28,7 +30,11 @@ func load_file(path := PATH) -> Error:
 	if file == null:
 		return FileAccess.get_open_error()
 	var parsed: Variant = JSON.parse_string(file.get_as_text())
-	if not parsed is Dictionary or parsed.get("version", -1) != VERSION or not parsed.get("baselines") is Dictionary:
+	if (
+		not parsed is Dictionary
+		or parsed.get("version", -1) != VERSION
+		or not parsed.get("baselines") is Dictionary
+	):
 		return ERR_FILE_CORRUPT
 	for key: Variant in parsed.baselines:
 		if key is String and key.length() == 64 and _valid_baseline(parsed.baselines[key]):
@@ -63,12 +69,18 @@ func forget(key: String) -> void:
 ## Actual open alerts are passed through even without a previous baseline.
 func digest(key: String, current: Dictionary, open_alerts: Array, events: Array) -> Dictionary:
 	var result := {
-		"baseline_available": false, "baseline_label": "Locally observed last-session baseline",
-		"needs_you": open_alerts.duplicate(true), "resource_deltas": {},
-		"events": [], "changed_by_others": [], "handled": [],
+		"baseline_available": false,
+		"baseline_label": "Locally observed last-session baseline",
+		"needs_you": open_alerts.duplicate(true),
+		"resource_deltas": {},
+		"events": [],
+		"changed_by_others": [],
+		"handled": [],
 		"coverage_note": "Earlier events may be missing · up to 200 retained events",
-		"unsupported_note": "Player attribution and handled summaries are unavailable from this server contract.",
-		"state": "first_visit", "message": "No local baseline for this colony and identity.",
+		"unsupported_note":
+		"Player attribution and handled summaries are unavailable from this server contract.",
+		"state": "first_visit",
+		"message": "No local baseline for this colony and identity.",
 	}
 	if key.is_empty():
 		result.state = "unsupported"
@@ -81,7 +93,11 @@ func digest(key: String, current: Dictionary, open_alerts: Array, events: Array)
 	if not _baselines.has(key):
 		return result
 	var baseline: Dictionary = _baselines[key]
-	if int(current.generation) != int(baseline.generation) or float(current.game_seconds) < float(baseline.game_seconds) or int(current.event_watermark) < int(baseline.event_watermark):
+	if (
+		int(current.generation) != int(baseline.generation)
+		or float(current.game_seconds) < float(baseline.game_seconds)
+		or int(current.event_watermark) < int(baseline.event_watermark)
+	):
 		forget(key)
 		result.state = "reset"
 		result.message = "Colony reset or clock moved backward · previous local baseline discarded."
@@ -90,11 +106,17 @@ func digest(key: String, current: Dictionary, open_alerts: Array, events: Array)
 	result.state = "available"
 	result.message = "Changes since your locally observed last session."
 	result.away_game_seconds = float(current.game_seconds) - float(baseline.game_seconds)
-	if current.has("server_time") and baseline.has("server_time") and float(current.server_time) >= float(baseline.server_time):
+	if (
+		current.has("server_time")
+		and baseline.has("server_time")
+		and float(current.server_time) >= float(baseline.server_time)
+	):
 		result.away_server_seconds = float(current.server_time) - float(baseline.server_time)
 	for resource: Variant in current.resources:
 		if baseline.resources.has(resource):
-			result.resource_deltas[resource] = float(current.resources[resource]) - float(baseline.resources[resource])
+			result.resource_deltas[resource] = (
+				float(current.resources[resource]) - float(baseline.resources[resource])
+			)
 	for event: Variant in events:
 		if event is Dictionary and event.get("id", -1) > baseline.event_watermark:
 			result.events.append(event.duplicate(true))
@@ -112,7 +134,10 @@ static func _valid_baseline(value: Variant) -> bool:
 	for resource: Variant in value.resources:
 		if not resource is String or not _number(value.resources[resource]):
 			return false
-	return not value.has("server_time") or (_number(value.server_time) and float(value.server_time) >= 0.0)
+	return (
+		not value.has("server_time")
+		or (_number(value.server_time) and float(value.server_time) >= 0.0)
+	)
 
 
 static func _number(value: Variant) -> bool:
@@ -120,7 +145,12 @@ static func _number(value: Variant) -> bool:
 
 
 static func _minimal(value: Dictionary) -> Dictionary:
-	var result := {"generation": int(value.generation), "game_seconds": float(value.game_seconds), "event_watermark": int(value.event_watermark), "resources": value.resources.duplicate()}
+	var result := {
+		"generation": int(value.generation),
+		"game_seconds": float(value.game_seconds),
+		"event_watermark": int(value.event_watermark),
+		"resources": value.resources.duplicate()
+	}
 	if value.has("server_time"):
 		result.server_time = float(value.server_time)
 	return result

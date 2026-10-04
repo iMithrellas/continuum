@@ -2,12 +2,15 @@
 extends SceneTree
 
 
-class RecordingClient extends SpacetimeDBClient:
+class RecordingClient:
+	extends SpacetimeDBClient
 	var reducer_name := ""
 	var arguments: Array = []
 	var argument_types: Array = []
 
-	func call_reducer(p_name: String, args: Array = [], types: Array = []) -> SpacetimeDBReducerCall:
+	func call_reducer(
+		p_name: String, args: Array = [], types: Array = []
+	) -> SpacetimeDBReducerCall:
 		reducer_name = p_name
 		arguments = args
 		argument_types = types
@@ -29,7 +32,9 @@ func _initialize() -> void:
 		var stream := StreamPeerBuffer.new()
 		stream.data_array = serializer._spb.data_array
 		stream.big_endian = false
-		var type_name: StringName = &"ContinuumBuilding" if row == building else &"ContinuumBuildingThermalProperty"
+		var type_name: StringName = (
+			&"ContinuumBuilding" if row == building else &"ContinuumBuildingThermalProperty"
+		)
 		var decoded: Resource = deserializer._parse_generic_type(stream, type_name)
 		assert(not deserializer.has_error(), deserializer.get_last_error())
 		assert(stream.get_position() == stream.data_array.size())
@@ -50,7 +55,9 @@ func _initialize() -> void:
 	assert(db.building_thermal_property.building_id.find(41) == null)
 	assert(ContinuumBuilding.primary_key == &"id")
 	assert(ContinuumBuildingThermalProperty.primary_key == &"building_id")
-	assert(ContinuumBuildingThermalProperty.BSATN_TYPES[&"thermal_resistance_m_2_k_per_w"] == &"F32")
+	assert(
+		ContinuumBuildingThermalProperty.BSATN_TYPES[&"thermal_resistance_m_2_k_per_w"] == &"F32"
+	)
 	assert(ContinuumModuleDb.table_names.has("building"))
 	assert(ContinuumModuleDb.table_names.has("building_thermal_property"))
 	var reducers := ContinuumModuleReducers.new(client)
@@ -62,12 +69,16 @@ func _initialize() -> void:
 	assert(client.argument_types == [&"U64"])
 	var storage := ContinuumTileKind.create_storage()
 	reducers.designate_zone_at(1, 2, 3, 4, -5, storage)
-	assert(client.reducer_name == "designate_zone_at" and client.arguments == [1, 2, 3, 4, -5, storage])
+	assert(
+		client.reducer_name == "designate_zone_at" and client.arguments == [1, 2, 3, 4, -5, storage]
+	)
 	assert(client.argument_types == [&"I32", &"I32", &"I32", &"I32", &"I32", &"ContinuumTileKind"])
 	reducers.clear_zone(7)
 	assert(client.reducer_name == "clear_zone" and client.arguments == [7])
 	assert(client.argument_types == [&"U32"])
 	local_db.free()
 	client.free()
-	print("BUILDING_PROPERTIES_BINDINGS_PASS: typed BSATN rows, table/index and exact reducer signatures")
+	print(
+		"BUILDING_PROPERTIES_BINDINGS_PASS: typed BSATN rows, table/index and exact reducer signatures"
+	)
 	quit(0)

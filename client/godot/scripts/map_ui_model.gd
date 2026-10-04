@@ -6,7 +6,8 @@ extends RefCounted
 static func normalize_rect(start: Vector2i, finish: Vector2i) -> Rect2i:
 	return Rect2i(
 		Vector2i(mini(start.x, finish.x), mini(start.y, finish.y)),
-		Vector2i(absi(finish.x - start.x) + 1, absi(finish.y - start.y) + 1))
+		Vector2i(absi(finish.x - start.x) + 1, absi(finish.y - start.y) + 1)
+	)
 
 
 static func clamp_cell(cell: Vector2i, grid: Vector2i) -> Vector2i:

@@ -28,8 +28,15 @@ var manage_physical := true
 var eviction_adapter := Callable()
 var _pinned: Dictionary = {}
 
-func attach(value_client: Variant, value_model: LayeredTerrainModel, session_epoch: int,
-		world_generation: int, queries: Callable, snapshot: Callable) -> void:
+
+func attach(
+	value_client: Variant,
+	value_model: LayeredTerrainModel,
+	session_epoch: int,
+	world_generation: int,
+	queries: Callable,
+	snapshot: Callable
+) -> void:
 	stop()
 	_prune_retired()
 	client = value_client
@@ -39,21 +46,35 @@ func attach(value_client: Variant, value_model: LayeredTerrainModel, session_epo
 	query_adapter = queries
 	snapshot_adapter = snapshot
 
+
 func current(value_client: Variant, session_epoch: int, world_generation: int) -> bool:
 	return client == value_client and epoch == session_epoch and generation == world_generation
+
 
 func request_frame(rect: Rect2i, pixels_per_cell: float, cut: int) -> void:
 	if model == null or client == null:
 		return
 	var area := rect.intersection(model.bounds())
 	var edge := model.source_edge
-	var start := Vector2i(floori(area.position.x / float(edge)), floori(area.position.y / float(edge)))
+	var start := Vector2i(
+		floori(area.position.x / float(edge)), floori(area.position.y / float(edge))
+	)
 	var finish := Vector2i(ceili(area.end.x / float(edge)), ceili(area.end.y / float(edge)))
 	var count := maxi(0, finish.x - start.x) * maxi(0, finish.y - start.y)
 	_wanted.clear()
 	for coordinate: Vector2i in _pinned:
 		_wanted[coordinate] = true
-	if pixels_per_cell < 1.0 or count > max_resident or (manage_physical and (maxi(area.size.x, area.size.y) > max_detail_axis or area.get_area() > max_detail_samples)):
+	if (
+		pixels_per_cell < 1.0
+		or count > max_resident
+		or (
+			manage_physical
+			and (
+				maxi(area.size.x, area.size.y) > max_detail_axis
+				or area.get_area() > max_detail_samples
+			)
+		)
+	):
 		mode = &"overview"
 		var stride := 1
 		while stride * maxf(pixels_per_cell, 0.0001) < 2.0:
@@ -70,6 +91,7 @@ func request_frame(rect: Rect2i, pixels_per_cell: float, cut: int) -> void:
 			_release(coordinate)
 	_pump()
 
+
 func _pump() -> void:
 	if client == null or not client.is_connected_db() or not query_adapter.is_valid():
 		return
@@ -82,7 +104,9 @@ func _pump() -> void:
 			break
 		if _entries.has(coordinate):
 			continue
-		var queries: PackedStringArray = query_adapter.call(coordinate, model.source_edge, generation)
+		var queries: PackedStringArray = query_adapter.call(
+			coordinate, model.source_edge, generation
+		)
 		if queries.is_empty():
 			failed.emit("Terrain query adapter returned no queries.")
 			return
@@ -92,18 +116,34 @@ func _pump() -> void:
 			return
 		_request_serial += 1
 		var serial := _request_serial
-		_entries[coordinate] = {"handle": handle, "applied": false, "releasing": false, "seconds": 0.0, "serial": serial,
-			"transport": LayeredTerrainModel.field(client, "_connection")}
+		_entries[coordinate] = {
+			"handle": handle,
+			"applied": false,
+			"releasing": false,
+			"seconds": 0.0,
+			"serial": serial,
+			"transport": LayeredTerrainModel.field(client, "_connection")
+		}
 		if manage_physical:
 			model.set_chunk_complete(coordinate, false)
 		handle.applied.connect(_applied.bind(coordinate, serial, client, epoch, generation))
 		handle.end.connect(_ended.bind(coordinate, serial, client, epoch, generation))
 		pending += 1
 
-func _matches(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int) -> bool:
-	return current(owner, session_epoch, world_generation) and _entries.has(coordinate) and _entries[coordinate].serial == serial
 
-func _applied(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int) -> void:
+func _matches(
+	coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int
+) -> bool:
+	return (
+		current(owner, session_epoch, world_generation)
+		and _entries.has(coordinate)
+		and _entries[coordinate].serial == serial
+	)
+
+
+func _applied(
+	coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int
+) -> void:
 	if not _matches(coordinate, serial, owner, session_epoch, world_generation):
 		return
 	_entries[coordinate].applied = true
@@ -111,7 +151,10 @@ func _applied(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: 
 	if not _wanted.has(coordinate):
 		_release(coordinate)
 		return
-	if not snapshot_adapter.is_valid() or not bool(snapshot_adapter.call(model, coordinate, owner, generation)):
+	if (
+		not snapshot_adapter.is_valid()
+		or not bool(snapshot_adapter.call(model, coordinate, owner, generation))
+	):
 		_wanted.erase(coordinate)
 		failed.emit("Terrain snapshot is incomplete or invalid.")
 		_release(coordinate)
@@ -120,6 +163,7 @@ func _applied(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: 
 		model.set_chunk_complete(coordinate, true)
 	changed.emit()
 	_pump()
+
 
 func _release(coordinate: Vector2i) -> void:
 	if not _entries.has(coordinate):
@@ -139,7 +183,10 @@ func _release(coordinate: Vector2i) -> void:
 		client.discard_subscription(entry.handle)
 		_entries.erase(coordinate)
 
-func _ended(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int) -> void:
+
+func _ended(
+	coordinate: Vector2i, serial: int, owner: Variant, session_epoch: int, world_generation: int
+) -> void:
 	if not _matches(coordinate, serial, owner, session_epoch, world_generation):
 		return
 	var expected: bool = _entries[coordinate].releasing
@@ -150,6 +197,7 @@ func _ended(coordinate: Vector2i, serial: int, owner: Variant, session_epoch: in
 		failed.emit("Terrain subscription ended before completion.")
 	changed.emit()
 	_pump()
+
 
 func tick(delta: float) -> void:
 	_prune_retired()
@@ -169,6 +217,7 @@ func tick(delta: float) -> void:
 			entry.seconds = -INF
 	_pump()
 
+
 func stop() -> void:
 	_wanted.clear()
 	_pinned.clear()
@@ -182,8 +231,13 @@ func stop() -> void:
 			if old_client.is_connected_db():
 				var entry: Dictionary = _entries[coordinate]
 				var serial: int = entry.serial
-				_retired[serial] = {"owner": old_client, "handle": handle,
-					"releasing": entry.releasing, "seconds": entry.seconds, "transport": entry.transport}
+				_retired[serial] = {
+					"owner": old_client,
+					"handle": handle,
+					"releasing": entry.releasing,
+					"seconds": entry.seconds,
+					"transport": entry.transport
+				}
 				handle.end.connect(_retired_ended.bind(serial), CONNECT_ONE_SHOT)
 				if entry.applied:
 					if not entry.releasing:
@@ -195,6 +249,7 @@ func stop() -> void:
 	_entries.clear()
 	query_adapter = Callable()
 	snapshot_adapter = Callable()
+
 
 func _retired_applied(serial: int) -> void:
 	if not _retired.has(serial):
@@ -214,6 +269,7 @@ func _retired_applied(serial: int) -> void:
 		entry["discard_queued"] = true
 		_discard_retired.call_deferred(serial)
 
+
 func _discard_retired(serial: int) -> void:
 	if not _retired.has(serial):
 		return
@@ -222,6 +278,7 @@ func _discard_retired(serial: int) -> void:
 	_retired.erase(serial)
 	_pump()
 
+
 static func _transport_open(owner: Variant) -> bool:
 	if not owner.is_connected_db():
 		return false
@@ -229,8 +286,14 @@ static func _transport_open(owner: Variant) -> bool:
 	var socket: Variant = LayeredTerrainModel.field(connection, "_websocket")
 	return socket == null or socket.get_ready_state() == WebSocketPeer.STATE_OPEN
 
+
 static func _retired_transport_live(entry: Dictionary) -> bool:
-	return is_instance_valid(entry.owner) and LayeredTerrainModel.field(entry.owner, "_connection") == entry.transport and _transport_open(entry.owner)
+	return (
+		is_instance_valid(entry.owner)
+		and LayeredTerrainModel.field(entry.owner, "_connection") == entry.transport
+		and _transport_open(entry.owner)
+	)
+
 
 func _prune_retired() -> void:
 	for serial: int in _retired.keys():
@@ -240,9 +303,11 @@ func _prune_retired() -> void:
 				entry.owner.discard_subscription(entry.handle)
 			_retired.erase(serial)
 
+
 func _retired_ended(serial: int) -> void:
 	_retired.erase(serial)
 	_pump()
+
 
 func outstanding_count() -> int:
 	var count := _retired.size()
@@ -250,6 +315,7 @@ func outstanding_count() -> int:
 		if not entry.applied or entry.releasing:
 			count += 1
 	return count
+
 
 ## Terminal owner destruction, distinct from reusable stop()/attach(). Live
 ## retired handles still finish through their SDK ack callbacks; never discard
@@ -262,8 +328,10 @@ func dispose() -> void:
 		for connection in get_signal_connection_list(definition.name):
 			disconnect(definition.name, connection.callable)
 
+
 func resident_count() -> int:
 	return _entries.size()
+
 
 func _evict(coordinate: Vector2i) -> void:
 	if manage_physical:
@@ -271,8 +339,14 @@ func _evict(coordinate: Vector2i) -> void:
 	if eviction_adapter.is_valid():
 		eviction_adapter.call(coordinate)
 
+
 func complete(coordinate: Vector2i) -> bool:
-	return _entries.has(coordinate) and _entries[coordinate].applied and not _entries[coordinate].releasing
+	return (
+		_entries.has(coordinate)
+		and _entries[coordinate].applied
+		and not _entries[coordinate].releasing
+	)
+
 
 func active_coordinates() -> Array:
 	var result: Array = []
@@ -281,13 +355,24 @@ func active_coordinates() -> Array:
 			result.append(coordinate)
 	return result
 
+
 func pin_selection(rect: Rect2i) -> void:
 	_pinned.clear()
-	if model == null or rect.get_area() <= 0 or rect.get_area() > LayeredTerrainModel.MAX_SELECTION_CELLS:
+	if (
+		model == null
+		or rect.get_area() <= 0
+		or rect.get_area() > LayeredTerrainModel.MAX_SELECTION_CELLS
+	):
 		return
 	var area := rect.intersection(model.bounds())
-	for y in range(floori(area.position.y / float(model.source_edge)), ceili(area.end.y / float(model.source_edge))):
-		for x in range(floori(area.position.x / float(model.source_edge)), ceili(area.end.x / float(model.source_edge))):
+	for y in range(
+		floori(area.position.y / float(model.source_edge)),
+		ceili(area.end.y / float(model.source_edge))
+	):
+		for x in range(
+			floori(area.position.x / float(model.source_edge)),
+			ceili(area.end.x / float(model.source_edge))
+		):
 			if _pinned.size() >= max_resident:
 				return
 			_pinned[Vector2i(x, y)] = true

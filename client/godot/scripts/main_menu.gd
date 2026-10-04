@@ -25,6 +25,7 @@ var resume_available: Callable
 var _busy := false
 var _disconnect_button: Button
 
+
 func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetrics) -> void:
 	main = owner
 	settings = loaded_settings
@@ -32,6 +33,7 @@ func setup(owner: Control, loaded_settings: ClientSettings, ui_metrics: UiMetric
 	theme = DeckTheme.create(metrics)
 	_build()
 	_refresh_last_button()
+
 
 func _build() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -100,20 +102,26 @@ func _build() -> void:
 	_ui_scale.name = "UiScale"
 	for value: int in ClientSettings.UI_SCALES:
 		_ui_scale.add_item("%d%%" % value, value)
-	_ui_scale.select(ClientSettings.UI_SCALES.find(ClientSettings.normalize_ui_scale(settings.ui_scale_percent)))
-	_ui_scale.item_selected.connect(func(index: int) -> void:
-		settings.ui_scale_percent = _ui_scale.get_item_id(index)
-		settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
-		_apply_settings())
+	_ui_scale.select(
+		ClientSettings.UI_SCALES.find(ClientSettings.normalize_ui_scale(settings.ui_scale_percent))
+	)
+	_ui_scale.item_selected.connect(
+		func(index: int) -> void:
+			settings.ui_scale_percent = _ui_scale.get_item_id(index)
+			settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
+			_apply_settings()
+	)
 	_settings_panel.add_child(_ui_scale)
 	_reduced_motion = CheckButton.new()
 	_reduced_motion.name = "ReducedMotion"
 	_reduced_motion.text = "Reduce motion"
 	_reduced_motion.tooltip_text = "Keep critical alert borders steady rather than pulsing."
 	_reduced_motion.button_pressed = settings.reduced_motion
-	_reduced_motion.toggled.connect(func(value: bool) -> void:
-		settings.reduced_motion = value
-		_apply_settings())
+	_reduced_motion.toggled.connect(
+		func(value: bool) -> void:
+			settings.reduced_motion = value
+			_apply_settings()
+	)
 	_settings_panel.add_child(_reduced_motion)
 	_diagnostics_toggle = CheckButton.new()
 	_diagnostics_toggle.text = "Show diagnostics"
@@ -131,23 +139,30 @@ func _build() -> void:
 	_graph_toggle.toggled.connect(_graph_changed)
 	_settings_panel.add_child(_graph_toggle)
 
+
 func set_status(message: String, warning := false) -> void:
 	_status.text = "Warning · " + message if warning else message
 	_status_glyph.texture = ThemeTokens.glyph("warn" if warning else "notice")
-	_status.add_theme_color_override("font_color", ThemeTokens.color("warn") if warning else ThemeTokens.color("ink-muted"))
+	_status.add_theme_color_override(
+		"font_color", ThemeTokens.color("warn") if warning else ThemeTokens.color("ink-muted")
+	)
+
 
 func set_busy(busy: bool) -> void:
 	_busy = busy
 	_refresh_last_button()
 
+
 func _process(_delta: float) -> void:
 	if visible:
 		_refresh_last_button()
+
 
 func show_menu() -> void:
 	visible = true
 	set_busy(false)
 	_refresh_last_button()
+
 
 func _join_last() -> void:
 	var offered_resume := _last_button.text == "Resume colony"
@@ -171,15 +186,19 @@ func _join_last() -> void:
 	set_status("Connecting to %s / %s ..." % [host, database])
 	join_requested.emit(host, database)
 
+
 func join_failed(message: String) -> void:
 	set_busy(false)
 	set_status(message, true)
 
+
 func _toggle_settings() -> void:
 	_settings_panel.visible = not _settings_panel.visible
 
+
 func _open_server_management() -> void:
 	server_management_requested.emit()
+
 
 func _diagnostics_changed(value: bool) -> void:
 	settings.diagnostics_enabled = value
@@ -189,31 +208,42 @@ func _diagnostics_changed(value: bool) -> void:
 		_graph_toggle.button_pressed = false
 	_apply_settings()
 
+
 func _graph_changed(value: bool) -> void:
 	settings.diagnostics_graph_enabled = value if settings.diagnostics_enabled else false
 	_apply_settings()
+
 
 func _apply_settings() -> void:
 	if main != null and main.has_method("apply_settings"):
 		main.apply_settings(settings)
 	settings_changed.emit(settings)
 
+
 func apply_metrics(next_metrics: UiMetrics) -> void:
 	metrics = UiMetrics.new()
 	theme = DeckTheme.create(metrics)
+
 
 func _refresh_last_button() -> void:
 	var resumable := _can_resume()
 	_disconnect_button.visible = resumable
 	_last_button.text = "Resume colony" if resumable else "Join last server"
 	_last_button.disabled = _busy or not (resumable or _has_last_server())
-	_last_button.tooltip_text = "No successfully joined server yet." if _last_button.disabled else settings.server_host + " / " + settings.database
+	_last_button.tooltip_text = (
+		"No successfully joined server yet."
+		if _last_button.disabled
+		else settings.server_host + " / " + settings.database
+	)
+
 
 func _can_resume() -> bool:
 	return resume_available.is_valid() and bool(resume_available.call())
 
+
 func _has_last_server() -> bool:
 	return not settings.server_host.is_empty() and not settings.database.is_empty()
+
 
 func _button(text: String, action: Callable) -> Button:
 	var result := Button.new()
@@ -223,6 +253,7 @@ func _button(text: String, action: Callable) -> Button:
 	result.pressed.connect(action)
 	return result
 
+
 func _label(text: String) -> Label:
 	var result := Label.new()
 	result.text = text
@@ -231,6 +262,7 @@ func _label(text: String) -> Label:
 	result.custom_minimum_size = Vector2(1, 0)
 	result.add_theme_color_override("font_color", DeckTheme.MUTED)
 	return result
+
 
 func _glyph(parent: Node, name: String) -> TextureRect:
 	var icon := TextureRect.new()

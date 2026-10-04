@@ -12,11 +12,14 @@ var last_progress := ""
 var capture_busy := false
 var phase_captures := {}
 
+
 func _initialize() -> void:
 	for argument in OS.get_cmdline_user_args():
-		if argument.begins_with("--gate-dir="): directory = argument.trim_prefix("--gate-dir=")
+		if argument.begins_with("--gate-dir="):
+			directory = argument.trim_prefix("--gate-dir=")
 	assert(not directory.is_empty())
 	call_deferred("start")
+
 
 func start() -> void:
 	root.size = Vector2i(1280, 720)
@@ -24,6 +27,7 @@ func start() -> void:
 	main = load("res://scenes/main.tscn").instantiate()
 	root.add_child(main)
 	create_timer(0.05).timeout.connect(poll)
+
 
 func poll() -> void:
 	if not busy and FileAccess.file_exists(directory + "/command.json"):
@@ -34,6 +38,7 @@ func poll() -> void:
 			await run(command)
 			busy = false
 	create_timer(0.05).timeout.connect(poll)
+
 
 func snapshot() -> Dictionary:
 	var loading = main._large_world.loading
@@ -49,28 +54,57 @@ func snapshot() -> Dictionary:
 	var windows := {}
 	for key in ["construction", "operations"]:
 		var window: Control = main.workspace.windows[key]
-		windows[key] = {"visible": window.is_visible_in_tree(), "rect": str(window.get_global_rect()),
+		windows[key] = {
+			"visible": window.is_visible_in_tree(),
+			"rect": str(window.get_global_rect()),
 			"inside": main.workspace.area.get_global_rect().encloses(window.get_global_rect()),
-			"horizontal_overflow": window.scroll.get_h_scroll_bar().max_value > window.scroll.size.x + 1}
-	return {"id": serial, "ready": main._state_ready, "operator": main._can_operate,
-		"admin": main._is_admin, "pending": main._intent_request != null,
-		"feedback": main._intent_feedback.text, "feedback_detail": main._intent_feedback.tooltip_text,
-		"room": main._construction_panel.selection.text, "usage": main._zones_panel.selection.text,
-		"driver_error": driver_error, "identity": spacetime.Continuum.get_local_identity().hex_encode(),
-		"phase": loading.phase, "completed": loading.completed, "total": loading.total,
-		"generation": loading.generation, "playable": loading.playable, "world_ready": loading._world_ready,
-		"overlay": main._world_overlay.visible, "loading_error": loading.error,
-		"mode": str(map.terrain_model.presentation_mode), "cut": map.terrain_model.cut,
-		"cell_pixels": map._cell_size(), "center": [center.x, center.y],
+			"horizontal_overflow":
+			window.scroll.get_h_scroll_bar().max_value > window.scroll.size.x + 1
+		}
+	return {
+		"id": serial,
+		"ready": main._state_ready,
+		"operator": main._can_operate,
+		"admin": main._is_admin,
+		"pending": main._intent_request != null,
+		"feedback": main._intent_feedback.text,
+		"feedback_detail": main._intent_feedback.tooltip_text,
+		"room": main._construction_panel.selection.text,
+		"usage": main._zones_panel.selection.text,
+		"driver_error": driver_error,
+		"identity": spacetime.Continuum.get_local_identity().hex_encode(),
+		"phase": loading.phase,
+		"completed": loading.completed,
+		"total": loading.total,
+		"generation": loading.generation,
+		"playable": loading.playable,
+		"world_ready": loading._world_ready,
+		"overlay": main._world_overlay.visible,
+		"loading_error": loading.error,
+		"mode": str(map.terrain_model.presentation_mode),
+		"cut": map.terrain_model.cut,
+		"cell_pixels": map._cell_size(),
+		"center": [center.x, center.y],
 		"center_ecology_u8": ecology,
-		"visible_rect": str(map.visible_grid_rect()), "resident": map.terrain_model.source_chunks.size(),
+		"visible_rect": str(map.visible_grid_rect()),
+		"resident": map.terrain_model.source_chunks.size(),
 		"terrain_pending_samples": map.terrain_view.pending_samples,
 		"render_sample_count": map.terrain_view._frame.get("samples", {}).size(),
 		"detail_entries": main._large_world.detail.resident_count(),
-		"overview_rows": spacetime.Continuum.db.terrain_overview_chunk.iter().size() if spacetime.Continuum.db != null else 0,
-		"size": [root.size.x, root.size.y], "ui_scale": main._settings.ui_scale_percent,
-		"map_only": main.workspace.map_only, "windows": windows,
-		"selection": str(main._selected_rect), "cell_label": main._cell_label.text}
+		"overview_rows":
+		(
+			spacetime.Continuum.db.terrain_overview_chunk.iter().size()
+			if spacetime.Continuum.db != null
+			else 0
+		),
+		"size": [root.size.x, root.size.y],
+		"ui_scale": main._settings.ui_scale_percent,
+		"map_only": main.workspace.map_only,
+		"windows": windows,
+		"selection": str(main._selected_rect),
+		"cell_label": main._cell_label.text
+	}
+
 
 func answer(extra: Dictionary = {}) -> void:
 	var result := snapshot()
@@ -80,30 +114,45 @@ func answer(extra: Dictionary = {}) -> void:
 	file.close()
 	DirAccess.rename_absolute(directory + "/response.tmp", directory + "/response.json")
 
+
 func _process(_delta: float) -> bool:
-	if main == null or not watch_progress: return false
+	if main == null or not watch_progress:
+		return false
 	var loading = main._large_world.loading
-	var key := "%d/%s/%d/%d/%s" % [loading.generation, loading.phase, loading.completed, loading.total, loading.playable]
+	var key := (
+		"%d/%s/%d/%d/%s"
+		% [loading.generation, loading.phase, loading.completed, loading.total, loading.playable]
+	)
 	if key != last_progress:
 		last_progress = key
 		var state := snapshot()
 		state.erase("identity")
 		state["msec"] = Time.get_ticks_msec()
 		var file := FileAccess.open(directory + "/progress.ndjson", FileAccess.READ_WRITE)
-		if file == null: file = FileAccess.open(directory + "/progress.ndjson", FileAccess.WRITE)
+		if file == null:
+			file = FileAccess.open(directory + "/progress.ndjson", FileAccess.WRITE)
 		file.seek_end()
 		file.store_line(JSON.stringify(state))
 		file.close()
-		var bucket := "%d-%s-%d" % [loading.generation, loading.phase, floori(4.0 * loading.completed / maxi(1, loading.total))]
+		var bucket := (
+			"%d-%s-%d"
+			% [
+				loading.generation,
+				loading.phase,
+				floori(4.0 * loading.completed / maxi(1, loading.total))
+			]
+		)
 		if not phase_captures.has(bucket) and not capture_busy:
 			phase_captures[bucket] = true
 			capture_busy = true
 			capture_progress.call_deferred(bucket)
 	return false
 
+
 func capture_progress(bucket: String) -> void:
 	await capture("generation-" + bucket.to_lower().replace(" ", "-"))
 	capture_busy = false
+
 
 func capture(name: String) -> void:
 	await RenderingServer.frame_post_draw
@@ -115,8 +164,10 @@ func capture(name: String) -> void:
 	file.store_string(JSON.stringify(state, "\t"))
 	file.close()
 
+
 func key(code: Key, ctrl := false, target: Window = null) -> void:
-	if target == null: target = root
+	if target == null:
+		target = root
 	for pressed in [true, false]:
 		var event := InputEventKey.new()
 		event.keycode = code
@@ -126,13 +177,18 @@ func key(code: Key, ctrl := false, target: Window = null) -> void:
 		Input.parse_input_event(event)
 		await process_frame
 
+
 func click(control: Control) -> void:
 	if control == null or not control.is_visible_in_tree():
-		driver_error = "Control not visible: " + (str(control.get_path()) if control != null else "missing named button")
+		driver_error = (
+			"Control not visible: "
+			+ (str(control.get_path()) if control != null else "missing named button")
+		)
 		return
 	var parent := control.get_parent()
 	while parent != null:
-		if parent is ScrollContainer: parent.ensure_control_visible(control)
+		if parent is ScrollContainer:
+			parent.ensure_control_visible(control)
 		parent = parent.get_parent()
 	await process_frame
 	control.grab_focus()
@@ -148,12 +204,16 @@ func click(control: Control) -> void:
 		root.push_input(event)
 		await process_frame
 
+
 func named(node: Node, text: String) -> Button:
-	if node is Button and node.text == text and node.is_visible_in_tree(): return node
+	if node is Button and node.text == text and node.is_visible_in_tree():
+		return node
 	for child in node.get_children():
 		var found := named(child, text)
-		if found != null: return found
+		if found != null:
+			return found
 	return null
+
 
 func input_text(control: LineEdit, text: String) -> void:
 	await click(control)
@@ -165,12 +225,16 @@ func input_text(control: LineEdit, text: String) -> void:
 		root.push_input(event)
 	await process_frame
 
+
 func map_only(value: bool) -> void:
-	if main.workspace.map_only != value: await key(KEY_BACKSLASH, true)
+	if main.workspace.map_only != value:
+		await key(KEY_BACKSLASH, true)
+
 
 func build_view() -> void:
 	await map_only(false)
 	await click(main.workspace._tab_buttons["build"])
+
 
 func camera(x: float, y: float, pixels: float) -> void:
 	var map = main.map
@@ -181,12 +245,15 @@ func camera(x: float, y: float, pixels: float) -> void:
 	root.push_input(motion)
 	await process_frame
 
+
 func gesture(x: int, y: int, width: int, depth: int) -> void:
 	await map_only(true)
 	await camera(x + width * 0.5, y + depth * 0.5, 32)
 	var map = main.map
 	var start: Vector2 = map.get_global_transform() * map.world_to_screen(Vector2(x + 0.5, y + 0.5))
-	var finish: Vector2 = map.get_global_transform() * map.world_to_screen(Vector2(x + width - 0.5, y + depth - 0.5))
+	var finish: Vector2 = (
+		map.get_global_transform() * map.world_to_screen(Vector2(x + width - 0.5, y + depth - 0.5))
+	)
 	var press := InputEventMouseButton.new()
 	press.button_index = MOUSE_BUTTON_LEFT
 	press.pressed = true
@@ -201,17 +268,23 @@ func gesture(x: int, y: int, width: int, depth: int) -> void:
 	release.position = finish
 	root.push_input(release)
 
+
 func run(command: Dictionary) -> void:
 	driver_error = ""
 	match command.action:
-		"status": pass
-		"capture": await capture(command.name)
-		"watch": watch_progress = command.enabled
+		"status":
+			pass
+		"capture":
+			await capture(command.name)
+		"watch":
+			watch_progress = command.enabled
 		"early_attempt":
 			var before := snapshot()
 			await click(main._construction_panel.activate)
 			# Keep the probe away from the overlay's real Disconnect button.
-			var point: Vector2 = main.map.get_global_rect().position + main.map.size * Vector2(0.4, 0.8)
+			var point: Vector2 = (
+				main.map.get_global_rect().position + main.map.size * Vector2(0.4, 0.8)
+			)
 			for pressed in [true, false]:
 				var event := InputEventMouseButton.new()
 				event.position = point
@@ -219,9 +292,15 @@ func run(command: Dictionary) -> void:
 				event.pressed = pressed
 				root.push_input(event)
 				await process_frame
-			answer({"before_attempt": {"ready": before.ready, "phase": before.phase, "overlay": before.overlay}})
+			answer(
+				{
+					"before_attempt":
+					{"ready": before.ready, "phase": before.phase, "overlay": before.overlay}
+				}
+			)
 			return
-		"servers": await click(named(main._menu, "Servers"))
+		"servers":
+			await click(named(main._menu, "Servers"))
 		"join":
 			await input_text(main._server_management._join_host, command.host)
 			await input_text(main._server_management._join_database, command.database)
@@ -229,8 +308,10 @@ func run(command: Dictionary) -> void:
 			await click(main._server_management._join_button)
 		"resize":
 			root.size = Vector2i(command.width, command.height)
-			for frame in 4: await process_frame
-		"camera": await camera(command.x, command.y, command.pixels)
+			for frame in 4:
+				await process_frame
+		"camera":
+			await camera(command.x, command.y, command.pixels)
 		"navigate_capture":
 			await camera(command.x, command.y, command.pixels)
 			await capture(command.name)
@@ -242,8 +323,10 @@ func run(command: Dictionary) -> void:
 			await capture(command.name)
 			answer({"tooltip": main.map._get_tooltip(main.map.size * 0.5)})
 			return
-		"map_only": await map_only(command.enabled)
-		"build_view": await build_view()
+		"map_only":
+			await map_only(command.enabled)
+		"build_view":
+			await build_view()
 		"scale":
 			await click(main._session_menu)
 			var popup: PopupMenu = main._session_menu.get_popup()
@@ -259,7 +342,8 @@ func run(command: Dictionary) -> void:
 				await key(KEY_DOWN, false, options)
 			await key(KEY_ENTER, false, options)
 			await click(main._menu._last_button)
-		"fit": await click(main._map_zoom_buttons["fit"])
+		"fit":
+			await click(main._map_zoom_buttons["fit"])
 		"cut":
 			while main.map.terrain_model.cut != int(command.z):
 				var previous: int = main.map.terrain_model.cut
@@ -273,8 +357,11 @@ func run(command: Dictionary) -> void:
 			await gesture(command.x, command.y, 1, 1)
 		"draw":
 			await build_view()
-			var panel = main._construction_panel if command.system == "construction" else main._zones_panel
-			if command.system == "zones": await click(panel.choices[ContinuumTileKind.Options.storage])
+			var panel = (
+				main._construction_panel if command.system == "construction" else main._zones_panel
+			)
+			if command.system == "zones":
+				await click(panel.choices[ContinuumTileKind.Options.storage])
 			await click(panel.activate)
 			await gesture(command.x, command.y, command.width, command.depth)
 			var pending: bool = main._intent_request != null
@@ -282,7 +369,8 @@ func run(command: Dictionary) -> void:
 			await capture(command.get("name", "planning-request"))
 			answer({"observed_pending": pending, "pending_feedback": feedback})
 			return
-		"key": await key(int(command.code), command.get("ctrl", false))
+		"key":
+			await key(int(command.code), command.get("ctrl", false))
 		"quit":
 			main.leave_session()
 			answer()

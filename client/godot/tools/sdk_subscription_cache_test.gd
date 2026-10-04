@@ -1,15 +1,21 @@
 ## Backend-free real SDK wire/cache regression. Only the WebSocket transport is replaced.
 extends SceneTree
 
-class CaptureConnection extends SpacetimeDBConnection:
+
+class CaptureConnection:
+	extends SpacetimeDBConnection
 	var packets: Array[PackedByteArray] = []
+
 	func is_connected_db() -> bool:
 		return _is_connected
+
 	func send_bytes(bytes: PackedByteArray) -> Error:
 		packets.append(bytes)
 		return OK
+
 	func _process(_delta: float) -> void:
-		pass # Do not poll the unopened socket during asynchronous lifecycle checks.
+		pass  # Do not poll the unopened socket during asynchronous lifecycle checks.
+
 
 var client: ContinuumModuleClient
 var transport: CaptureConnection
@@ -18,8 +24,10 @@ var parser: BSATNDeserializer
 var db: ContinuumModuleDb
 var deleted: Array[int] = []
 
+
 func _initialize() -> void:
 	call_deferred("_run")
+
 
 func _run() -> void:
 	schema = SpacetimeDBSchema.new("Continuum")
@@ -44,14 +52,18 @@ func _run() -> void:
 	await _bounded_pans()
 	await _offline_teardown()
 	client.free()
-	print("SDK_SUBSCRIPTION_CACHE_PASS: wire flag, parsed acks, deleted edit, overlaps, late acks, offline teardown, bounded pans")
+	print(
+		"SDK_SUBSCRIPTION_CACHE_PASS: wire flag, parsed acks, deleted edit, overlaps, late acks, offline teardown, bounded pans"
+	)
 	quit(0)
+
 
 func _row(id: int) -> ContinuumTerrainChunk:
 	var materials: Array[int] = []
 	materials.resize(4096)
 	materials.fill(0)
 	return ContinuumTerrainChunk.create(id, id, 0, 0, materials, 1)
+
 
 func _subscribe(rows: Array[ContinuumTerrainChunk]) -> SpacetimeDBSubscription:
 	var handle := client.subscribe(["SELECT * FROM terrain_chunk"])
@@ -60,14 +72,17 @@ func _subscribe(rows: Array[ContinuumTerrainChunk]) -> SpacetimeDBSubscription:
 	assert(handle.active and client.current_subscriptions.get(handle.query_id) == handle)
 	return handle
 
+
 ## Encodes v2 QueryRows with one table and RowOffsets over generated BSATN rows.
-func _payload(id: int, rows: Array[ContinuumTerrainChunk], unsubscribe: bool, has_rows := true) -> StreamPeerBuffer:
+func _payload(
+	id: int, rows: Array[ContinuumTerrainChunk], unsubscribe: bool, has_rows := true
+) -> StreamPeerBuffer:
 	var buffer := StreamPeerBuffer.new()
 	buffer.big_endian = false
 	buffer.put_u32(0)
 	buffer.put_u32(id)
 	if unsubscribe:
-		buffer.put_u8(0 if has_rows else 1) # Option::Some / None.
+		buffer.put_u8(0 if has_rows else 1)  # Option::Some / None.
 		if not has_rows:
 			buffer.seek(0)
 			return buffer
@@ -75,7 +90,7 @@ func _payload(id: int, rows: Array[ContinuumTerrainChunk], unsubscribe: bool, ha
 	var name_bytes := "terrain_chunk".to_utf8_buffer()
 	buffer.put_u32(name_bytes.size())
 	buffer.put_data(name_bytes)
-	buffer.put_u8(1) # RowOffsets.
+	buffer.put_u8(1)  # RowOffsets.
 	buffer.put_u32(rows.size())
 	var data := PackedByteArray()
 	for row in rows:
@@ -90,17 +105,20 @@ func _payload(id: int, rows: Array[ContinuumTerrainChunk], unsubscribe: bool, ha
 	buffer.seek(0)
 	return buffer
 
+
 func _subscribe_ack(id: int, rows: Array[ContinuumTerrainChunk]) -> void:
 	var buffer := _payload(id, rows, false)
 	var message := parser._read_subscripton_applied_message(buffer)
 	assert(not parser.has_error() and buffer.get_available_bytes() == 0)
 	client._handle_parsed_message(message)
 
+
 func _unsubscribe_ack(id: int, rows: Array[ContinuumTerrainChunk], has_rows := true) -> void:
 	var buffer := _payload(id, rows, true, has_rows)
 	var message := parser._read_unsubscription_applied_message(buffer)
 	assert(not parser.has_error() and buffer.get_available_bytes() == 0)
 	client._handle_parsed_message(message)
+
 
 func _unsubscribe(handle: SpacetimeDBSubscription) -> void:
 	var before := transport.packets.size()
@@ -110,11 +128,12 @@ func _unsubscribe(handle: SpacetimeDBSubscription) -> void:
 	wire.big_endian = false
 	wire.data_array = transport.packets.back()
 	assert(wire.get_u8() == SpacetimeDBClientMessage.UNSUBSCRIBE)
-	wire.get_u32() # Request ID.
+	wire.get_u32()  # Request ID.
 	assert(wire.get_u32() == handle.query_id)
 	assert(wire.get_u8() == 1 and wire.get_available_bytes() == 0)
 	assert(handle.active and not handle.ended)
 	assert(client.current_subscriptions.get(handle.query_id) == handle)
+
 
 func _deleted_while_unsubscribed() -> void:
 	var edit := _row(1)
@@ -136,6 +155,7 @@ func _deleted_while_unsubscribed() -> void:
 	assert(db.terrain_chunk.id.find(2) != null)
 	client._local_db.clear_local_db()
 	assert(db.terrain_chunk.iter().is_empty())
+
 
 func _overlap_and_replacement() -> void:
 	var first := _subscribe([_row(10), _row(11)])
@@ -162,12 +182,14 @@ func _overlap_and_replacement() -> void:
 	_unsubscribe_ack(pending.query_id, [_row(13)])
 	assert(pending.ended and db.terrain_chunk.iter().is_empty())
 
+
 func _bounded_pans() -> void:
 	var old: SpacetimeDBSubscription
 	var old_rows: Array[ContinuumTerrainChunk] = []
 	for pan in range(12):
 		var rows: Array[ContinuumTerrainChunk] = []
-		for source in range(64): rows.append(_row(1000 + pan * 64 + source))
+		for source in range(64):
+			rows.append(_row(1000 + pan * 64 + source))
 		var handle := _subscribe(rows)
 		if old != null:
 			assert(db.terrain_chunk.iter().size() == 128)
@@ -175,9 +197,12 @@ func _bounded_pans() -> void:
 			_unsubscribe_ack(old.query_id, old_rows)
 		assert(db.terrain_chunk.iter().size() == 64)
 		var material_count := 0
-		for row in db.terrain_chunk.iter(): material_count += row.materials.size()
+		for row in db.terrain_chunk.iter():
+			material_count += row.materials.size()
 		assert(material_count == 64 * 4096)
-		assert(client.current_subscriptions.size() == 1 and client._pending_subscriptions.is_empty())
+		assert(
+			client.current_subscriptions.size() == 1 and client._pending_subscriptions.is_empty()
+		)
 		old = handle
 		old_rows = rows
 		await process_frame
@@ -186,6 +211,7 @@ func _bounded_pans() -> void:
 	_unsubscribe_ack(old.query_id, old_rows)
 	await process_frame
 	assert(db.terrain_chunk.iter().is_empty() and client.get_child_count() == 2)
+
 
 func _offline_teardown() -> void:
 	var handle := _subscribe([_row(9999)])

@@ -5,8 +5,10 @@ var client: ContinuumModuleClient
 var stage := 0
 var deadline := 0
 
+
 func _initialize() -> void:
 	call_deferred("run")
+
 
 func run() -> void:
 	var host := ""
@@ -22,9 +24,11 @@ func run() -> void:
 	client.one_time_token = true
 	root.add_child(client)
 	client.connected.connect(on_connected)
-	client.connection_error.connect(func(_code: int, _reason: String) -> void:
-		push_error("private SDK connection failed")
-		quit(1))
+	client.connection_error.connect(
+		func(_code: int, _reason: String) -> void:
+			push_error("private SDK connection failed")
+			quit(1)
+	)
 	deadline = Time.get_ticks_msec() + 30000
 	var options := SpacetimeDBConnectionOptions.new()
 	options.debug_mode = false
@@ -33,12 +37,22 @@ func run() -> void:
 	options.one_time_token = true
 	client.connect_db(host, database, options)
 
+
 func on_connected(_identity: PackedByteArray, _token: String) -> void:
-	var bootstrap := client.subscribe(PackedStringArray([
-		"SELECT * FROM world_generation", "SELECT * FROM world_geometry",
-		"SELECT * FROM world_seed", "SELECT * FROM config", "SELECT * FROM colony",
-		"SELECT * FROM my_role"]))
+	var bootstrap := client.subscribe(
+		PackedStringArray(
+			[
+				"SELECT * FROM world_generation",
+				"SELECT * FROM world_geometry",
+				"SELECT * FROM world_seed",
+				"SELECT * FROM config",
+				"SELECT * FROM colony",
+				"SELECT * FROM my_role"
+			]
+		)
+	)
 	bootstrap.applied.connect(func() -> void: stage = 1)
+
 
 func _process(_delta: float) -> bool:
 	if deadline == 0:
@@ -58,10 +72,18 @@ func _process(_delta: float) -> bool:
 		assert(client.db.my_role.iter().size() == 1)
 		assert(client.db.my_role.iter()[0] is ContinuumMembership)
 		stage = 2
-		var bounded := client.subscribe(PackedStringArray([
-			"SELECT * FROM terrain_column_chunk WHERE chunk_x = 32 AND chunk_y = 32",
-			"SELECT * FROM terrain_overview_chunk WHERE lod = 3 AND cut_z = -1 AND chunk_x = 8 AND chunk_y = 8",
-			"SELECT * FROM terrain_chunk WHERE chunk_x = 64 AND chunk_y = 63 AND chunk_z = 0"]))
+		var bounded := (
+			client
+			. subscribe(
+				PackedStringArray(
+					[
+						"SELECT * FROM terrain_column_chunk WHERE chunk_x = 32 AND chunk_y = 32",
+						"SELECT * FROM terrain_overview_chunk WHERE lod = 3 AND cut_z = -1 AND chunk_x = 8 AND chunk_y = 8",
+						"SELECT * FROM terrain_chunk WHERE chunk_x = 64 AND chunk_y = 63 AND chunk_z = 0"
+					]
+				)
+			)
+		)
 		bounded.applied.connect(func() -> void: stage = 3)
 	if stage == 3:
 		assert(client.db.terrain_column_chunk.iter().size() == 1)
@@ -75,6 +97,8 @@ func _process(_delta: float) -> bool:
 		assert(overview.surface_z.size() == 256 and overview.material.size() == 256)
 		assert(overview.soil_fertility.size() == 256)
 		client.disconnect_db()
-		print("WORLD_BINDINGS_WIRE_PASS: actual SDK bootstrap/Ready/Membership and bounded production source/overview subscriptions")
+		print(
+			"WORLD_BINDINGS_WIRE_PASS: actual SDK bootstrap/Ready/Membership and bounded production source/overview subscriptions"
+		)
 		quit(0)
 	return false

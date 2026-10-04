@@ -5,6 +5,7 @@ extends Node
 const Fixture = preload("res://tools/terrain_fixture.gd")
 var edge := 24
 
+
 func measure(label: String, count: int, action: Callable) -> void:
 	var samples: Array[float] = []
 	for i in count:
@@ -15,7 +16,19 @@ func measure(label: String, count: int, action: Callable) -> void:
 	var total := 0.0
 	for sample in samples:
 		total += sample
-	print("PROFILE %s n=%d mean_ms=%.3f p95_ms=%.3f max_ms=%.3f" % [label, count, total / count, samples[mini(count - 1, floori(count * 0.95))], samples.back()])
+	print(
+		(
+			"PROFILE %s n=%d mean_ms=%.3f p95_ms=%.3f max_ms=%.3f"
+			% [
+				label,
+				count,
+				total / count,
+				samples[mini(count - 1, floori(count * 0.95))],
+				samples.back()
+			]
+		)
+	)
+
 
 func database(include_empty_tiles := true) -> LocalDatabase:
 	var local := Fixture.database(false)
@@ -25,7 +38,9 @@ func database(include_empty_tiles := true) -> LocalDatabase:
 	geometry.min_z = -16
 	geometry.max_z = 15
 	local._tables["world_geometry"][0] = geometry
-	local._tables["config"][0] = ContinuumConfig.create(0, 0, 6, 1, ContinuumHaulPolicy.create(0), ContinuumMealPolicy.create(0))
+	local._tables["config"][0] = ContinuumConfig.create(
+		0, 0, 6, 1, ContinuumHaulPolicy.create(0), ContinuumMealPolicy.create(0)
+	)
 	var colony := ContinuumColony.new()
 	colony.wood = 10000
 	local._tables["colony"][0] = colony
@@ -52,14 +67,18 @@ func database(include_empty_tiles := true) -> LocalDatabase:
 					for y in 16:
 						for x in 16:
 							var shaft := cx * 16 + x >= edge / 2 and cy * 16 + y >= edge / 2
-							chunk.materials[x + 16 * (y + 16 * (7 if shaft else 15))] = 2 if shaft else 1
+							chunk.materials[x + 16 * (y + 16 * (7 if shaft else 15))] = (
+								2 if shaft else 1
+							)
 				local._tables["terrain_chunk"][chunk.id] = chunk
 	if include_empty_tiles:
 		for y in edge:
 			for x in edge:
 				var id := x + y * edge
 				var z := -8 if x >= edge / 2 and y >= edge / 2 else 0
-				local._tables["tile"][id] = ContinuumTile.create(id, x, y, ContinuumTileKind.create_empty(), true, z, 1, 1, 6)
+				local._tables["tile"][id] = ContinuumTile.create(
+					id, x, y, ContinuumTileKind.create_empty(), true, z, 1, 1, 6
+				)
 	for id in 8:
 		var actor := ContinuumColonist.new()
 		actor.id = id
@@ -83,6 +102,7 @@ func database(include_empty_tiles := true) -> LocalDatabase:
 	Fixture.index_rows(local)
 	return local
 
+
 func _ready() -> void:
 	for arg in OS.get_cmdline_user_args():
 		if arg.begins_with("--edge="):
@@ -98,27 +118,59 @@ func _ready() -> void:
 	map.size = Vector2(viewport.size)
 	viewport.add_child(map)
 	map.set_process(false)
-	print("PROFILE environment godot=%s display=%s edge=%d viewport=%s" % [Engine.get_version_info().string, DisplayServer.get_name(), edge, viewport.size])
+	print(
+		(
+			"PROFILE environment godot=%s display=%s edge=%d viewport=%s"
+			% [Engine.get_version_info().string, DisplayServer.get_name(), edge, viewport.size]
+		)
+	)
 	measure("initial_refresh", 1, map.refresh)
 	measure("unchanged_refresh", 5, map.refresh)
 	if map.has_method("_cache_tiles"):
-		measure("ordinary_tick_refresh", 30, func() -> void: map.refresh({"colony": true, "config": true, "colonist": true}))
+		measure(
+			"ordinary_tick_refresh",
+			30,
+			func() -> void: map.refresh({"colony": true, "config": true, "colonist": true})
+		)
 	measure("entity_descriptors", 6 if edge > 24 else 30, map.entity_descriptors)
 	measure("visible_tiles", 6 if edge > 24 else 30, map.visible_tiles)
-	measure("field_1000", 10, func() -> void:
-		for i in 1000:
-			LayeredTerrainModel.field(local._tables["colonist"][0], "next_z", 0))
+	measure(
+		"field_1000",
+		10,
+		func() -> void:
+			for i in 1000:
+				LayeredTerrainModel.field(local._tables["colonist"][0], "next_z", 0)
+	)
 	measure("idle_process", 180, func() -> void: map._process(1.0 / 60.0))
 	var actor: ContinuumColonist = local._tables["colonist"][0]
 	actor.next_x += 1
-	measure("moving_process", 10 if edge > 24 else 180, func() -> void:
-		actor.move_progress = fmod(actor.move_progress + 0.005, 1.0)
-		map._process(1.0 / 60.0))
+	measure(
+		"moving_process",
+		10 if edge > 24 else 180,
+		func() -> void:
+			actor.move_progress = fmod(actor.move_progress + 0.005, 1.0)
+			map._process(1.0 / 60.0)
+	)
 	var maximum := Vector2i.ZERO
 	for pass_view in map.terrain_view.viewports:
 		maximum.x = maxi(maximum.x, pass_view.size.x)
 		maximum.y = maxi(maximum.y, pass_view.size.y)
-	print("PROFILE max_entity_buffer=%s bands=%d terrain_textures=%d" % [maximum, map.terrain_view.viewports.size(), map.terrain_view.layers.filter(func(layer: TextureRect) -> bool: return layer.texture != null).size()])
+	print(
+		(
+			"PROFILE max_entity_buffer=%s bands=%d terrain_textures=%d"
+			% [
+				maximum,
+				map.terrain_view.viewports.size(),
+				(
+					map
+					. terrain_view
+					. layers
+					. filter(func(layer: TextureRect) -> bool: return layer.texture != null)
+					. size()
+				)
+			]
+		)
+	)
 	if DisplayServer.get_name() != "headless":
 		var frame_times: Array[float] = []
 		for frame in 180:
@@ -126,7 +178,12 @@ func _ready() -> void:
 			await RenderingServer.frame_post_draw
 			frame_times.append((Time.get_ticks_usec() - start) / 1000.0)
 		frame_times.sort()
-		print("PROFILE idle_gpu_frame n=180 p50_ms=%.3f p95_ms=%.3f max_ms=%.3f" % [frame_times[90], frame_times[171], frame_times.back()])
+		print(
+			(
+				"PROFILE idle_gpu_frame n=180 p50_ms=%.3f p95_ms=%.3f max_ms=%.3f"
+				% [frame_times[90], frame_times[171], frame_times.back()]
+			)
+		)
 	print("MAP_CLIENT_PROFILE_DONE")
 	SpacetimeDB.Continuum.db = previous
 	viewport.free()

@@ -20,15 +20,21 @@ var _cached: Dictionary = {}
 var _last_refresh := -1
 var _dirty := true
 
-func _init(sample_limit := DEFAULT_MAX_SAMPLES, age_usec := DEFAULT_MAX_AGE_USEC,
-		minimum := DEFAULT_MIN_SAMPLES, refresh_interval_usec := DEFAULT_REFRESH_USEC,
-		gap_usec := DEFAULT_MAX_GAP_USEC) -> void:
+
+func _init(
+	sample_limit := DEFAULT_MAX_SAMPLES,
+	age_usec := DEFAULT_MAX_AGE_USEC,
+	minimum := DEFAULT_MIN_SAMPLES,
+	refresh_interval_usec := DEFAULT_REFRESH_USEC,
+	gap_usec := DEFAULT_MAX_GAP_USEC
+) -> void:
 	max_samples = maxi(1, sample_limit)
 	max_age_usec = maxi(1, age_usec)
 	minimum_samples = maxi(1, minimum)
 	refresh_usec = maxi(0, refresh_interval_usec)
 	max_gap_usec = maxi(1, gap_usec)
 	reset()
+
 
 func reset() -> void:
 	_last_tick = -1
@@ -38,6 +44,7 @@ func reset() -> void:
 	_cached = _empty_snapshot()
 	_last_refresh = -1
 	_dirty = true
+
 
 func observe_tick(ticks_usec: int, valid := true) -> void:
 	if not valid or ticks_usec < 0:
@@ -63,6 +70,7 @@ func observe_tick(ticks_usec: int, valid := true) -> void:
 	_trim(ticks_usec)
 	_dirty = true
 
+
 func refresh(now_usec: int, force := false) -> Dictionary:
 	if _last_refresh >= 0 and now_usec < _last_refresh:
 		reset()
@@ -77,8 +85,10 @@ func refresh(now_usec: int, force := false) -> Dictionary:
 	_dirty = false
 	return _cached.duplicate(true)
 
+
 func samples() -> Array[float]:
 	return _samples.duplicate()
+
 
 func _trim(now_usec: int) -> bool:
 	var changed := false
@@ -92,11 +102,22 @@ func _trim(now_usec: int) -> bool:
 		changed = true
 	return changed
 
+
 func _empty_snapshot() -> Dictionary:
-	return {"ready": false, "warmup": true, "count": 0, "window_age_sec": 0.0,
+	return {
+		"ready": false,
+		"warmup": true,
+		"count": 0,
+		"window_age_sec": 0.0,
 		"minimum": minimum_samples,
-		"mean_fps": null, "p50_frame_ms": null, "p95_frame_ms": null,
-		"p99_frame_ms": null, "frame_samples_ms": [], "frame_graph": []}
+		"mean_fps": null,
+		"p50_frame_ms": null,
+		"p95_frame_ms": null,
+		"p99_frame_ms": null,
+		"frame_samples_ms": [],
+		"frame_graph": []
+	}
+
 
 func _make_snapshot(now_usec: int) -> Dictionary:
 	var count := _sorted.size()
@@ -106,20 +127,27 @@ func _make_snapshot(now_usec: int) -> Dictionary:
 	for interval in _samples:
 		sum += interval
 	var ready := count >= minimum_samples
-	return {"ready": ready, "warmup": not ready, "count": count, "minimum": minimum_samples,
+	return {
+		"ready": ready,
+		"warmup": not ready,
+		"count": count,
+		"minimum": minimum_samples,
 		"window_age_sec": float(now_usec - _sample_ticks[0]) / 1_000_000.0,
 		"mean_fps": float(count) / sum if ready and sum > 0.0 else null,
 		"p50_frame_ms": _nearest_rank(0.50) if ready else null,
 		"p95_frame_ms": _nearest_rank(0.95) if ready else null,
 		"p99_frame_ms": _nearest_rank(0.99) if ready else null,
 		"frame_samples_ms": _sorted.map(func(value: float) -> float: return value * 1000.0),
-		"frame_graph": _frame_graph()}
+		"frame_graph": _frame_graph()
+	}
+
 
 func _frame_graph() -> Array:
 	var result: Array = []
 	for i in _samples.size():
 		result.append({"tick": _sample_ticks[i], "value": _samples[i] * 1000.0})
 	return result
+
 
 func _nearest_rank(percentile: float) -> float:
 	var rank := clampi(ceili(percentile * _sorted.size()), 1, _sorted.size())

@@ -10,17 +10,24 @@ const CASES := [
 	[MIN_I64 | 0x0123456789abcdef, "efcdab8967452381"],
 ]
 
-class RecordingClient extends SpacetimeDBClient:
+
+class RecordingClient:
+	extends SpacetimeDBClient
 	var arguments: Array = []
 	var types: Array = []
-	func call_reducer(name: String, args: Array = [], arg_types: Array = []) -> SpacetimeDBReducerCall:
+
+	func call_reducer(
+		name: String, args: Array = [], arg_types: Array = []
+	) -> SpacetimeDBReducerCall:
 		assert(name == "reset_world_large")
 		arguments = args
 		types = arg_types
 		return null
 
+
 var writer: BSATNSerializer
 var reader: BSATNDeserializer
+
 
 func _initialize() -> void:
 	var schema := SpacetimeDBSchema.new("Continuum")
@@ -47,7 +54,8 @@ func _initialize() -> void:
 		assert(not writer.has_error())
 		assert(writer._spb.data_array.slice(20, 28) == expected)
 		var decoded: ContinuumWorldGeneration = reader._parse_generic_type(
-			_stream(writer._spb.data_array), &"ContinuumWorldGeneration")
+			_stream(writer._spb.data_array), &"ContinuumWorldGeneration"
+		)
 		assert(not reader.has_error() and decoded.seed == bits)
 		reducers.reset_world_large(2048, 2048, decoded.seed)
 		assert(client.types == [&"I32", &"I32", &"U64"])
@@ -63,8 +71,11 @@ func _initialize() -> void:
 	_check_small_unsigned_and_sentinels()
 	_check_other_encodings()
 	client.free()
-	print("SDK_U64_BITPATTERNS_PASS: exact boundary bytes, high seed generated roundtrip/reset, strict types/lengths, unsigned guards, unchanged I64/identity/UUID")
+	print(
+		"SDK_U64_BITPATTERNS_PASS: exact boundary bytes, high seed generated roundtrip/reset, strict types/lengths, unsigned guards, unchanged I64/identity/UUID"
+	)
 	quit(0)
+
 
 func _stream(bytes: PackedByteArray) -> StreamPeerBuffer:
 	var buffer := StreamPeerBuffer.new()
@@ -72,15 +83,31 @@ func _stream(bytes: PackedByteArray) -> StreamPeerBuffer:
 	buffer.data_array = bytes
 	return buffer
 
+
 func _reset() -> void:
 	writer.clear_error()
 	writer._reset_buffer()
 	reader.clear_error()
 
+
 func _check_invalid_u64() -> void:
-	for invalid: Variant in [0.0, -1.5, INF, NAN, true, false, "18446744073709551615",
-		&"1", null, [], {}, PackedByteArray(), PackedByteArray([255]),
-		"ffffffffffffffff".hex_decode(), Resource.new()]:
+	for invalid: Variant in [
+		0.0,
+		-1.5,
+		INF,
+		NAN,
+		true,
+		false,
+		"18446744073709551615",
+		&"1",
+		null,
+		[],
+		{},
+		PackedByteArray(),
+		PackedByteArray([255]),
+		"ffffffffffffffff".hex_decode(),
+		Resource.new()
+	]:
 		_reset()
 		writer.write_u64_le(invalid)
 		assert(writer.has_error() and writer._spb.data_array.is_empty())
@@ -98,13 +125,14 @@ func _check_invalid_u64() -> void:
 	_reset()
 	var offsets := StreamPeerBuffer.new()
 	offsets.big_endian = false
-	offsets.put_u8(1) # RowOffsets.
+	offsets.put_u8(1)  # RowOffsets.
 	offsets.put_u32(1)
-	offsets.put_u64(-1) # Valid U64 bits, invalid offset into a one-byte row list.
+	offsets.put_u64(-1)  # Valid U64 bits, invalid offset into a one-byte row list.
 	offsets.put_u32(1)
 	offsets.put_u8(0)
 	offsets.seek(0)
 	assert(reader.read_bsatn_row_list(offsets).is_empty() and reader.has_error())
+
 
 func _check_small_unsigned_and_sentinels() -> void:
 	for spec: Array in [[&"U8", 255, 1], [&"U16", 65535, 2], [&"U32", 4294967295, 4]]:
@@ -113,7 +141,8 @@ func _check_small_unsigned_and_sentinels() -> void:
 			assert(writer.has_error())
 		var bytes := writer._serialize_arguments([spec[1]], [spec[0]])
 		assert(not writer.has_error() and bytes.size() == spec[2])
-		for byte in bytes: assert(byte == 255)
+		for byte in bytes:
+			assert(byte == 255)
 	writer.serialize_client_message(SpacetimeDBClientMessage.UNSUBSCRIBE, UnsubscribeMessage.new())
 	assert(writer.has_error())
 	_reset()
@@ -121,10 +150,12 @@ func _check_small_unsigned_and_sentinels() -> void:
 	assert(not writer.has_error() and writer._spb.data_array.hex_encode() == "efffffffffffffff")
 	assert(reader.read_i64_le(_stream(writer._spb.data_array)) == -17)
 
+
 func _check_other_encodings() -> void:
 	for spec: Array in [[&"U128", 16], [&"__identity__", 32], [&"__connection_id__", 16]]:
 		var bytes := PackedByteArray()
-		for i in range(spec[1]): bytes.append(i)
+		for i in range(spec[1]):
+			bytes.append(i)
 		var expected := bytes.duplicate()
 		expected.reverse()
 		var encoded := writer._serialize_arguments([bytes], [spec[0]])
@@ -132,7 +163,12 @@ func _check_other_encodings() -> void:
 		# Existing connection-ID reader exposes raw wire order (unlike identity
 		# and U128). Preserve that behavior rather than incidentally repairing it.
 		var decoded_expected := expected if spec[0] == &"__connection_id__" else bytes
-		assert(reader._get_primitive_reader_from_bsatn_type(_stream(encoded), spec[0]) == decoded_expected)
+		assert(
+			(
+				reader._get_primitive_reader_from_bsatn_type(_stream(encoded), spec[0])
+				== decoded_expected
+			)
+		)
 		for length: int in [0, spec[1] - 1, spec[1] + 1]:
 			var invalid := PackedByteArray()
 			invalid.resize(length)

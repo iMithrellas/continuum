@@ -20,6 +20,7 @@ var _stream := TerrainStream.new()
 var _physical: LayeredTerrainModel
 var _row_revisions: Dictionary = {}
 
+
 func attach(client: Variant, model: LayeredTerrainModel, epoch: int, world_generation: int) -> void:
 	stop()
 	_client = client
@@ -27,7 +28,16 @@ func attach(client: Variant, model: LayeredTerrainModel, epoch: int, world_gener
 	generation = world_generation
 	_physical = model
 	_row_revisions.clear()
-	_coverage.set_geometry({"width": model.width, "height": model.height, "min_x": model.min_x, "min_y": model.min_y, "min_z": model.min_z, "max_z": model.max_z})
+	_coverage.set_geometry(
+		{
+			"width": model.width,
+			"height": model.height,
+			"min_x": model.min_x,
+			"min_y": model.min_y,
+			"min_z": model.min_z,
+			"max_z": model.max_z
+		}
+	)
 	_stream.manage_physical = false
 	_stream.max_resident = 256
 	_stream.eviction_adapter = _evict
@@ -37,16 +47,20 @@ func attach(client: Variant, model: LayeredTerrainModel, epoch: int, world_gener
 		_stream.failed.connect(_failed)
 	_stream.attach(client, _coverage, epoch, generation, _queries, _snapshot)
 
+
 func _changed() -> void:
 	changed.emit()
+
 
 func _evict(coordinate: Vector2i) -> void:
 	rows.erase(coordinate)
 	_row_revisions.erase(coordinate)
 	revision += 1
 
+
 func _failed(message: String) -> void:
 	failed.emit(message)
+
 
 func request_frame(rect: Rect2i, pixels_per_cell: float, layer: int) -> void:
 	var next_lod := 9
@@ -54,8 +68,15 @@ func request_frame(rect: Rect2i, pixels_per_cell: float, layer: int) -> void:
 		var stride := 1 << candidate
 		var estimated := ceili(rect.size.x / float(stride)) * ceili(rect.size.y / float(stride))
 		var edge := 16 * stride
-		var tiles := (ceili(rect.end.x / float(edge)) - floori(rect.position.x / float(edge))) * (ceili(rect.end.y / float(edge)) - floori(rect.position.y / float(edge)))
-		if stride * pixels_per_cell >= 2.0 and estimated <= clampi(target_samples, 256, 65536) and tiles <= 256:
+		var tiles := (
+			(ceili(rect.end.x / float(edge)) - floori(rect.position.x / float(edge)))
+			* (ceili(rect.end.y / float(edge)) - floori(rect.position.y / float(edge)))
+		)
+		if (
+			stride * pixels_per_cell >= 2.0
+			and estimated <= clampi(target_samples, 256, 65536)
+			and tiles <= 256
+		):
 			next_lod = candidate
 			break
 	if next_lod != lod or layer != cut or _stream.client == null:
@@ -69,21 +90,43 @@ func request_frame(rect: Rect2i, pixels_per_cell: float, layer: int) -> void:
 	_coverage.source_edge = 16 * (1 << lod)
 	_stream.request_frame(rect, 32.0, cut)
 
-func _queries(coordinate: Vector2i, _edge: int, version: int) -> PackedStringArray:
-	return PackedStringArray(["SELECT * FROM terrain_overview_chunk WHERE lod = %d AND cut_z = %d AND chunk_x = %d AND chunk_y = %d AND generation_id = %d" % [lod, cut, coordinate.x, coordinate.y, version]])
 
-func _snapshot(_model: LayeredTerrainModel, coordinate: Vector2i, client: Variant, version: int) -> bool:
+func _queries(coordinate: Vector2i, _edge: int, version: int) -> PackedStringArray:
+	return PackedStringArray(
+		[
+			(
+				"SELECT * FROM terrain_overview_chunk WHERE lod = %d AND cut_z = %d AND chunk_x = %d AND chunk_y = %d AND generation_id = %d"
+				% [lod, cut, coordinate.x, coordinate.y, version]
+			)
+		]
+	)
+
+
+func _snapshot(
+	_model: LayeredTerrainModel, coordinate: Vector2i, client: Variant, version: int
+) -> bool:
 	snapshot_count += 1
 	var found: Variant = null
 	for row in ColonyMap.table_rows(client.db, "terrain_overview_chunk"):
-		if not CompactTerrainAdapter.coordinates_valid(row) \
-				or not CompactTerrainAdapter.integer_field(row, "generation_id", 0, 9223372036854775807) \
-				or not CompactTerrainAdapter.integer_field(row, "lod", 0, 255) \
-				or not CompactTerrainAdapter.integer_field(row, "cut_z", _coverage.min_z, _coverage.max_z):
+		if (
+			not CompactTerrainAdapter.coordinates_valid(row)
+			or not CompactTerrainAdapter.integer_field(row, "generation_id", 0, 9223372036854775807)
+			or not CompactTerrainAdapter.integer_field(row, "lod", 0, 255)
+			or not CompactTerrainAdapter.integer_field(
+				row, "cut_z", _coverage.min_z, _coverage.max_z
+			)
+		):
 			return false
-		if LayeredTerrainModel.field(row, "generation_id") != version or LayeredTerrainModel.field(row, "lod") != lod or LayeredTerrainModel.field(row, "cut_z") != cut:
+		if (
+			LayeredTerrainModel.field(row, "generation_id") != version
+			or LayeredTerrainModel.field(row, "lod") != lod
+			or LayeredTerrainModel.field(row, "cut_z") != cut
+		):
 			continue
-		if LayeredTerrainModel.field(row, "chunk_x") != coordinate.x or LayeredTerrainModel.field(row, "chunk_y") != coordinate.y:
+		if (
+			LayeredTerrainModel.field(row, "chunk_x") != coordinate.x
+			or LayeredTerrainModel.field(row, "chunk_y") != coordinate.y
+		):
 			continue
 		if found != null:
 			return false
@@ -95,45 +138,98 @@ func _snapshot(_model: LayeredTerrainModel, coordinate: Vector2i, client: Varian
 		return false
 	if not rows.has(coordinate) or next_revision != _row_revisions.get(coordinate, -1):
 		var stored := {}
-		for key in ["generation_id", "revision", "lod", "cut_z", "chunk_x", "chunk_y", "surface_z", "material", "soil_fertility", "forest_density", "moisture"]:
+		for key in [
+			"generation_id",
+			"revision",
+			"lod",
+			"cut_z",
+			"chunk_x",
+			"chunk_y",
+			"surface_z",
+			"material",
+			"soil_fertility",
+			"forest_density",
+			"moisture"
+		]:
 			var value: Variant = LayeredTerrainModel.field(found, key)
-			stored[key] = value.duplicate() if value is Array or value is PackedByteArray or value is PackedInt32Array or value is PackedInt64Array else value
+			stored[key] = (
+				value.duplicate()
+				if (
+					value is Array
+					or value is PackedByteArray
+					or value is PackedInt32Array
+					or value is PackedInt64Array
+				)
+				else value
+			)
 		rows[coordinate] = stored
 		_row_revisions[coordinate] = next_revision
 		revision += 1
 	return true
 
+
 func _valid_row(row: Variant, coordinate: Vector2i, version: int) -> bool:
-	if not CompactTerrainAdapter.coordinates_valid(row) or not CompactTerrainAdapter.integer_field(row, "revision", 0, 4294967295):
+	if (
+		not CompactTerrainAdapter.coordinates_valid(row)
+		or not CompactTerrainAdapter.integer_field(row, "revision", 0, 4294967295)
+	):
 		return false
-	if not CompactTerrainAdapter.integer_field(row, "generation_id", 0, 9223372036854775807) or LayeredTerrainModel.field(row, "generation_id") != version:
+	if (
+		not CompactTerrainAdapter.integer_field(row, "generation_id", 0, 9223372036854775807)
+		or LayeredTerrainModel.field(row, "generation_id") != version
+	):
 		return false
-	if not CompactTerrainAdapter.integer_field(row, "lod", 0, 255) or LayeredTerrainModel.field(row, "lod") != lod:
+	if (
+		not CompactTerrainAdapter.integer_field(row, "lod", 0, 255)
+		or LayeredTerrainModel.field(row, "lod") != lod
+	):
 		return false
-	if not CompactTerrainAdapter.integer_field(row, "cut_z", _coverage.min_z, _coverage.max_z) or LayeredTerrainModel.field(row, "cut_z") != cut:
+	if (
+		not CompactTerrainAdapter.integer_field(row, "cut_z", _coverage.min_z, _coverage.max_z)
+		or LayeredTerrainModel.field(row, "cut_z") != cut
+	):
 		return false
 	var stride := 1 << lod
-	if not Rect2i(coordinate * 16 * stride, Vector2i.ONE * 16 * stride).intersects(_coverage.bounds()):
+	if not Rect2i(coordinate * 16 * stride, Vector2i.ONE * 16 * stride).intersects(
+		_coverage.bounds()
+	):
 		return false
 	for key in ["surface_z", "material", "soil_fertility", "forest_density", "moisture"]:
 		var minimum := -32768 if key == "surface_z" else 0
 		var maximum := 32767 if key == "surface_z" else (65535 if key == "material" else 255)
-		if not CompactTerrainAdapter.integer_array(LayeredTerrainModel.field(row, key), 256, minimum, maximum):
+		if not CompactTerrainAdapter.integer_array(
+			LayeredTerrainModel.field(row, key), 256, minimum, maximum
+		):
 			return false
 	var heights: Variant = LayeredTerrainModel.field(row, "surface_z")
 	var materials: Variant = LayeredTerrainModel.field(row, "material")
 	for index in 256:
 		var material: int = materials[index]
 		var z: int = heights[index]
-		var point := (coordinate * 16 + Vector2i(index % 16, index / 16)) * stride + Vector2i.ONE * (stride / 2)
-		if not _physical.materials.has(material) or not LayeredTerrainModel.field(_physical.materials[material], "opaque") is bool:
+		var point := (
+			(coordinate * 16 + Vector2i(index % 16, index / 16)) * stride
+			+ Vector2i.ONE * (stride / 2)
+		)
+		if (
+			not _physical.materials.has(material)
+			or not LayeredTerrainModel.field(_physical.materials[material], "opaque") is bool
+		):
 			return false
 		if material == 0:
-			if z != _coverage.min_z - 1 or LayeredTerrainModel.field(_physical.materials[material], "opaque"):
+			if (
+				z != _coverage.min_z - 1
+				or LayeredTerrainModel.field(_physical.materials[material], "opaque")
+			):
 				return false
-		elif not _coverage.bounds().has_point(point) or z < _coverage.min_z or z > cut or not LayeredTerrainModel.field(_physical.materials[material], "opaque"):
+		elif (
+			not _coverage.bounds().has_point(point)
+			or z < _coverage.min_z
+			or z > cut
+			or not LayeredTerrainModel.field(_physical.materials[material], "opaque")
+		):
 			return false
 	return true
+
 
 func refresh(coordinates: Variant = null) -> void:
 	var before := revision
@@ -147,6 +243,7 @@ func refresh(coordinates: Variant = null) -> void:
 		reconciled.emit()
 		changed.emit()
 
+
 func frame_samples(rect: Rect2i, layer: int, budget: int) -> Dictionary:
 	var stride := 1 << lod
 	var samples: Array[Dictionary] = []
@@ -154,7 +251,9 @@ func frame_samples(rect: Rect2i, layer: int, budget: int) -> Dictionary:
 	var limit := clampi(budget, 0, 65536)
 	if layer == cut:
 		for sy in range(floori(area.position.y / float(stride)), ceili(area.end.y / float(stride))):
-			for sx in range(floori(area.position.x / float(stride)), ceili(area.end.x / float(stride))):
+			for sx in range(
+				floori(area.position.x / float(stride)), ceili(area.end.x / float(stride))
+			):
 				if samples.size() >= limit:
 					return _frame(area, stride, samples, true)
 				var coordinate := Vector2i(floori(sx / 16.0), floori(sy / 16.0))
@@ -173,15 +272,27 @@ func frame_samples(rect: Rect2i, layer: int, budget: int) -> Dictionary:
 				samples.append(sample)
 	return _frame(area, stride, samples, false)
 
+
 func _frame(area: Rect2i, stride: int, samples: Array, truncated: bool) -> Dictionary:
-	return {"rect": area, "stride": stride, "cut": cut, "revision": revision, "mode": &"overview", "samples": samples, "truncated": truncated}
+	return {
+		"rect": area,
+		"stride": stride,
+		"cut": cut,
+		"revision": revision,
+		"mode": &"overview",
+		"samples": samples,
+		"truncated": truncated
+	}
+
 
 func tick(delta: float) -> void:
 	_stream.tick(delta)
 
+
 func stop() -> void:
 	_stream.stop()
 	rows.clear()
+
 
 func dispose() -> void:
 	_stream.dispose()

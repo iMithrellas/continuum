@@ -42,17 +42,21 @@ static func work_line(work: int, terrain: Dictionary) -> String:
 
 
 static func _ecology_affects(work: int) -> bool:
-	return work in [WorkType.Options.farming, WorkType.Options.logging,
-		WorkType.Options.hunting]
+	return work in [WorkType.Options.farming, WorkType.Options.logging, WorkType.Options.hunting]
 
 
 static func _work_name(work: int) -> String:
 	match work:
-		WorkType.Options.farming: return "Farming"
-		WorkType.Options.logging: return "Logging"
-		WorkType.Options.mining: return "Mining"
-		WorkType.Options.hunting: return "Hunting"
-		_: return "Unknown work"
+		WorkType.Options.farming:
+			return "Farming"
+		WorkType.Options.logging:
+			return "Logging"
+		WorkType.Options.mining:
+			return "Mining"
+		WorkType.Options.hunting:
+			return "Hunting"
+		_:
+			return "Unknown work"
 
 
 static func _field(terrain: Dictionary, key: String) -> float:

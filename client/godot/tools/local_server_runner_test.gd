@@ -31,13 +31,18 @@ func _runner(status_name: String) -> ContinuumLocalServerRunner:
 func _test_success() -> void:
 	var runner := _runner("success")
 	var completed := [false]
-	runner.helper_arguments = PackedStringArray(["-c", _write_status_command(runner, "0") + "; sleep 0.5"])
-	runner.ready.connect(func(_host: String, database: String) -> void:
-		completed[0] = database == "continuum")
+	runner.helper_arguments = PackedStringArray(
+		["-c", _write_status_command(runner, "0") + "; sleep 0.5"]
+	)
+	runner.ready.connect(
+		func(_host: String, database: String) -> void: completed[0] = database == "continuum"
+	)
 	_assert(runner.start(), "successful setup starts")
 	await _wait_until(func() -> bool: return runner.process_group_id() > 0)
-	_assert(runner.process_group_id() != runner.launcher_pid(),
-			"actual process group id is tracked separately from launcher pid")
+	_assert(
+		runner.process_group_id() != runner.launcher_pid(),
+		"actual process group id is tracked separately from launcher pid"
+	)
 	await _wait_until(func() -> bool: return not runner.is_running())
 	_assert(completed[0], "successful setup emits ready")
 
@@ -45,10 +50,12 @@ func _test_success() -> void:
 func _test_delayed_status_after_launcher_exit() -> void:
 	var runner := _runner("delayed-status")
 	var completed := [false]
-	runner.helper_arguments = PackedStringArray(["-c",
-		"sleep 0.5; %s" % _write_status_command(runner, "0")])
-	runner.ready.connect(func(_host: String, database: String) -> void:
-		completed[0] = database == "continuum")
+	runner.helper_arguments = PackedStringArray(
+		["-c", "sleep 0.5; %s" % _write_status_command(runner, "0")]
+	)
+	runner.ready.connect(
+		func(_host: String, database: String) -> void: completed[0] = database == "continuum"
+	)
 	_assert(runner.start(), "delayed-status setup starts")
 	await _wait_until(func() -> bool: return not runner.is_running())
 	_assert(completed[0], "launcher exit does not preempt delayed status")
@@ -69,8 +76,9 @@ func _test_unexpected_exit() -> void:
 	var message := [""]
 	var child_file := "/tmp/continuum-runner-unexpected-child.pid"
 	DirAccess.remove_absolute(child_file)
-	runner.helper_arguments = PackedStringArray(["-c",
-		"sleep 30 & child=$!; printf '%%s\\n' $child > '%s'; exit 23" % child_file])
+	runner.helper_arguments = PackedStringArray(
+		["-c", "sleep 30 & child=$!; printf '%%s\\n' $child > '%s'; exit 23" % child_file]
+	)
 	runner.failed.connect(func(value: String) -> void: message[0] = value)
 	_assert(runner.start(), "unexpected exit setup starts")
 	await _wait_until(func() -> bool: return runner.process_group_id() > 0)
@@ -110,7 +118,9 @@ func _test_cancel_cleans_descendants_and_blocks_restart() -> void:
 	await _wait_until(func() -> bool: return not runner.is_running())
 	for process_id in pids:
 		await _wait_until(func() -> bool: return not _live_process(process_id))
-		_assert(not _live_process(process_id), "published-group cancellation terminates descendants")
+		_assert(
+			not _live_process(process_id), "published-group cancellation terminates descendants"
+		)
 	_assert(not _live_group(cancel_group_id), "cancellation leaves no live group descendants")
 	_assert(runner.start(), "restart works after process group cleanup")
 	runner.cancel()
@@ -128,7 +138,9 @@ func _test_missing_group_handshake_does_not_run_helper() -> void:
 	_assert(runner.start(), "missing-PGID setup starts")
 	await _wait_until(func() -> bool: return not runner.is_running())
 	_assert(message[0] != "", "missing PGID fails within the handshake timeout")
-	_assert(not FileAccess.file_exists(marker_file), "helper does not run without a published PGID ACK")
+	_assert(
+		not FileAccess.file_exists(marker_file), "helper does not run without a published PGID ACK"
+	)
 
 
 func _test_cancel_before_group_handshake_does_not_run_helper() -> void:
@@ -141,11 +153,16 @@ func _test_cancel_before_group_handshake_does_not_run_helper() -> void:
 	runner.cancel()
 	_assert(not runner.start(), "early cancellation blocks immediate restart")
 	await _wait_until(func() -> bool: return not runner.is_running())
-	_assert(not FileAccess.file_exists(marker_file), "cancel before publication does not run helper")
+	_assert(
+		not FileAccess.file_exists(marker_file), "cancel before publication does not run helper"
+	)
 
 
 func _grandchild_command(pid_file: String) -> String:
-	return "sh -c 'sleep 30 & grand=$!; printf \"%%s\\n\" \"$$ $grand\" > \"%s\"; wait $grand' & child=$!; wait $child" % pid_file
+	return (
+		'sh -c \'sleep 30 & grand=$!; printf "%%s\\n" "$$ $grand" > "%s"; wait $grand\' & child=$!; wait $child'
+		% pid_file
+	)
 
 
 func _marker_command(marker_file: String) -> String:

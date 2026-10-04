@@ -1,0 +1,7 @@
+excluded_directories: !!set
+  .git: null
+  addons: null
+  spacetime_bindings: null
+line_length: 100
+safety_checks: null
+use_spaces: null

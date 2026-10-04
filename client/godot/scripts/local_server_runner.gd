@@ -49,7 +49,9 @@ func start() -> bool:
 		return false
 
 	if not OS.has_feature("editor"):
-		_fail("Local server setup is only supported from a source checkout; exported builds are unsupported.")
+		_fail(
+			"Local server setup is only supported from a source checkout; exported builds are unsupported."
+		)
 		return false
 
 	var command := helper_command
@@ -84,22 +86,39 @@ func start() -> bool:
 	progress.emit("Starting local SpacetimeDB infrastructure...")
 	# setsid may fork before exec, so its returned PID is not a reliable PGID. The
 	# shell records its actual PID/PGID before execing the helper.
-	var group_publication := "printf '%s\\n' \"$$\" > \"$2\""
+	var group_publication := 'printf \'%s\\n\' "$$" > "$2"'
 	if test_skip_process_group_publication:
 		group_publication = ":"
-	var launch_arguments := PackedStringArray(["-f", "/bin/sh", "-c",
-		"printf '%s\\n' \"$$\" > \"$1\"; if [ -e \"$3\" ]; then exit 130; fi; " +
-		group_publication + "; " +
-		"wait_ticks=0; while [ ! -e \"$4\" ] && [ ! -e \"$3\" ] && [ $wait_ticks -lt 100 ]; do " +
-		"sleep 0.01; wait_ticks=$((wait_ticks + 1)); done; " +
-		"if [ -e \"$3\" ] || [ ! -e \"$4\" ]; then exit 124; fi; " +
-		"done_path=\"$5\"; shift 5; \"$@\" & helper_pid=$!; wait \"$helper_pid\"; helper_status=$?; " +
-		"temporary=\"$done_path.$$\"; printf '%s\\n' \"$helper_status\" > \"$temporary\"; mv -f \"$temporary\" \"$done_path\"; exit \"$helper_status\"",
-		"continuum-process-group", wrapper_path, group_path, cancel_path, ack_path, wrapper_done_path, command])
+	var launch_arguments := PackedStringArray(
+		[
+			"-f",
+			"/bin/sh",
+			"-c",
+			(
+				'printf \'%s\\n\' "$$" > "$1"; if [ -e "$3" ]; then exit 130; fi; '
+				+ group_publication
+				+ "; "
+				+ 'wait_ticks=0; while [ ! -e "$4" ] && [ ! -e "$3" ] && [ $wait_ticks -lt 100 ]; do '
+				+ "sleep 0.01; wait_ticks=$((wait_ticks + 1)); done; "
+				+ 'if [ -e "$3" ] || [ ! -e "$4" ]; then exit 124; fi; '
+				+ 'done_path="$5"; shift 5; "$@" & helper_pid=$!; wait "$helper_pid"; helper_status=$?; '
+				+ 'temporary="$done_path.$$"; printf \'%s\\n\' "$helper_status" > "$temporary"; mv -f "$temporary" "$done_path"; exit "$helper_status"'
+			),
+			"continuum-process-group",
+			wrapper_path,
+			group_path,
+			cancel_path,
+			ack_path,
+			wrapper_done_path,
+			command
+		]
+	)
 	launch_arguments.append_array(arguments)
 	_process_id = OS.create_process(PROCESS_GROUP_LAUNCHER, launch_arguments, false)
 	if _process_id < 0:
-		_fail("Could not start local server setup. Check that Docker, Compose, and the helper are installed.")
+		_fail(
+			"Could not start local server setup. Check that Docker, Compose, and the helper are installed."
+		)
 		return false
 	progress.emit("Publishing the local database '%s'..." % database)
 	_watch_process()
@@ -159,12 +178,15 @@ func _watch_process() -> void:
 			status_deadline = Time.get_ticks_msec() + int(STATUS_GRACE_SECONDS * 1000.0)
 		if helper_dead and FileAccess.file_exists(status_path):
 			break
-		if helper_dead and not FileAccess.file_exists(status_path) \
-				and Time.get_ticks_msec() >= status_deadline:
-				unexpected_exit = true
-				_cancel_requested = true
-				_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
-				_kill_process_group("TERM")
+		if (
+			helper_dead
+			and not FileAccess.file_exists(status_path)
+			and Time.get_ticks_msec() >= status_deadline
+		):
+			unexpected_exit = true
+			_cancel_requested = true
+			_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
+			_kill_process_group("TERM")
 		if _cancel_requested and Time.get_ticks_msec() >= _cleanup_deadline:
 			_kill_process_group("KILL")
 			_cleanup_deadline = Time.get_ticks_msec() + int(CLEANUP_GRACE_SECONDS * 1000.0)
@@ -186,12 +208,16 @@ func _watch_process() -> void:
 		DirAccess.remove_absolute(cancel_path)
 		DirAccess.remove_absolute(ack_path)
 		if unexpected_exit:
-			_fail("Local server setup ended without a status report. Check Docker and the setup output.")
+			_fail(
+				"Local server setup ended without a status report. Check Docker and the setup output."
+			)
 			return
 		progress.emit("Local server setup cancelled.")
 		return
 	if not FileAccess.file_exists(status_path):
-		_fail("Local server setup ended without a status report. Check Docker and the setup output.")
+		_fail(
+			"Local server setup ended without a status report. Check Docker and the setup output."
+		)
 		return
 	var status_text := FileAccess.get_file_as_string(status_path).strip_edges()
 	DirAccess.remove_absolute(status_path)
@@ -208,7 +234,9 @@ func _watch_process() -> void:
 		progress.emit("Local server is ready.")
 		ready.emit(host, database)
 		return
-	_fail("Local server setup failed (exit code %d). Check Docker and the setup output." % exit_code)
+	_fail(
+		"Local server setup failed (exit code %d). Check Docker and the setup output." % exit_code
+	)
 
 
 func _fail(message: String) -> void:

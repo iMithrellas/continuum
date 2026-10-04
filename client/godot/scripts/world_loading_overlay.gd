@@ -8,6 +8,7 @@ var _counts := Label.new()
 var _progress := ProgressBar.new()
 var _cancel := Button.new()
 
+
 func attach(parent: Control, loading: WorldLoadingState) -> void:
 	state = loading
 	parent.add_child(self)
@@ -32,6 +33,7 @@ func attach(parent: Control, loading: WorldLoadingState) -> void:
 	state.changed.connect(refresh)
 	refresh()
 
+
 func refresh() -> void:
 	var was_visible := visible
 	visible = not state.playable and state.client != null
@@ -39,6 +41,12 @@ func refresh() -> void:
 		_cancel.grab_focus()
 	_phase.text = state.error if not state.error.is_empty() else state.phase
 	var fraction := state.progress_fraction()
-	_progress.visible = fraction >= 0.0 and state.phase not in ["Loading nearby terrain", "Ready"] and state.error.is_empty()
+	_progress.visible = (
+		fraction >= 0.0
+		and state.phase not in ["Loading nearby terrain", "Ready"]
+		and state.error.is_empty()
+	)
 	_progress.value = fraction * 100.0
-	_counts.text = "%d / %d server work units" % [state.completed, state.total] if _progress.visible else ""
+	_counts.text = (
+		"%d / %d server work units" % [state.completed, state.total] if _progress.visible else ""
+	)

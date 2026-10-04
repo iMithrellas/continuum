@@ -9,6 +9,7 @@ const UI = preload("presentation.gd")
 const Entry = preload("log_entry.gd")
 var model: Dictionary = {}
 
+
 ## span/coverage copy; deltas [{name,baseline,current,level}]; provided event groups.
 ## No baselines, events, handles or coverage are manufactured from current state.
 func set_model(data: Dictionary) -> void:
@@ -43,8 +44,14 @@ func set_model(data: Dictionary) -> void:
 			if delta.level in ["warn", "critical"]:
 				values.add_child(UI.glyph(delta.level))
 				values.add_child(UI.label(UI.status_word(delta.level), "tag", delta.level))
-			values.add_child(UI.bounded(delta.name, "section", UI.status_color(delta.level, "ink-subtle"), 64))
-			values.add_child(UI.wrapped(Models.signed(delta.delta), "readout", UI.status_color(delta.level, "ink")))
+			values.add_child(
+				UI.bounded(delta.name, "section", UI.status_color(delta.level, "ink-subtle"), 64)
+			)
+			values.add_child(
+				UI.wrapped(
+					Models.signed(delta.delta), "readout", UI.status_color(delta.level, "ink")
+				)
+			)
 			cell.add_child(values)
 			deltas.add_child(cell)
 		content.add_child(deltas)
@@ -60,7 +67,9 @@ func set_model(data: Dictionary) -> void:
 		row.add_child(UI.glyph(item.level if item.level in ["warn", "critical"] else "notice"))
 		var details = UI.column()
 		details.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		details.add_child(UI.wrapped(UI.status_word(item.level) + " · " + item.title, "body-strong", "ink"))
+		details.add_child(
+			UI.wrapped(UI.status_word(item.level) + " · " + item.title, "body-strong", "ink")
+		)
 		if not item.detail.is_empty():
 			details.add_child(UI.wrapped(item.detail))
 		if item.acknowledged == true:
@@ -77,16 +86,25 @@ func set_model(data: Dictionary) -> void:
 			ids.append(item.id)
 		var item_id: Variant = item.get("id")
 		var target_available: bool = item.target_available
-		var goto_reason = "identifier unavailable" if not item.id_available else "target unavailable" if not target_available else ""
-		var go_to = UI.button("Go to" + (" · " + goto_reason if not goto_reason.is_empty() else ""), func():
-			if Models.valid_identifier(item_id) and target_available:
-				goto_requested.emit(item_id))
+		var goto_reason = (
+			"identifier unavailable"
+			if not item.id_available
+			else "target unavailable" if not target_available else ""
+		)
+		var go_to = UI.button(
+			"Go to" + (" · " + goto_reason if not goto_reason.is_empty() else ""),
+			func():
+				if Models.valid_identifier(item_id) and target_available:
+					goto_requested.emit(item_id)
+		)
 		go_to.disabled = not goto_reason.is_empty()
 		go_to.set_meta("digest_focus_key", "goto:%s:%s" % [typeof(item_id), item_id])
 		details.add_child(go_to)
 		needs.add_child(row)
 	content.add_child(needs)
-	for descriptor in [["changed_by_others", "Changed by others"], ["handled", "The colony handled"]]:
+	for descriptor in [
+		["changed_by_others", "Changed by others"], ["handled", "The colony handled"]
+	]:
 		var group_coverage: Dictionary = model.group_coverage[descriptor[0]]
 		if model[descriptor[0]].is_empty() and group_coverage.status == "complete":
 			continue
@@ -103,12 +121,18 @@ func set_model(data: Dictionary) -> void:
 		content.add_child(group)
 	var actions = UI.flow()
 	if not ids.is_empty():
-		var review = UI.button("Review available alerts" if ids.size() < model.needs_you.size() else "Review alerts", func(): review_requested.emit(ids), "ButtonPrimary")
+		var review = UI.button(
+			"Review available alerts" if ids.size() < model.needs_you.size() else "Review alerts",
+			func(): review_requested.emit(ids),
+			"ButtonPrimary"
+		)
 		review.set_meta("digest_focus_key", "review")
 		actions.add_child(review)
 		actions.add_child(UI.label(str(ids.size()), "readout"))
 	elif not model.needs_you.is_empty():
-		var review = UI.button("Review alerts · identifiers unavailable", func(): pass, "ButtonPrimary")
+		var review = UI.button(
+			"Review alerts · identifiers unavailable", func(): pass, "ButtonPrimary"
+		)
 		review.disabled = true
 		actions.add_child(review)
 	var back = UI.button("Back to the colony", func(): dismiss_requested.emit())
@@ -119,6 +143,7 @@ func set_model(data: Dictionary) -> void:
 	if is_inside_tree():
 		_restore_view.call_deferred(focus_key, scroll_value)
 
+
 func _find_focus(key: String, node: Node) -> Control:
 	if node is Button and node.get_meta("digest_focus_key", "") == key and not node.disabled:
 		return node
@@ -128,11 +153,14 @@ func _find_focus(key: String, node: Node) -> Control:
 			return found
 	return null
 
+
 func _restore_view(key: String, value: int, settling_frames := 2) -> void:
 	if not is_inside_tree() or not is_visible_in_tree():
 		return
 	if settling_frames > 0:
-		get_tree().create_timer(0.0).timeout.connect(_restore_view.bind(key, value, settling_frames - 1), CONNECT_ONE_SHOT)
+		get_tree().create_timer(0.0).timeout.connect(
+			_restore_view.bind(key, value, settling_frames - 1), CONNECT_ONE_SHOT
+		)
 		return
 	if not key.is_empty():
 		var target := _find_focus(key, self)

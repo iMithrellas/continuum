@@ -4,18 +4,26 @@ extends RefCounted
 
 const SAVE_PATH := "user://workspaces.json"
 const PANEL_NAMES := {
-	"overview": "Colony overview", "people": "Colonist roster",
-	"inspector": "Tile inspector", "operations": "Zones",
-	"policies": "Colony policies", "alerts": "Alerts",
-	"activity": "Activity feed", "trends": "Session trends",
-	"admin": "Admin", "developer": "Developer", "construction": "Construction",
+	"overview": "Colony overview",
+	"people": "Colonist roster",
+	"inspector": "Tile inspector",
+	"operations": "Zones",
+	"policies": "Colony policies",
+	"alerts": "Alerts",
+	"activity": "Activity feed",
+	"trends": "Session trends",
+	"admin": "Admin",
+	"developer": "Developer",
+	"construction": "Construction",
 }
 const MIN_SIZE := Vector2(280, 180)
 const SNAP_DISTANCE := 14.0
 const GAP := 16.0
 
+
 static func minimum_size(metrics := UiMetrics.new()) -> Vector2:
 	return metrics.min_size(MIN_SIZE.x, MIN_SIZE.y)
+
 
 var workspaces: Dictionary = defaults()
 var active := "daily"
@@ -30,24 +38,49 @@ static func panel(rect: Array, opened := true) -> Dictionary:
 static func defaults() -> Dictionary:
 	var result := {}
 	var presets := {
-		"daily": ["Daily operations", {
-			"people": [0.01, 0.02, 0.235, 0.65], "overview": [0.755, 0.02, 0.235, 0.44],
-			"alerts": [0.755, 0.65, 0.235, 0.33], "activity": [0.01, 0.69, 0.235, 0.29]}],
-		"build": ["Construction & zones", {
-			"construction": [0.01, 0.02, 0.265, 0.96],
-			"operations": [0.725, 0.02, 0.265, 0.96]}],
-		"welfare": ["Colonist welfare", {
-			"people": [0.01, 0.02, 0.255, 0.96], "policies": [0.755, 0.02, 0.235, 0.47],
-			"trends": [0.705, 0.54, 0.285, 0.44]}],
-		"diagnostics": ["Diagnostics", {
-			"inspector": [0.01, 0.02, 0.235, 0.52], "alerts": [0.755, 0.02, 0.235, 0.42],
-			"trends": [0.01, 0.58, 0.29, 0.40], "activity": [0.65, 0.52, 0.34, 0.46]}],
+		"daily":
+		[
+			"Daily operations",
+			{
+				"people": [0.01, 0.02, 0.235, 0.65],
+				"overview": [0.755, 0.02, 0.235, 0.44],
+				"alerts": [0.755, 0.65, 0.235, 0.33],
+				"activity": [0.01, 0.69, 0.235, 0.29]
+			}
+		],
+		"build":
+		[
+			"Construction & zones",
+			{"construction": [0.01, 0.02, 0.265, 0.96], "operations": [0.725, 0.02, 0.265, 0.96]}
+		],
+		"welfare":
+		[
+			"Colonist welfare",
+			{
+				"people": [0.01, 0.02, 0.255, 0.96],
+				"policies": [0.755, 0.02, 0.235, 0.47],
+				"trends": [0.705, 0.54, 0.285, 0.44]
+			}
+		],
+		"diagnostics":
+		[
+			"Diagnostics",
+			{
+				"inspector": [0.01, 0.02, 0.235, 0.52],
+				"alerts": [0.755, 0.02, 0.235, 0.42],
+				"trends": [0.01, 0.58, 0.29, 0.40],
+				"activity": [0.65, 0.52, 0.34, 0.46]
+			}
+		],
 	}
 	for id: String in presets:
 		var panels := {}
 		for key: String in PANEL_NAMES:
-			panels[key] = panel(presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key))
-		if id != "build": panels.construction = panel([0.01, 0.02, 0.265, 0.96], false)
+			panels[key] = panel(
+				presets[id][1].get(key, [0.33, 0.12, 0.32, 0.65]), presets[id][1].has(key)
+			)
+		if id != "build":
+			panels.construction = panel([0.01, 0.02, 0.265, 0.96], false)
 		panels.admin = panel([0.30, 0.04, 0.40, 0.28])
 		panels.developer = panel([0.30, 0.34, 0.40, 0.62])
 		result[id] = {"name": presets[id][0], "panels": panels}
@@ -55,7 +88,9 @@ static func defaults() -> Dictionary:
 
 
 ## A collapsed frame supplies its header minimum without changing expanded limits.
-static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new(), minimum := Vector2.ZERO) -> Rect2:
+static func clamp_rect(
+	rect: Rect2, area: Vector2, metrics := UiMetrics.new(), minimum := Vector2.ZERO
+) -> Rect2:
 	var available := area.max(Vector2.ONE)
 	var floor_size := minimum_size(metrics) if minimum == Vector2.ZERO else minimum
 	var extent := rect.size.clamp(floor_size.min(available), available)
@@ -63,7 +98,9 @@ static func clamp_rect(rect: Rect2, area: Vector2, metrics := UiMetrics.new(), m
 
 
 ## Clamp only the dragged edges, keeping the opposite edges fixed.
-static func clamp_resize_rect(rect: Rect2, area: Vector2, edges: Vector2i, metrics := UiMetrics.new()) -> Rect2:
+static func clamp_resize_rect(
+	rect: Rect2, area: Vector2, edges: Vector2i, metrics := UiMetrics.new()
+) -> Rect2:
 	var available := area.max(Vector2.ONE)
 	var minimum := minimum_size(metrics).min(available)
 	var result := rect
@@ -86,19 +123,38 @@ static func clamp_resize_rect(rect: Rect2, area: Vector2, edges: Vector2i, metri
 
 
 static func to_pixels(values: Array, area: Vector2, metrics := UiMetrics.new()) -> Rect2:
-	return clamp_rect(Rect2(Vector2(values[0], values[1]) * area,
-		Vector2(values[2], values[3]) * area), area, metrics)
+	return clamp_rect(
+		Rect2(Vector2(values[0], values[1]) * area, Vector2(values[2], values[3]) * area),
+		area,
+		metrics
+	)
 
 
 static func to_normalized(rect: Rect2, area: Vector2) -> Array:
 	var divisor := area.max(Vector2.ONE)
-	return [rect.position.x / divisor.x, rect.position.y / divisor.y,
-		rect.size.x / divisor.x, rect.size.y / divisor.y]
+	return [
+		rect.position.x / divisor.x,
+		rect.position.y / divisor.y,
+		rect.size.x / divisor.x,
+		rect.size.y / divisor.y
+	]
 
 
 ## Align parallel edges and leave a small gutter between adjacent windows.
-static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing := false, metrics := UiMetrics.new(), resize_edges := Vector2i.ONE, minimum := Vector2.ZERO) -> Rect2:
-	var result := clamp_resize_rect(rect, area, resize_edges, metrics) if resizing else clamp_rect(rect, area, metrics, minimum)
+static func snap_rect(
+	rect: Rect2,
+	area: Vector2,
+	others: Array[Rect2],
+	resizing := false,
+	metrics := UiMetrics.new(),
+	resize_edges := Vector2i.ONE,
+	minimum := Vector2.ZERO
+) -> Rect2:
+	var result := (
+		clamp_resize_rect(rect, area, resize_edges, metrics)
+		if resizing
+		else clamp_rect(rect, area, metrics, minimum)
+	)
 	var distance := metrics.px(SNAP_DISTANCE)
 	var gap := metrics.px(GAP)
 	for axis in 2:
@@ -107,14 +163,32 @@ static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing
 		var edges: Array[float] = [0.0, area[axis]]
 		for other: Rect2 in others:
 			var cross := 1 - axis
-			if result.end[cross] < other.position[cross] - distance or result.position[cross] > other.end[cross] + distance:
+			if (
+				result.end[cross] < other.position[cross] - distance
+				or result.position[cross] > other.end[cross] + distance
+			):
 				continue
-			edges.append_array([other.position[axis], other.end[axis],
-				other.position[axis] - gap, other.end[axis] + gap])
+			edges.append_array(
+				[
+					other.position[axis],
+					other.end[axis],
+					other.position[axis] - gap,
+					other.end[axis] + gap
+				]
+			)
 		var best := distance + 1.0
 		var shift := 0.0
 		for edge: float in edges:
-			var candidates: Array[float] = [edge - (result.position[axis] if resizing and resize_edges[axis] < 0 else result.end[axis])]
+			var candidates: Array[float] = [
+				(
+					edge
+					- (
+						result.position[axis]
+						if resizing and resize_edges[axis] < 0
+						else result.end[axis]
+					)
+				)
+			]
 			if not resizing:
 				candidates.append(edge - result.position[axis])
 			for delta: float in candidates:
@@ -130,7 +204,11 @@ static func snap_rect(rect: Rect2, area: Vector2, others: Array[Rect2], resizing
 					result.size[axis] += shift
 			else:
 				result.position[axis] += shift
-	return clamp_resize_rect(result, area, resize_edges, metrics) if resizing else clamp_rect(result, area, metrics, minimum)
+	return (
+		clamp_resize_rect(result, area, resize_edges, metrics)
+		if resizing
+		else clamp_rect(result, area, metrics, minimum)
+	)
 
 
 func create_workspace(title: String, selected: Array[String], copy_current := true) -> String:
@@ -138,7 +216,9 @@ func create_workspace(title: String, selected: Array[String], copy_current := tr
 	if clean.is_empty() or workspaces.size() >= 24:
 		return ""
 	var id := "custom_%d" % Time.get_ticks_usec()
-	var panels: Dictionary = workspaces[active].panels.duplicate(true) if copy_current else defaults().daily.panels
+	var panels: Dictionary = (
+		workspaces[active].panels.duplicate(true) if copy_current else defaults().daily.panels
+	)
 	for key: String in panels:
 		panels[key].open = key in selected
 		panels[key].minimized = false
@@ -172,7 +252,16 @@ func save_to(path := SAVE_PATH) -> Error:
 	var file := FileAccess.open(path + ".tmp", FileAccess.WRITE)
 	if file == null:
 		return FileAccess.get_open_error()
-	file.store_string(JSON.stringify({"version": 3, "active": active, "show_panel_headers": show_panel_headers, "workspaces": workspaces}))
+	file.store_string(
+		JSON.stringify(
+			{
+				"version": 3,
+				"active": active,
+				"show_panel_headers": show_panel_headers,
+				"workspaces": workspaces
+			}
+		)
+	)
 	file.flush()
 	var error := file.get_error()
 	file.close()
@@ -190,7 +279,11 @@ func load_from(path := SAVE_PATH) -> bool:
 		last_load_status = "unreadable"
 		return false
 	var data: Variant = JSON.parse_string(file.get_as_text())
-	if not data is Dictionary or (data.get("version") != 1 and data.get("version") != 2 and data.get("version") != 3) or not data.get("workspaces") is Dictionary:
+	if (
+		not data is Dictionary
+		or (data.get("version") != 1 and data.get("version") != 2 and data.get("version") != 3)
+		or not data.get("workspaces") is Dictionary
+	):
 		last_load_status = "corrupt"
 		return false
 	var loaded := defaults()
@@ -198,12 +291,17 @@ func load_from(path := SAVE_PATH) -> bool:
 		if not id is String or loaded.size() >= 24:
 			continue
 		var entry: Variant = data.workspaces[id]
-		if not entry is Dictionary or not entry.get("name") is String or not entry.get("panels") is Dictionary:
+		if (
+			not entry is Dictionary
+			or not entry.get("name") is String
+			or not entry.get("panels") is Dictionary
+		):
 			continue
 		if entry.name.strip_edges().is_empty():
 			continue
 		var panels: Dictionary = loaded.get(id, defaults().daily).panels.duplicate(true)
-		if not entry.panels.has("construction"): panels.construction.open = false
+		if not entry.panels.has("construction"):
+			panels.construction.open = false
 		for key: String in PANEL_NAMES:
 			var saved: Variant = entry.panels.get(key)
 			if not saved is Dictionary or not saved.get("rect") is Array or saved.rect.size() != 4:
@@ -214,8 +312,14 @@ func load_from(path := SAVE_PATH) -> bool:
 					valid = false
 			if not valid:
 				continue
-			panels[key] = panel([clampf(saved.rect[0], 0, 1), clampf(saved.rect[1], 0, 1),
-				clampf(saved.rect[2], 0.05, 1), clampf(saved.rect[3], 0.05, 1)])
+			panels[key] = panel(
+				[
+					clampf(saved.rect[0], 0, 1),
+					clampf(saved.rect[1], 0, 1),
+					clampf(saved.rect[2], 0.05, 1),
+					clampf(saved.rect[3], 0.05, 1)
+				]
+			)
 			for flag: String in ["open", "minimized", "pinned"]:
 				if saved.get(flag) is bool:
 					panels[key][flag] = saved[flag]
@@ -224,7 +328,11 @@ func load_from(path := SAVE_PATH) -> bool:
 				panels[key].z = clampi(int(z), 0, 10000)
 		loaded[id] = {"name": entry.name.left(40), "panels": panels}
 	workspaces = loaded
-	show_panel_headers = data.get("show_panel_headers", true) if data.get("show_panel_headers", true) is bool else true
+	show_panel_headers = (
+		data.get("show_panel_headers", true)
+		if data.get("show_panel_headers", true) is bool
+		else true
+	)
 	active = str(data.get("active", "daily"))
 	if not workspaces.has(active):
 		active = "daily"

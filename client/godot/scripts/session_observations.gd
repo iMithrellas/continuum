@@ -54,14 +54,22 @@ func observe(game_seconds: float, generation: int, stocks: Dictionary, needs: Di
 	for name: Variant in _initial_stocks:
 		if not actual_stocks.has(name):
 			_missing_stocks[name] = true
-	_samples.append({"seconds": game_seconds, "stocks": actual_stocks, "needs": needs.duplicate(true)})
+	_samples.append(
+		{"seconds": game_seconds, "stocks": actual_stocks, "needs": needs.duplicate(true)}
+	)
 	while _samples.size() > MAX_SAMPLES:
 		_samples.pop_front()
 	return true
 
 
 func resource(name: String) -> Dictionary:
-	var result := {"available": false, "rate_available": false, "rate_label": "rate since connection", "level": "notice", "warming_up": true}
+	var result := {
+		"available": false,
+		"rate_available": false,
+		"rate_label": "rate since connection",
+		"level": "notice",
+		"warming_up": true
+	}
 	if _samples.is_empty() or not _samples.back().stocks.has(name):
 		return result
 	var current: Dictionary = _samples.back()
@@ -92,10 +100,24 @@ func need_trend(id: Variant, label: String) -> Dictionary:
 		return unavailable
 	for sample: Dictionary in _samples:
 		if float(sample.seconds) >= float(anchor.seconds):
-			if not sample.needs.has(id) or not sample.needs[id].has(label) or not Models.numeric(sample.needs[id][label]):
+			if (
+				not sample.needs.has(id)
+				or not sample.needs[id].has(label)
+				or not Models.numeric(sample.needs[id][label])
+			):
 				return unavailable
 	var difference := float(_samples.back().needs[id][label]) - float(anchor.needs[id][label])
-	return {"available": true, "difference": difference, "direction": "up" if difference > STABLE_EPSILON else ("down" if difference < -STABLE_EPSILON else "stable"), "lookback_game_seconds": float(_samples.back().seconds) - float(anchor.seconds)}
+	return {
+		"available": true,
+		"difference": difference,
+		"direction":
+		(
+			"up"
+			if difference > STABLE_EPSILON
+			else ("down" if difference < -STABLE_EPSILON else "stable")
+		),
+		"lookback_game_seconds": float(_samples.back().seconds) - float(anchor.seconds)
+	}
 
 
 func sample_count() -> int:

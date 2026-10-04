@@ -2,28 +2,43 @@ extends Node
 
 var failures := 0
 
-class StatusOnly extends ContinuumNativeServerManager:
+
+class StatusOnly:
+	extends ContinuumNativeServerManager
+
 	func status() -> String:
 		_set_state(State.OFFLINE)
 		return state()
+
 	func get_autostart() -> Dictionary:
 		return {"ok": true, "enabled": false}
 
-class RequestsOnly extends ContinuumNativeServerController:
+
+class RequestsOnly:
+	extends ContinuumNativeServerController
 	var starts := 0
+
 	func _ready() -> void:
 		pass
+
 	func request_start() -> int:
 		starts += 1
 		return super.request_start()
 
+
 func _ready() -> void:
 	call_deferred("_run")
 
+
 func _run() -> void:
 	var root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
-	var fixture := (root if not root.is_empty() else "/tmp/opencode").path_join("native-controls-%d" % OS.get_process_id())
-	_check(HTTPRequest.RESULT_CANT_CONNECT == 2, "SDK result 2 is HTTP connection failure, not a database authorization response")
+	var fixture := (root if not root.is_empty() else "/tmp/opencode").path_join(
+		"native-controls-%d" % OS.get_process_id()
+	)
+	_check(
+		HTTPRequest.RESULT_CANT_CONNECT == 2,
+		"SDK result 2 is HTTP connection failure, not a database authorization response"
+	)
 	DirAccess.make_dir_recursive_absolute(fixture)
 	OS.set_environment("CONTINUUM_NATIVE_ROOT", fixture.path_join("native"))
 	OS.set_environment("HOME", fixture)
@@ -31,42 +46,100 @@ func _run() -> void:
 	main.set_script(preload("res://tools/native_controls_main_fixture.gd"))
 	get_tree().root.add_child(main)
 	var browser: ContinuumServerManagement = main._server_management
-	_check(await _wait_for(func(): return browser._native_note.text.begins_with("Native server: offline")), "cold menu receives completed native status")
+	_check(
+		await _wait_for(
+			func(): return browser._native_note.text.begins_with("Native server: offline")
+		),
+		"cold menu receives completed native status"
+	)
 	main._show_server_management()
-	_check(not main._state_ready and not SpacetimeDB.Continuum.is_connected_db(), "cold menu does not need SDK readiness")
-	_check(not browser._local_start.disabled and not browser._join_button.disabled, "completed offline check enables cold menu start and join")
-	_check(not browser._native_note.text.contains("being checked"), "completed initial status clears checking message")
+	_check(
+		not main._state_ready and not SpacetimeDB.Continuum.is_connected_db(),
+		"cold menu does not need SDK readiness"
+	)
+	_check(
+		not browser._local_start.disabled and not browser._join_button.disabled,
+		"completed offline check enables cold menu start and join"
+	)
+	_check(
+		not browser._native_note.text.contains("being checked"),
+		"completed initial status clears checking message"
+	)
 
 	main._session_requested = true
 	main._direct_launch = true
 	main._host = "http://127.0.0.1:3001"
 	main._database = "continuum"
-	main._on_connection_error(HTTPRequest.RESULT_CANT_CONNECT, "Failed to acquire authentication token")
+	main._on_connection_error(
+		HTTPRequest.RESULT_CANT_CONNECT, "Failed to acquire authentication token"
+	)
 	main._show_server_management()
 	_check(main._reconnect_timer != null, "direct token failure retains background retry")
-	_check(not browser._join_button.disabled and browser._join_host.editable and browser._join_database.editable, "background retries do not lock manual join or endpoint editing")
-	_check(not browser._local_start.disabled and not browser._native_autostart.disabled, "background retries do not lock offline local actions")
-	_check(browser._status.text.contains("authentication token"), "browser explains authentication failure")
+	_check(
+		(
+			not browser._join_button.disabled
+			and browser._join_host.editable
+			and browser._join_database.editable
+		),
+		"background retries do not lock manual join or endpoint editing"
+	)
+	_check(
+		not browser._local_start.disabled and not browser._native_autostart.disabled,
+		"background retries do not lock offline local actions"
+	)
+	_check(
+		browser._status.text.contains("authentication token"),
+		"browser explains authentication failure"
+	)
 	main.leave_session()
 	main._on_native_state("conflict", "")
-	_check(browser._local_start.disabled and browser._local_stop.disabled and browser._local_force.disabled, "conflicting ownership never grants lifecycle controls")
-	_check(not browser._join_button.disabled and browser._native_note.text.contains("ownership"), "conflict explains ownership without disabling manual join")
+	_check(
+		(
+			browser._local_start.disabled
+			and browser._local_stop.disabled
+			and browser._local_force.disabled
+		),
+		"conflicting ownership never grants lifecycle controls"
+	)
+	_check(
+		not browser._join_button.disabled and browser._native_note.text.contains("ownership"),
+		"conflict explains ownership without disabling manual join"
+	)
 	main._on_native_state("unhealthy", "")
-	_check(browser._local_start.disabled and not browser._local_stop.disabled and browser._local_force.disabled, "owned unhealthy server permits only graceful stop")
+	_check(
+		(
+			browser._local_start.disabled
+			and not browser._local_stop.disabled
+			and browser._local_force.disabled
+		),
+		"owned unhealthy server permits only graceful stop"
+	)
 	main._on_native_state("unknown", "")
-	_check(browser._local_start.disabled and not browser._join_button.disabled, "unknown status does not authorize native start or block join")
+	_check(
+		browser._local_start.disabled and not browser._join_button.disabled,
+		"unknown status does not authorize native start or block join"
+	)
 	main._on_native_state("offline", "")
 	main._session_requested = true
 	main._direct_launch = false
 	main._show_server_management()
-	_check(browser._join_button.disabled and browser._local_start.disabled, "explicit manual connection remains legitimately busy")
+	_check(
+		browser._join_button.disabled and browser._local_start.disabled,
+		"explicit manual connection remains legitimately busy"
+	)
 	main._on_connection_error(2, "fixture token failure")
-	_check(not browser._join_button.disabled and not browser._local_start.disabled, "manual token failure releases connection busy")
+	_check(
+		not browser._join_button.disabled and not browser._local_start.disabled,
+		"manual token failure releases connection busy"
+	)
 	main.leave_session()
 	await _authentication_failures(main, browser)
 	await _subscription_failures(main, browser)
 	main._native_controller.request_shutdown()
-	_check(await _wait_for(main._native_controller.finish_shutdown), "cold menu worker shuts down without launching or stopping")
+	_check(
+		await _wait_for(main._native_controller.finish_shutdown),
+		"cold menu worker shuts down without launching or stopping"
+	)
 	main._native_controller.queue_free()
 	await get_tree().process_frame
 	var requests := RequestsOnly.new()
@@ -77,10 +150,19 @@ func _run() -> void:
 	main._on_connection_error(2, "fixture retry")
 	var stale_timer: SceneTreeTimer = main._reconnect_timer
 	main._native_start()
-	_check(requests.starts == 1 and not main._session_requested and main._reconnect_timer == null, "explicit native setup supersedes the old automatic retry")
+	_check(
+		requests.starts == 1 and not main._session_requested and main._reconnect_timer == null,
+		"explicit native setup supersedes the old automatic retry"
+	)
 	main._retry_connection(stale_timer)
-	_check(not SpacetimeDB.Continuum.is_connected_db() and main._reconnect_timer == null, "superseded retry callback cannot connect")
-	_check(browser._join_button.disabled and browser._native_busy, "explicit native startup remains legitimately busy")
+	_check(
+		not SpacetimeDB.Continuum.is_connected_db() and main._reconnect_timer == null,
+		"superseded retry callback cannot connect"
+	)
+	_check(
+		browser._join_button.disabled and browser._native_busy,
+		"explicit native startup remains legitimately busy"
+	)
 	main.cancel_local_setup()
 	_check(not browser._join_button.disabled, "cancelled native setup restores manual join")
 	main.queue_free()
@@ -89,6 +171,7 @@ func _run() -> void:
 	print("NATIVE_CONTROLS_PASS" if failures == 0 else "NATIVE_CONTROLS_FAIL")
 	get_tree().quit(0 if failures == 0 else 1)
 
+
 func _authentication_failures(main: Node, browser: ContinuumServerManagement) -> void:
 	for direct: bool in [false, true]:
 		main._session_requested = true
@@ -96,9 +179,20 @@ func _authentication_failures(main: Node, browser: ContinuumServerManagement) ->
 		main._bind_client(SpacetimeDB.Continuum)
 		main._show_server_management()
 		main._on_connection_error(401, "This server rejected the saved authentication token.")
-		_check(not main._session_requested and main._reconnect_timer == null, "authentication rejection terminates manual and direct joins without a retry loop")
-		_check(browser._status_warning and browser._status.text.contains("Authentication failed") and not browser._join_button.disabled, "authentication rejection explains the failure and unlocks another join")
+		_check(
+			not main._session_requested and main._reconnect_timer == null,
+			"authentication rejection terminates manual and direct joins without a retry loop"
+		)
+		_check(
+			(
+				browser._status_warning
+				and browser._status.text.contains("Authentication failed")
+				and not browser._join_button.disabled
+			),
+			"authentication rejection explains the failure and unlocks another join"
+		)
 		await get_tree().process_frame
+
 
 func _subscription_failures(main: Node, browser: ContinuumServerManagement) -> void:
 	var client: ContinuumModuleClient = SpacetimeDB.Continuum
@@ -108,19 +202,45 @@ func _subscription_failures(main: Node, browser: ContinuumServerManagement) -> v
 		main._direct_launch = direct
 		main._bind_client(client)
 		main._show_server_management()
-		var handle := SpacetimeDBSubscription.create(client, 71, ["SELECT * FROM production_policy"])
+		var handle := SpacetimeDBSubscription.create(
+			client, 71, ["SELECT * FROM production_policy"]
+		)
 		client.add_child(handle)
 		client._pending_subscriptions[71] = handle
 		main._subscription = handle
 		handle.end.connect(main._on_bootstrap_ended.bind(handle, main._session_generation))
 		var error := SubscriptionErrorMessage.new()
 		error.query_id = QueryIdData.new(71)
-		error.error_message = 'no such table: `production_policy`, executing: `SELECT * FROM production_policy`'
+		error.error_message = "no such table: `production_policy`, executing: `SELECT * FROM production_policy`"
 		client._handle_parsed_message(error)
-		_check(not main._session_requested and not main._state_ready and main._subscription == null, "server subscription rejection terminates both manual and direct joins")
-		_check(browser.visible and browser._status_warning and browser._status.text.contains(error.error_message) and browser._status.text.contains("Update module"), "Servers immediately displays the actual schema error and safe recovery")
-		_check(not browser._join_button.disabled and not browser._local_start.disabled and main._reconnect_timer == null, "schema failures unlock retry without automatic reconnect loops")
-		_check(main._server_history.entries().size() == history_size and main._resume_context.is_empty(), "rejected subscriptions never create successful history or Resume targets")
+		_check(
+			not main._session_requested and not main._state_ready and main._subscription == null,
+			"server subscription rejection terminates both manual and direct joins"
+		)
+		_check(
+			(
+				browser.visible
+				and browser._status_warning
+				and browser._status.text.contains(error.error_message)
+				and browser._status.text.contains("Update module")
+			),
+			"Servers immediately displays the actual schema error and safe recovery"
+		)
+		_check(
+			(
+				not browser._join_button.disabled
+				and not browser._local_start.disabled
+				and main._reconnect_timer == null
+			),
+			"schema failures unlock retry without automatic reconnect loops"
+		)
+		_check(
+			(
+				main._server_history.entries().size() == history_size
+				and main._resume_context.is_empty()
+			),
+			"rejected subscriptions never create successful history or Resume targets"
+		)
 		await get_tree().process_frame
 	main._session_requested = true
 	main._direct_launch = false
@@ -133,29 +253,49 @@ func _subscription_failures(main: Node, browser: ContinuumServerManagement) -> v
 	var generation: int = main._session_generation
 	main._on_bootstrap_timeout(weakref(timeout), generation)
 	main._on_subscription_applied(timeout, generation)
-	_check(not main._session_requested and not main._state_ready and browser._status.text.contains("Timed out"), "bootstrap timeout reports failure and late acknowledgement cannot admit play")
+	_check(
+		(
+			not main._session_requested
+			and not main._state_ready
+			and browser._status.text.contains("Timed out")
+		),
+		"bootstrap timeout reports failure and late acknowledgement cannot admit play"
+	)
 	await get_tree().process_frame
+
 
 func _controller_status() -> void:
 	var controller := ContinuumNativeServerController.new()
 	controller.manager_factory = func(): return StatusOnly.new()
 	get_tree().root.add_child(controller)
-	_check(await _wait_for(func(): return controller.cached_state() == "offline"), "worker reports initial status without world polling")
-	_check(not controller.cached_message().contains("being checked"), "worker resolves initial checking message")
+	_check(
+		await _wait_for(func(): return controller.cached_state() == "offline"),
+		"worker reports initial status without world polling"
+	)
+	_check(
+		not controller.cached_message().contains("being checked"),
+		"worker resolves initial checking message"
+	)
 	controller._on_worker_failure("fixture actionable failure")
 	controller._on_worker_state("offline")
-	_check(controller.cached_message() == "fixture actionable failure", "resolved status preserves actionable failure details")
+	_check(
+		controller.cached_message() == "fixture actionable failure",
+		"resolved status preserves actionable failure details"
+	)
 	controller.request_shutdown()
 	_check(await _wait_for(controller.finish_shutdown), "status-only worker finishes")
 	controller.queue_free()
 	await get_tree().process_frame
 
+
 func _wait_for(condition: Callable) -> bool:
 	var deadline := Time.get_ticks_msec() + 3000
 	while Time.get_ticks_msec() < deadline:
-		if condition.call(): return true
+		if condition.call():
+			return true
 		await get_tree().create_timer(0.01).timeout
 	return false
+
 
 func _check(condition: bool, message: String) -> void:
 	if not condition:

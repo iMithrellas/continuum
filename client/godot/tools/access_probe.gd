@@ -18,15 +18,20 @@ var waiting_reconnect := false
 var allow_unknown := false
 var disconnected := false
 
+
 func _initialize() -> void:
 	client = ContinuumModuleClient.new()
 	root.add_child(client)
 	access = ContinuumAccess.new(client)
 	access.changed.connect(_on_access_changed)
-	client.connected.connect(func(identity: PackedByteArray, _token: String) -> void:
-		connected = true
-		print("CLIENT_IDENTITY=%s" % identity.hex_encode()))
-	client.connection_error.connect(func(code: int, reason: String) -> void: _fail("connection error %d: %s" % [code, reason]))
+	client.connected.connect(
+		func(identity: PackedByteArray, _token: String) -> void:
+			connected = true
+			print("CLIENT_IDENTITY=%s" % identity.hex_encode())
+	)
+	client.connection_error.connect(
+		func(code: int, reason: String) -> void: _fail("connection error %d: %s" % [code, reason])
+	)
 	client.disconnected.connect(_on_disconnected)
 	expected_role = _option("--expected", "")
 	hold = _option("--hold", "false") == "true"
@@ -36,6 +41,7 @@ func _initialize() -> void:
 	disconnect_after = _option("--disconnect-after", "")
 	signal_file = _option("--signal-file", "")
 	resume_file = _option("--resume-file", "")
+
 
 func _process(delta: float) -> bool:
 	elapsed += delta
@@ -51,6 +57,7 @@ func _process(delta: float) -> bool:
 		_connect()
 	return false
 
+
 func _connect() -> void:
 	var host := _option("--stdb-host", "http://127.0.0.1:3000")
 	var database := _option("--stdb-db", "continuum")
@@ -61,6 +68,7 @@ func _connect() -> void:
 	options.save_token = true
 	ContinuumClientProfile.configure_credentials(client, profile, host, database)
 	client.connect_db(host, database, options)
+
 
 func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) -> void:
 	if role_name == ContinuumAccess.ROLE_UNKNOWN:
@@ -84,13 +92,18 @@ func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) ->
 		waiting_reconnect = true
 		client.disconnect_db()
 		return
-	if not hold or (not expected_sequence.is_empty() and sequence_index == expected_sequence.size()):
+	if (
+		not hold
+		or (not expected_sequence.is_empty() and sequence_index == expected_sequence.size())
+	):
 		print("ACCESS_PASS")
 		quit(0)
+
 
 func _fail(message: String) -> void:
 	printerr("access probe: %s" % message)
 	quit(1)
+
 
 func _on_disconnected() -> void:
 	if disconnected:
@@ -100,6 +113,7 @@ func _on_disconnected() -> void:
 	if signal_handle:
 		signal_handle.store_string("disconnected")
 		signal_handle.close()
+
 
 func _option(name: String, fallback: String) -> String:
 	for argument: String in OS.get_cmdline_user_args():

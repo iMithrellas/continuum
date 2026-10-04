@@ -4,6 +4,7 @@ const Tokens = preload("res://ui/theme/theme_tokens.gd")
 const FocusRing = preload("res://ui/theme/focus_ring.gd")
 const FloatingBox = preload("res://ui/theme/floating_box.gd")
 
+
 static func box(bg: String, border := "", radius := "radius-sm", pad := 0.0) -> StyleBoxFlat:
 	var s := StyleBoxFlat.new()
 	s.bg_color = Tokens.color(bg) if bg != "" else Color.TRANSPARENT
@@ -16,6 +17,7 @@ static func box(bg: String, border := "", radius := "radius-sm", pad := 0.0) -> 
 	s.content_margin_top = Tokens.number("space-1")
 	s.content_margin_bottom = Tokens.number("space-1")
 	return s
+
 
 static func focus() -> StyleBox:
 	var result := FocusRing.new()
@@ -32,6 +34,7 @@ static func focus() -> StyleBox:
 	result.ring.set_expand_margin_all(layers[1].spread)
 	return result
 
+
 static func floating() -> StyleBox:
 	var result := FloatingBox.new()
 	result.body = box("bg-100", "line-200", "radius-md", Tokens.number("space-3"))
@@ -47,6 +50,7 @@ static func floating() -> StyleBox:
 	result.content_margin_bottom = Tokens.number("space-3")
 	return result
 
+
 static func build() -> Theme:
 	var th := Theme.new()
 	th.set_meta("theme_tokens_json", FileAccess.get_file_as_string(Tokens.ROOT + "tokens.json"))
@@ -58,22 +62,51 @@ static func build() -> Theme:
 		th.set_type_variation(variant, "Label")
 		th.set_font("font", variant, Tokens.font(style))
 		th.set_font_size("font_size", variant, Tokens.font_size(style))
-		th.set_color("font_color", variant, Tokens.color("ink-subtle" if style in ["section", "log"] else "ink-muted" if style in ["small", "tag"] else "ink"))
-		th.set_constant("line_spacing", variant, Tokens.line_height(style) - ceili(Tokens.font(style).get_height(Tokens.font_size(style))))
+		th.set_color(
+			"font_color",
+			variant,
+			Tokens.color(
+				(
+					"ink-subtle"
+					if style in ["section", "log"]
+					else "ink-muted" if style in ["small", "tag"] else "ink"
+				)
+			)
+		)
+		th.set_constant(
+			"line_spacing",
+			variant,
+			(
+				Tokens.line_height(style)
+				- ceili(Tokens.font(style).get_height(Tokens.font_size(style)))
+			)
+		)
 	th.set_color("font_color", "Label", Tokens.color("ink"))
 	th.set_color("default_color", "RichTextLabel", Tokens.color("ink"))
-	th.set_stylebox("panel", "PanelContainer", box("bg-100", "line-100", "radius-md", Tokens.number("space-3")))
+	th.set_stylebox(
+		"panel", "PanelContainer", box("bg-100", "line-100", "radius-md", Tokens.number("space-3"))
+	)
 	th.set_type_variation("PanelHeader", "PanelContainer")
 	th.set_stylebox("panel", "PanelHeader", box("bg-200", "", "radius-0", Tokens.number("space-3")))
 	th.set_type_variation("PanelFloating", "PanelContainer")
 	th.set_stylebox("panel", "PanelFloating", floating())
-	for type: String in ["Button", "OptionButton", "MenuButton", "ButtonPrimary", "ButtonQuiet", "ButtonCritical", "ButtonIcon"]:
+	for type: String in [
+		"Button",
+		"OptionButton",
+		"MenuButton",
+		"ButtonPrimary",
+		"ButtonQuiet",
+		"ButtonCritical",
+		"ButtonIcon"
+	]:
 		if type.begins_with("Button") and type != "Button":
 			th.set_type_variation(type, "Button")
 		th.set_font("font", type, Tokens.font("body"))
 		th.set_font_size("font_size", type, Tokens.font_size("body"))
 		for state: String in ["normal", "hover", "pressed", "disabled"]:
-			var bg: String = {"normal": "bg-300", "hover": "bg-400", "pressed": "bg-200", "disabled": "bg-200"}[state]
+			var bg: String = {
+				"normal": "bg-300", "hover": "bg-400", "pressed": "bg-200", "disabled": "bg-200"
+			}[state]
 			var ink := "ink-subtle" if state == "disabled" else "ink"
 			var border := "line-100" if state == "disabled" else "line-200"
 			if type == "ButtonPrimary" and state != "disabled":
@@ -88,8 +121,26 @@ static func build() -> Theme:
 				bg = "" if state == "normal" else "bg-300" if state == "hover" else "bg-200"
 				ink = "accent" if state == "pressed" else "ink" if state == "hover" else "ink-muted"
 				border = "" if state == "normal" else "accent" if state == "pressed" else "line-200"
-			th.set_stylebox(state, type, box(bg, border, "radius-sm", Tokens.number("space-1" if type == "ButtonIcon" else "space-3")))
-			th.set_color({"normal": "font_color", "hover": "font_hover_color", "pressed": "font_pressed_color", "disabled": "font_disabled_color"}[state], type, Tokens.color(ink))
+			th.set_stylebox(
+				state,
+				type,
+				box(
+					bg,
+					border,
+					"radius-sm",
+					Tokens.number("space-1" if type == "ButtonIcon" else "space-3")
+				)
+			)
+			th.set_color(
+				{
+					"normal": "font_color",
+					"hover": "font_hover_color",
+					"pressed": "font_pressed_color",
+					"disabled": "font_disabled_color"
+				}[state],
+				type,
+				Tokens.color(ink)
+			)
 		th.set_color("font_focus_color", type, th.get_color("font_color", type))
 		th.set_stylebox("focus", type, focus())
 	for type: String in ["ProgressBar", "MeterWarn", "MeterCritical"]:
@@ -99,8 +150,20 @@ static func build() -> Theme:
 		th.set_font_size("font_size", type, Tokens.font_size("readout"))
 		th.set_color("font_color", type, Tokens.color("ink"))
 		th.set_stylebox("background", type, box("meter-track"))
-		th.set_stylebox("fill", type, box("warn" if type == "MeterWarn" else "critical" if type == "MeterCritical" else "meter-fill"))
-	th.set_stylebox("normal", "LineEdit", box("bg-300", "line-200", "radius-sm", Tokens.number("space-2")))
+		th.set_stylebox(
+			"fill",
+			type,
+			box(
+				(
+					"warn"
+					if type == "MeterWarn"
+					else "critical" if type == "MeterCritical" else "meter-fill"
+				)
+			)
+		)
+	th.set_stylebox(
+		"normal", "LineEdit", box("bg-300", "line-200", "radius-sm", Tokens.number("space-2"))
+	)
 	th.set_stylebox("focus", "LineEdit", focus())
 	th.set_color("font_color", "LineEdit", Tokens.color("ink"))
 	th.set_color("font_placeholder_color", "LineEdit", Tokens.color("ink-subtle"))
@@ -109,6 +172,7 @@ static func build() -> Theme:
 	for type: String in ["HBoxContainer", "VBoxContainer"]:
 		th.set_constant("separation", type, int(Tokens.number("space-2")))
 	return th
+
 
 func _initialize() -> void:
 	if not Tokens._ensure():

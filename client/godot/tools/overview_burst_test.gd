@@ -2,20 +2,39 @@
 extends Node
 const Wire = preload("res://tools/large_map_wire_test.gd")
 var failures := 0
+
+
 func check(value: bool, message: String) -> void:
 	if not value:
 		failures += 1
 		push_error(message)
+
+
 func _ready() -> void:
 	call_deferred("run")
+
+
 func run() -> void:
 	var local := preload("res://tools/terrain_fixture.gd").database()
 	local._tables["terrain_chunk"].clear()
 	local._tables["world_geometry"][0].width = 2048
 	local._tables["world_geometry"][0].height = 2048
 	var db := Wire.ExtendedDb.new(local)
-	db.world_generation.values = [{"generation_id": 9, "storage_version": 1, "width": 2048, "height": 2048,
-		"min_z": -16, "max_z": 15, "starter_x": 1012, "starter_y": 1012, "phase": 5, "ready": true, "error": ""}]
+	db.world_generation.values = [
+		{
+			"generation_id": 9,
+			"storage_version": 1,
+			"width": 2048,
+			"height": 2048,
+			"min_z": -16,
+			"max_z": 15,
+			"starter_x": 1012,
+			"starter_y": 1012,
+			"phase": 5,
+			"ready": true,
+			"error": ""
+		}
+	]
 	var client := Wire.Client.new()
 	client.db = db
 	var previous := SpacetimeDB.Continuum.db
@@ -42,9 +61,21 @@ func run() -> void:
 	ecology.resize(256)
 	for y in 16:
 		for x in 16:
-			db.terrain_overview_chunk.values.append({"generation_id": 9, "revision": 0, "lod": 3, "cut_z": 0,
-				"chunk_x": x, "chunk_y": y, "surface_z": heights, "material": materials,
-				"soil_fertility": ecology, "forest_density": ecology, "moisture": ecology})
+			db.terrain_overview_chunk.values.append(
+				{
+					"generation_id": 9,
+					"revision": 0,
+					"lod": 3,
+					"cut_z": 0,
+					"chunk_x": x,
+					"chunk_y": y,
+					"surface_z": heights,
+					"material": materials,
+					"soil_fertility": ecology,
+					"forest_density": ecology,
+					"moisture": ecology
+				}
+			)
 	var baseline := session.rendered_frames
 	var physical := Vector2i(map.terrain_model.query_count, map.terrain_model.voxel_query_count)
 	var start := Time.get_ticks_usec()
@@ -53,17 +84,42 @@ func run() -> void:
 		client.handles[index].applied.emit()
 		index += 1
 	var elapsed := Time.get_ticks_usec() - start
-	check(index == 256 and session.overview.rows.size() == 256, "all 256 overview acknowledgements installed bounded rows")
-	check(session.rendered_frames == baseline, "burst does not synchronously rebuild any 65536-sample frames")
+	check(
+		index == 256 and session.overview.rows.size() == 256,
+		"all 256 overview acknowledgements installed bounded rows"
+	)
+	check(
+		session.rendered_frames == baseline,
+		"burst does not synchronously rebuild any 65536-sample frames"
+	)
 	await get_tree().process_frame
-	check(session.rendered_frames == baseline + 1 and map.terrain_view.pending_samples == 0, "one deferred frame consumes the full burst without pending samples")
-	check(Vector2i(map.terrain_model.query_count, map.terrain_model.voxel_query_count) == physical, "overview burst never samples physical world")
+	check(
+		session.rendered_frames == baseline + 1 and map.terrain_view.pending_samples == 0,
+		"one deferred frame consumes the full burst without pending samples"
+	)
+	check(
+		Vector2i(map.terrain_model.query_count, map.terrain_model.voxel_query_count) == physical,
+		"overview burst never samples physical world"
+	)
 	var snapshots := session.overview.snapshot_count
 	session._camera_dirty = false
 	session.mark_changed("terrain_overview_chunk", db.terrain_overview_chunk.iter()[0])
 	session.tick(0.0)
-	check(session.overview.snapshot_count == snapshots + 1, "one row event reconciles one resident coordinate, not all 256")
-	print("OVERVIEW_BURST_%s acks=%d frames=%d synchronous_usec=%d" % ["PASS" if failures == 0 else "FAIL", index, session.rendered_frames - baseline, elapsed])
+	check(
+		session.overview.snapshot_count == snapshots + 1,
+		"one row event reconciles one resident coordinate, not all 256"
+	)
+	print(
+		(
+			"OVERVIEW_BURST_%s acks=%d frames=%d synchronous_usec=%d"
+			% [
+				"PASS" if failures == 0 else "FAIL",
+				index,
+				session.rendered_frames - baseline,
+				elapsed
+			]
+		)
+	)
 	await get_tree().process_frame
 	var removed: Variant = db.terrain_overview_chunk.iter()[0]
 	db.terrain_overview_chunk.values.remove_at(0)
@@ -73,9 +129,20 @@ func run() -> void:
 	session.mark_changed("terrain_overview_chunk", removed)
 	session.tick(0.0)
 	await get_tree().process_frame
-	check(session.rendered_frames == before_loss + 1 and map.terrain_view.pending_samples > 0,
-		"lost overview coverage renders pending immediately even during a partial growth batch")
-	print("OVERVIEW_INVALIDATION_%s frames=%d pending=%d" % ["PASS" if failures == 0 else "FAIL", session.rendered_frames - before_loss, map.terrain_view.pending_samples])
+	check(
+		session.rendered_frames == before_loss + 1 and map.terrain_view.pending_samples > 0,
+		"lost overview coverage renders pending immediately even during a partial growth batch"
+	)
+	print(
+		(
+			"OVERVIEW_INVALIDATION_%s frames=%d pending=%d"
+			% [
+				"PASS" if failures == 0 else "FAIL",
+				session.rendered_frames - before_loss,
+				map.terrain_view.pending_samples
+			]
+		)
+	)
 	session.stop()
 	for handle in client.handles:
 		handle.end.emit()

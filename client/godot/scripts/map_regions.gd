@@ -5,6 +5,7 @@ extends RefCounted
 
 const NEIGHBOURS := [Vector2i.UP, Vector2i.RIGHT, Vector2i.DOWN, Vector2i.LEFT]
 
+
 static func build(footprints: Array) -> Array[Dictionary]:
 	var groups := {}
 	for footprint: Dictionary in footprints:
@@ -17,7 +18,9 @@ static func build(footprints: Array) -> Array[Dictionary]:
 				groups[key][Vector2i(x, y)] = true
 	var result: Array[Dictionary] = []
 	var keys: Array = groups.keys()
-	keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y < b.y or (a.y == b.y and a.x < b.x))
+	keys.sort_custom(
+		func(a: Vector2i, b: Vector2i) -> bool: return a.y < b.y or (a.y == b.y and a.x < b.x)
+	)
 	for key: Vector2i in keys:
 		var remaining: Dictionary = groups[key].duplicate()
 		var seeds: Array = remaining.keys()
@@ -42,21 +45,42 @@ static func build(footprints: Array) -> Array[Dictionary]:
 						queue.append(adjacent)
 			var edges: Array[PackedVector2Array] = []
 			for cell: Vector2i in queue:
-				var corners := [Vector2(cell), Vector2(cell + Vector2i.RIGHT), Vector2(cell + Vector2i.ONE), Vector2(cell + Vector2i.DOWN)]
+				var corners := [
+					Vector2(cell),
+					Vector2(cell + Vector2i.RIGHT),
+					Vector2(cell + Vector2i.ONE),
+					Vector2(cell + Vector2i.DOWN)
+				]
 				for side in 4:
 					if not cells.has(cell + NEIGHBOURS[side]):
 						edges.append(PackedVector2Array([corners[side], corners[(side + 1) % 4]]))
 			queue.sort_custom(_before)
 			var runs: Array[Rect2i] = []
 			for cell: Vector2i in queue:
-				if not runs.is_empty() and runs[-1].position.y == cell.y and runs[-1].end.x == cell.x:
+				if (
+					not runs.is_empty()
+					and runs[-1].position.y == cell.y
+					and runs[-1].end.x == cell.x
+				):
 					var run := runs[-1]
 					run.size.x += 1
 					runs[-1] = run
 				else:
 					runs.append(Rect2i(cell, Vector2i.ONE))
-			result.append({"kind": key.x, "z": key.y, "anchor": seed, "count": cells.size(), "bounds": bounds, "cells": cells, "edges": edges, "runs": runs})
+			result.append(
+				{
+					"kind": key.x,
+					"z": key.y,
+					"anchor": seed,
+					"count": cells.size(),
+					"bounds": bounds,
+					"cells": cells,
+					"edges": edges,
+					"runs": runs
+				}
+			)
 	return result
+
 
 static func _before(a: Vector2i, b: Vector2i) -> bool:
 	return a.y < b.y or (a.y == b.y and a.x < b.x)

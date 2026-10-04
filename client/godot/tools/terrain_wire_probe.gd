@@ -5,13 +5,17 @@ var client: ContinuumModuleClient
 var subscription: SpacetimeDBSubscription
 var finished := false
 
+
 func _ready() -> void:
 	client = ContinuumModuleClient.new()
 	client.handle_window_close = false
 	client.token_save_path = "user://terrain_wire_probe_unused.token"
 	add_child(client)
 	client.connected.connect(_connected)
-	client.connection_error.connect(func(code: int, reason: String) -> void: finish(false, "connection error %d: %s" % [code, reason]))
+	client.connection_error.connect(
+		func(code: int, reason: String) -> void:
+			finish(false, "connection error %d: %s" % [code, reason])
+	)
 	var host := ""
 	var database := ""
 	for argument in OS.get_cmdline_user_args():
@@ -27,16 +31,30 @@ func _ready() -> void:
 	options.save_token = false
 	options.one_time_token = true
 	client.connect_db(host, database, options)
-	get_tree().create_timer(15).timeout.connect(func() -> void: finish(false, "subscription timeout"))
+	get_tree().create_timer(15).timeout.connect(
+		func() -> void: finish(false, "subscription timeout")
+	)
+
 
 func _connected(_identity: Variant, _token: Variant) -> void:
-	subscription = client.subscribe(PackedStringArray([
-		"SELECT * FROM world_geometry", "SELECT * FROM terrain_chunk", "SELECT * FROM terrain_material",
-		"SELECT * FROM excavation_designation", "SELECT * FROM tile", "SELECT * FROM colonist", "SELECT * FROM item_stack"]))
+	subscription = client.subscribe(
+		PackedStringArray(
+			[
+				"SELECT * FROM world_geometry",
+				"SELECT * FROM terrain_chunk",
+				"SELECT * FROM terrain_material",
+				"SELECT * FROM excavation_designation",
+				"SELECT * FROM tile",
+				"SELECT * FROM colonist",
+				"SELECT * FROM item_stack"
+			]
+		)
+	)
 	if subscription.error != OK:
 		finish(false, "subscribe error %d" % subscription.error)
 		return
 	subscription.applied.connect(_applied)
+
 
 func _applied() -> void:
 	var geometry: ContinuumWorldGeometry = client.db.world_geometry.id.find(0)
@@ -53,9 +71,23 @@ func _applied() -> void:
 			return
 	var model := LayeredTerrainModel.new()
 	model.sync(geometry, client.db.terrain_chunk.iter(), client.db.terrain_material.iter())
-	finish(true, "%dx%d z=%d..%d chunks=%d surfaces=%d colonists=%d designations=%d" % [geometry.width, geometry.height,
-		geometry.min_z, geometry.max_z, client.db.terrain_chunk.iter().size(), model.surfaces.size(),
-		client.db.colonist.iter().size(), client.db.excavation_designation.iter().size()])
+	finish(
+		true,
+		(
+			"%dx%d z=%d..%d chunks=%d surfaces=%d colonists=%d designations=%d"
+			% [
+				geometry.width,
+				geometry.height,
+				geometry.min_z,
+				geometry.max_z,
+				client.db.terrain_chunk.iter().size(),
+				model.surfaces.size(),
+				client.db.colonist.iter().size(),
+				client.db.excavation_designation.iter().size()
+			]
+		)
+	)
+
 
 func finish(passed: bool, message: String) -> void:
 	if finished:

@@ -2,37 +2,66 @@
 ## view, warmup, disconnect, or a late subscription acknowledgement may do so.
 extends SceneTree
 
-class ConnectedClient extends ContinuumModuleClient:
+
+class ConnectedClient:
+	extends ContinuumModuleClient
 	var online := true
+
 	func is_connected_db() -> bool:
 		return online
 
-class AccessFixture extends ContinuumAccess:
+
+class AccessFixture:
+	extends ContinuumAccess
+
 	func _init(client: SpacetimeDBClient) -> void:
 		_client = client
 
-class Transport extends SpacetimeDBConnection:
+
+class Transport:
+	extends SpacetimeDBConnection
 	var packets: Array[PackedByteArray] = []
+
 	func send_bytes(bytes: PackedByteArray) -> Error:
 		packets.append(bytes)
 		return OK
-	func _process(_delta: float) -> void: pass
 
-class LifecycleClient extends ConnectedClient:
+	func _process(_delta: float) -> void:
+		pass
+
+
+class LifecycleClient:
+	extends ConnectedClient
 	var discards := 0
 	var next_id := 0
+
 	func subscribe(sql: PackedStringArray) -> SpacetimeDBSubscription:
 		next_id += 1
 		var handle := SpacetimeDBSubscription.create(self, next_id, sql)
 		add_child(handle)
 		_pending_subscriptions[next_id] = handle
 		return handle
+
 	func discard_subscription(handle: SpacetimeDBSubscription) -> void:
 		discards += 1
 		super.discard_subscription(handle)
 
+
 func lifecycle() -> void:
-	for mode in ["disconnect", "error", "closing", "ack", "timeout", "freed", "owner_lost", "owner_ack", "owner_freed", "handle_freed", "replacement", "early_quit"]:
+	for mode in [
+		"disconnect",
+		"error",
+		"closing",
+		"ack",
+		"timeout",
+		"freed",
+		"owner_lost",
+		"owner_ack",
+		"owner_freed",
+		"handle_freed",
+		"replacement",
+		"early_quit"
+	]:
 		var client := LifecycleClient.new()
 		root.add_child(client)
 		client.set_process(false)
@@ -73,8 +102,10 @@ func lifecycle() -> void:
 		if mode == "closing":
 			transport._websocket.close()
 			assert(transport._websocket.get_ready_state() == WebSocketPeer.STATE_CLOSING)
-		if mode == "disconnect": client.disconnected.emit()
-		if mode == "error": client.connection_error.emit(ERR_CONNECTION_ERROR, "fixture")
+		if mode == "disconnect":
+			client.disconnected.emit()
+		if mode == "error":
+			client.connection_error.emit(ERR_CONNECTION_ERROR, "fixture")
 		access.stop()
 		access.stop()
 		assert(access.role_name == "Unknown" and not access.can_operate and not access.is_admin)
@@ -88,12 +119,23 @@ func lifecycle() -> void:
 			access._release_subscription()
 			assert(transport.packets.size() == 1)
 			var replacement: ContinuumAccess
-			if mode in ["owner_lost", "owner_ack", "owner_freed", "handle_freed", "replacement", "early_quit"]:
+			if (
+				mode
+				in [
+					"owner_lost",
+					"owner_ack",
+					"owner_freed",
+					"handle_freed",
+					"replacement",
+					"early_quit"
+				]
+			):
 				client._pending_subscriptions.erase(1)
 				client.current_subscriptions[1] = handle
 				access = null
 				assert(access_reference.get_ref() == null)
-				if mode == "owner_lost": transport._websocket.close()
+				if mode == "owner_lost":
+					transport._websocket.close()
 				if mode == "replacement":
 					replacement = ContinuumAccess.new(client)
 					local.apply_table_update(insert)
@@ -110,7 +152,8 @@ func lifecycle() -> void:
 				ack.tables.append(table)
 				client._handle_parsed_message(ack)
 				assert(client.discards == 0 and local._tables["my_role"].is_empty())
-				if access != null: assert(access._subscription == null)
+				if access != null:
+					assert(access._subscription == null)
 			elif mode in ["freed", "owner_freed"]:
 				client.free()
 			elif mode == "handle_freed":
@@ -122,29 +165,47 @@ func lifecycle() -> void:
 				local.free()
 				continue
 			await create_timer(1.1).timeout
-			if access != null: assert(access._subscription == null and access._release_timer == null)
+			if access != null:
+				assert(access._subscription == null and access._release_timer == null)
 			assert(handle_reference.get_ref() == null)
 			if is_instance_valid(client):
-				assert(not client.current_subscriptions.has(1) and not client._pending_subscriptions.has(1))
-			if mode in ["owner_lost", "replacement"]: assert(client.discards == 1)
+				assert(
+					(
+						not client.current_subscriptions.has(1)
+						and not client._pending_subscriptions.has(1)
+					)
+				)
+			if mode in ["owner_lost", "replacement"]:
+				assert(client.discards == 1)
 			if replacement != null:
-				assert(replacement.can_operate and not local._tables["my_role"].is_empty() and client._pending_subscriptions[2] == replacement._subscription)
+				assert(
+					(
+						replacement.can_operate
+						and not local._tables["my_role"].is_empty()
+						and client._pending_subscriptions[2] == replacement._subscription
+					)
+				)
 				var late := UnsubscribeAppliedMessage.new()
 				late.query_id.id = 1
 				client._handle_parsed_message(late)
 				assert(replacement.can_operate and client._pending_subscriptions.has(2))
 				transport._websocket.close()
 				replacement.stop()
-			if mode == "timeout": assert(client.discards == 1 and local._tables["my_role"].is_empty())
-		if access != null: assert(access.role_name == "Unknown" and not access.can_operate)
+			if mode == "timeout":
+				assert(client.discards == 1 and local._tables["my_role"].is_empty())
+		if access != null:
+			assert(access.role_name == "Unknown" and not access.can_operate)
 		peer.close()
 		server.stop()
-		if is_instance_valid(client): client.free()
+		if is_instance_valid(client):
+			client.free()
 		local.free()
 	print("ACCESS_TERMINAL_LIFECYCLE_PASS modes=12 ownerless_deadlines=6")
 
+
 func _initialize() -> void:
 	call_deferred("run")
+
 
 func run() -> void:
 	var client := ConnectedClient.new()

@@ -20,34 +20,81 @@ func _run() -> void:
 	_assert(settings.save_to(settings_path) == OK, "diagnostics settings save")
 	var loaded := ClientSettings.new()
 	_assert(loaded.load_from(settings_path) == "loaded", "diagnostics settings reload")
-	_assert(loaded.diagnostics_enabled and not loaded.diagnostics_graph_enabled and
-			loaded.server_host == settings.server_host and loaded.database == settings.database and
-			loaded.font_size == settings.font_size, "diagnostics and last server settings persist together")
+	_assert(
+		(
+			loaded.diagnostics_enabled
+			and not loaded.diagnostics_graph_enabled
+			and loaded.server_host == settings.server_host
+			and loaded.database == settings.database
+			and loaded.font_size == settings.font_size
+		),
+		"diagnostics and last server settings persist together"
+	)
 
 	var main := MainScene.instantiate()
 	main.diagnostics_settings_path = settings_path
 	get_tree().root.add_child(main)
 	await get_tree().process_frame
-	_assert(main._server_management._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100 and
-		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"),
-		"production browser preserves saved metrics while using canonical logical typography")
-	_assert(main._server_management._join_host.text == settings.server_host and
-		main._server_management._join_database.text == settings.database, "server form loads the saved endpoint")
+	_assert(
+		(
+			main._server_management._metrics.base_font_size == 13
+			and main._settings.ui_scale_percent == 100
+			and (
+				main._server_management._join_button.get_theme_font_size("font_size")
+				== ThemeTokens.font_size("body")
+			)
+		),
+		"production browser preserves saved metrics while using canonical logical typography"
+	)
+	_assert(
+		(
+			main._server_management._join_host.text == settings.server_host
+			and main._server_management._join_database.text == settings.database
+		),
+		"server form loads the saved endpoint"
+	)
 	main.set_size(Vector2(360, 480))
-	for _frame in 8: await get_tree().process_frame
+	for _frame in 8:
+		await get_tree().process_frame
 	var servers_button := _button_named(main._menu, "Servers")
-	_assert(servers_button != null and servers_button.get_global_rect().size.x > 0.0 and
-			servers_button.get_global_rect().size.y > 0.0, "production menu Servers button has usable geometry")
+	_assert(
+		(
+			servers_button != null
+			and servers_button.get_global_rect().size.x > 0.0
+			and servers_button.get_global_rect().size.y > 0.0
+		),
+		"production menu Servers button has usable geometry"
+	)
 	servers_button.pressed.emit()
-	for _frame in 8: await get_tree().process_frame
-	_assert(main._server_management.visible and main._server_management.get_global_rect().size == Vector2(360, 480),
-		"Servers opens a full-viewport production browser")
+	for _frame in 8:
+		await get_tree().process_frame
+	_assert(
+		(
+			main._server_management.visible
+			and main._server_management.get_global_rect().size == Vector2(360, 480)
+		),
+		"Servers opens a full-viewport production browser"
+	)
 	var return_button := _button_named(main._server_management, "Return")
-	_assert(return_button != null and return_button.get_global_rect().size.x > 0.0 and
-			return_button.get_global_rect().size.y > 0.0, "production browser Return button is reachable")
-	_assert(main._server_management.get_global_rect().encloses(return_button.get_global_rect()), "Return is inside the small viewport")
-	_assert(main.workspace.process_mode == Node.PROCESS_MODE_DISABLED and main.map.process_mode == Node.PROCESS_MODE_DISABLED,
-		"menus disable background map and workspace input")
+	_assert(
+		(
+			return_button != null
+			and return_button.get_global_rect().size.x > 0.0
+			and return_button.get_global_rect().size.y > 0.0
+		),
+		"production browser Return button is reachable"
+	)
+	_assert(
+		main._server_management.get_global_rect().encloses(return_button.get_global_rect()),
+		"Return is inside the small viewport"
+	)
+	_assert(
+		(
+			main.workspace.process_mode == Node.PROCESS_MODE_DISABLED
+			and main.map.process_mode == Node.PROCESS_MODE_DISABLED
+		),
+		"menus disable background map and workspace input"
+	)
 	var map_only: bool = main.workspace.map_only
 	var shortcut := InputEventKey.new()
 	shortcut.keycode = KEY_BACKSLASH
@@ -59,35 +106,71 @@ func _run() -> void:
 	main._server_management._join_host.text = "http://127.0.0.1:1"
 	main._server_management._join_database.text = "browser-test"
 	main._server_management._join_button.pressed.emit()
-	_assert(main._session_requested and main._server_management.visible and not main._menu.visible,
-		"browser join connects without navigating away from its progress")
+	_assert(
+		main._session_requested and main._server_management.visible and not main._menu.visible,
+		"browser join connects without navigating away from its progress"
+	)
 	main._fail_manual_session("Browser connection failed")
-	_assert(main._server_management.visible and main._server_management._status.text == "Browser connection failed" and
-		not main._server_management._join_button.disabled, "browser join failure remains visible and retryable in Servers")
-	_assert(main._server_management._join_host.text == "http://127.0.0.1:1", "failed join preserves the entered host")
+	_assert(
+		(
+			main._server_management.visible
+			and main._server_management._status.text == "Browser connection failed"
+			and not main._server_management._join_button.disabled
+		),
+		"browser join failure remains visible and retryable in Servers"
+	)
+	_assert(
+		main._server_management._join_host.text == "http://127.0.0.1:1",
+		"failed join preserves the entered host"
+	)
 	main._on_native_state("offline", "Test native status")
-	_assert(main._server_management._status.text == "Browser connection failed", "native status polling cannot overwrite join errors")
+	_assert(
+		main._server_management._status.text == "Browser connection failed",
+		"native status polling cannot overwrite join errors"
+	)
 	return_button.pressed.emit()
 	await get_tree().process_frame
-	_assert(main._menu.visible and not main._server_management.visible, "browser Return restores the menu")
+	_assert(
+		main._menu.visible and not main._server_management.visible,
+		"browser Return restores the menu"
+	)
 	_assert(not main._server_probes.visible, "Return stops HTTP polling")
 	_assert(main._menu.settings == main._settings, "main menu keeps the shared settings object")
-	_assert(main._diagnostics_overlay.visible and not main._diagnostics_overlay.show_graph,
-		"enabled diagnostics show without enabling the subordinate graph")
-	_assert(main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-		"diagnostics overlay never consumes game input")
+	_assert(
+		main._diagnostics_overlay.visible and not main._diagnostics_overlay.show_graph,
+		"enabled diagnostics show without enabling the subordinate graph"
+	)
+	_assert(
+		main._diagnostics_overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"diagnostics overlay never consumes game input"
+	)
 	var diagnostics_rect: Rect2 = main._diagnostics_overlay.panel_rect()
-	_assert(main._diagnostics_overlay is DiagnosticsBar and main._diagnostics_overlay.get_parent() == main.workspace.diagnostics_host,
-		"production diagnostics are an inline bar, not a floating CanvasLayer")
-	_assert(diagnostics_rect == Rect2(Vector2.ZERO, main.workspace.diagnostics_host.size),
-		"production diagnostics use local header bounds")
-	_assert(main.workspace.telemetry.get_child(0) == main._clock_group and main._clock_group.is_ancestor_of(main._clock) and main._clock_group.is_ancestor_of(main._population),
-		"game telemetry starts with the padded clock/crew group")
+	_assert(
+		(
+			main._diagnostics_overlay is DiagnosticsBar
+			and main._diagnostics_overlay.get_parent() == main.workspace.diagnostics_host
+		),
+		"production diagnostics are an inline bar, not a floating CanvasLayer"
+	)
+	_assert(
+		diagnostics_rect == Rect2(Vector2.ZERO, main.workspace.diagnostics_host.size),
+		"production diagnostics use local header bounds"
+	)
+	_assert(
+		(
+			main.workspace.telemetry.get_child(0) == main._clock_group
+			and main._clock_group.is_ancestor_of(main._clock)
+			and main._clock_group.is_ancestor_of(main._population)
+		),
+		"game telemetry starts with the padded clock/crew group"
+	)
 	var original_viewport_size := get_tree().root.size
 	get_tree().root.size = Vector2i(2000, 1072)
 	await get_tree().process_frame
-	_assert(main._diagnostics_overlay.panel_rect().size == main.workspace.diagnostics_host.size,
-		"viewport resize keeps diagnostics within its resized header host")
+	_assert(
+		main._diagnostics_overlay.panel_rect().size == main.workspace.diagnostics_host.size,
+		"viewport resize keeps diagnostics within its resized header host"
+	)
 	get_tree().root.size = original_viewport_size
 	await get_tree().process_frame
 	for font_size in [10, 13, 24]:
@@ -96,34 +179,74 @@ func _run() -> void:
 			get_tree().root.size = viewport_size
 			main.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 			main.configure_diagnostics(true, false, false)
-			for _frame in 8: await get_tree().process_frame
+			for _frame in 8:
+				await get_tree().process_frame
 			var host: Control = main.workspace.diagnostics_host
 			var telemetry_view: ScrollContainer = main.workspace._rows[0]
 			_assert_utility_geometry(main, viewport_size)
-			_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "readout-only diagnostics do not reserve graph lanes")
-			_assert(main._clock_group.size.y == 44 and telemetry_view.size.y >= 44, "padded metadata retains its 44px logical height at every scale")
+			_assert(
+				main._diagnostics_overlay.graph_lane_rects().is_empty(),
+				"readout-only diagnostics do not reserve graph lanes"
+			)
+			_assert(
+				main._clock_group.size.y == 44 and telemetry_view.size.y >= 44,
+				"padded metadata retains its 44px logical height at every scale"
+			)
 			main.configure_diagnostics(true, true, false)
-			for _frame in 8: await get_tree().process_frame
+			for _frame in 8:
+				await get_tree().process_frame
 			_assert_utility_geometry(main, viewport_size)
 			for lane: Rect2 in main._diagnostics_overlay.graph_lane_rects():
-				_assert(main._diagnostics_overlay.panel_rect().encloses(lane), "inline graphs remain inside the bar")
+				_assert(
+					main._diagnostics_overlay.panel_rect().encloses(lane),
+					"inline graphs remain inside the bar"
+				)
 				var global_lane: Rect2 = main._diagnostics_overlay.get_global_transform() * lane
-				_assert(not global_lane.intersects(main.workspace._menu.get_global_rect()) and not global_lane.intersects(main._session_menu.get_global_rect()), "graphs never cover Panels or Menu hit areas")
+				_assert(
+					(
+						not global_lane.intersects(main.workspace._menu.get_global_rect())
+						and not global_lane.intersects(main._session_menu.get_global_rect())
+					),
+					"graphs never cover Panels or Menu hit areas"
+				)
 			if main.size.x >= 1280:
-				_assert(main._diagnostics_overlay.graph_lane_rects().size() == 2, "wide utility cluster preserves both enabled diagnostic graphs")
+				_assert(
+					main._diagnostics_overlay.graph_lane_rects().size() == 2,
+					"wide utility cluster preserves both enabled diagnostic graphs"
+				)
 			else:
-				_assert(main._diagnostics_overlay.graph_lane_rects().is_empty(), "narrow header collapses sparklines")
+				_assert(
+					main._diagnostics_overlay.graph_lane_rects().is_empty(),
+					"narrow header collapses sparklines"
+				)
 			var area_before: Rect2 = main.workspace.area.get_global_rect()
 			var left_before: float = telemetry_view.size.x
 			var diagnostics_width_before: float = host.size.x
 			main.configure_diagnostics(false, true, false)
-			for _frame in 8: await get_tree().process_frame
-			_assert(not host.visible and host.custom_minimum_size.x == 0, "disabled diagnostics release all reserved space")
-			_assert(telemetry_view.size.x >= left_before and (diagnostics_width_before == 0 or telemetry_view.size.x > left_before), "disabled diagnostics release any reserved width; an ultra-narrow collapsed host reserves none")
-			_assert(main.workspace.area.get_global_rect() == area_before, "diagnostics toggles do not change the map area")
+			for _frame in 8:
+				await get_tree().process_frame
+			_assert(
+				not host.visible and host.custom_minimum_size.x == 0,
+				"disabled diagnostics release all reserved space"
+			)
+			_assert(
+				(
+					telemetry_view.size.x >= left_before
+					and (diagnostics_width_before == 0 or telemetry_view.size.x > left_before)
+				),
+				"disabled diagnostics release any reserved width; an ultra-narrow collapsed host reserves none"
+			)
+			_assert(
+				main.workspace.area.get_global_rect() == area_before,
+				"diagnostics toggles do not change the map area"
+			)
 			main.configure_diagnostics(true, true, false)
-			_assert(host.visible and main._diagnostics_overlay.frame_snapshot.is_empty(), "reenable shows the bar with cleared samples")
-			for _frame in 8: await get_tree().process_frame
+			_assert(
+				host.visible and main._diagnostics_overlay.frame_snapshot.is_empty(),
+				"reenable shows the bar with cleared samples"
+			)
+			for _frame in 8:
+				await get_tree().process_frame
 			await _render_preview(main, font_size, viewport_size)
 	get_tree().root.size = original_viewport_size
 	main.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -131,45 +254,88 @@ func _run() -> void:
 	main._diagnostics_stats.reset()
 	main._diagnostics_stats.observe_tick(1_000_000)
 	main._diagnostics_stats.observe_tick(1_016_000)
-	_assert(main._diagnostics_stats.refresh(1_016_000, true).count == 1,
-		"active diagnostics collect monotonic frame samples")
+	_assert(
+		main._diagnostics_stats.refresh(1_016_000, true).count == 1,
+		"active diagnostics collect monotonic frame samples"
+	)
 	main._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
-	_assert(main._diagnostics_stats.refresh(1_016_000, true).count == 0,
-		"focus loss resets frame samples")
+	_assert(
+		main._diagnostics_stats.refresh(1_016_000, true).count == 0,
+		"focus loss resets frame samples"
+	)
 	main._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
 	main._session_diagnostics.set_connected(true)
 	main._session_diagnostics.pump(2_000_000)
 	main._session_diagnostics.set_connected(false)
-	_assert(main._session_diagnostics.snapshot(2_000_000).successful == 0,
-		"disconnect resets session diagnostics")
+	_assert(
+		main._session_diagnostics.snapshot(2_000_000).successful == 0,
+		"disconnect resets session diagnostics"
+	)
 	main.apply_font_size(10, false)
-	_assert(main._menu.settings == main._settings and main._settings.diagnostics_enabled and
-			main._settings.server_host == settings.server_host and
-			main._settings.database == settings.database and main._metrics.base_font_size == 13 and main._settings.ui_scale_percent == 100,
-		"legacy font changes migrate to whole-ui scale and preserve settings and menu ownership")
-	_assert(main._settings.remember_server("http://joined.test", "joined-db", settings_path) == OK,
-		"successful server save updates shared settings")
+	_assert(
+		(
+			main._menu.settings == main._settings
+			and main._settings.diagnostics_enabled
+			and main._settings.server_host == settings.server_host
+			and main._settings.database == settings.database
+			and main._metrics.base_font_size == 13
+			and main._settings.ui_scale_percent == 100
+		),
+		"legacy font changes migrate to whole-ui scale and preserve settings and menu ownership"
+	)
+	_assert(
+		main._settings.remember_server("http://joined.test", "joined-db", settings_path) == OK,
+		"successful server save updates shared settings"
+	)
 	main._menu._refresh_last_button()
-	_assert(main._menu.settings.server_host == "http://joined.test" and
-			main._menu.settings.database == "joined-db" and not main._menu._last_button.disabled,
-		"menu sees the last server saved through the shared settings object")
+	_assert(
+		(
+			main._menu.settings.server_host == "http://joined.test"
+			and main._menu.settings.database == "joined-db"
+			and not main._menu._last_button.disabled
+		),
+		"menu sees the last server saved through the shared settings object"
+	)
 	main.apply_font_size(22, false)
-	_assert(main._server_management._join_host.text == "http://127.0.0.1:1" and
-		main._server_management._join_button.get_theme_font_size("font_size") == ThemeTokens.font_size("body"), "browser rebuild preserves the draft endpoint and logical typography")
-	_assert(main._menu.settings.diagnostics_enabled and main._menu.settings.font_size == 13 and main._settings.ui_scale_percent == 150 and
-			main._menu.settings.server_host == "http://joined.test" and
-			main._menu.settings.database == "joined-db",
-		"later font changes do not toggle diagnostics or lose last server")
+	_assert(
+		(
+			main._server_management._join_host.text == "http://127.0.0.1:1"
+			and (
+				main._server_management._join_button.get_theme_font_size("font_size")
+				== ThemeTokens.font_size("body")
+			)
+		),
+		"browser rebuild preserves the draft endpoint and logical typography"
+	)
+	_assert(
+		(
+			main._menu.settings.diagnostics_enabled
+			and main._menu.settings.font_size == 13
+			and main._settings.ui_scale_percent == 150
+			and main._menu.settings.server_host == "http://joined.test"
+			and main._menu.settings.database == "joined-db"
+		),
+		"later font changes do not toggle diagnostics or lose last server"
+	)
 	main.configure_diagnostics(false, true, false)
-	_assert(not main._diagnostics_overlay.visible and not main._diagnostics_overlay.processing_enabled,
-		"disabled diagnostics stop overlay processing")
+	_assert(
+		not main._diagnostics_overlay.visible and not main._diagnostics_overlay.processing_enabled,
+		"disabled diagnostics stop overlay processing"
+	)
 	main._diagnostics_stats.reset()
 	main._process_diagnostics()
-	_assert(main._diagnostics_stats.refresh(Time.get_ticks_usec(), true).count == 0,
-		"disabled diagnostics collect no samples")
+	_assert(
+		main._diagnostics_stats.refresh(Time.get_ticks_usec(), true).count == 0,
+		"disabled diagnostics collect no samples"
+	)
 	main._menu.visible = false
-	_assert(main.workspace.process_mode == Node.PROCESS_MODE_INHERIT and main.map.process_mode == Node.PROCESS_MODE_INHERIT,
-		"closing menus restores gameplay input")
+	_assert(
+		(
+			main.workspace.process_mode == Node.PROCESS_MODE_INHERIT
+			and main.map.process_mode == Node.PROCESS_MODE_INHERIT
+		),
+		"closing menus restores gameplay input"
+	)
 	main.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(settings_path))
 	if failed:
@@ -187,19 +353,59 @@ func _assert_utility_geometry(main: Control, native_size: Vector2i) -> void:
 	var header := deck.header.get_global_rect()
 	var panels := deck._menu.get_global_rect()
 	var menu: Rect2 = main._session_menu.get_global_rect()
-	_assert(deck.diagnostics_host.get_parent() == deck.utility_row and deck._menu.get_parent() == deck.utility_row and main._session_menu.get_parent() == deck.utility_row,
-		"diagnostics, Panels and Menu share the deliberate utility cluster")
-	_assert(utilities.encloses(host) and utilities.encloses(panels) and utilities.encloses(menu), "all utility content stays inside its surface")
-	_assert(header.encloses(utilities) and main.get_viewport_rect().encloses(utilities), "utility cluster fits the actual logical viewport")
-	_assert(header.end.x - utilities.end.x >= 12 and utilities.position.y >= header.position.y + 8, "upper-right utility cluster keeps its outer insets")
-	_assert(host.end.x + 8 <= panels.position.x and panels.end.x + 8 <= menu.position.x, "diagnostics leave separate, non-overlapping Panels and Menu hit areas")
-	_assert(panels.size.y == 32 and menu.size.y == 32 and is_equal_approx(panels.get_center().y, menu.get_center().y), "utility buttons keep equal aligned 32px heights")
-	_assert(telemetry.end.x + 12 <= utilities.position.x or utilities.end.y + 8 <= telemetry.position.y, "utility cluster has a gutter from telemetry in both side-by-side and stacked layouts")
-	_assert(utilities.end.y <= deck._tabs.global_position.y and utilities.end.y <= deck.area.global_position.y, "diagnostics and utility buttons never cover view tabs or the map")
-	_assert(main._diagnostics_overlay.panel_rect() == Rect2(Vector2.ZERO, deck.diagnostics_host.size), "diagnostics use their real parent-local drawing bounds after reflow")
+	_assert(
+		(
+			deck.diagnostics_host.get_parent() == deck.utility_row
+			and deck._menu.get_parent() == deck.utility_row
+			and main._session_menu.get_parent() == deck.utility_row
+		),
+		"diagnostics, Panels and Menu share the deliberate utility cluster"
+	)
+	_assert(
+		utilities.encloses(host) and utilities.encloses(panels) and utilities.encloses(menu),
+		"all utility content stays inside its surface"
+	)
+	_assert(
+		header.encloses(utilities) and main.get_viewport_rect().encloses(utilities),
+		"utility cluster fits the actual logical viewport"
+	)
+	_assert(
+		header.end.x - utilities.end.x >= 12 and utilities.position.y >= header.position.y + 8,
+		"upper-right utility cluster keeps its outer insets"
+	)
+	_assert(
+		host.end.x + 8 <= panels.position.x and panels.end.x + 8 <= menu.position.x,
+		"diagnostics leave separate, non-overlapping Panels and Menu hit areas"
+	)
+	_assert(
+		(
+			panels.size.y == 32
+			and menu.size.y == 32
+			and is_equal_approx(panels.get_center().y, menu.get_center().y)
+		),
+		"utility buttons keep equal aligned 32px heights"
+	)
+	_assert(
+		telemetry.end.x + 12 <= utilities.position.x or utilities.end.y + 8 <= telemetry.position.y,
+		"utility cluster has a gutter from telemetry in both side-by-side and stacked layouts"
+	)
+	_assert(
+		(
+			utilities.end.y <= deck._tabs.global_position.y
+			and utilities.end.y <= deck.area.global_position.y
+		),
+		"diagnostics and utility buttons never cover view tabs or the map"
+	)
+	_assert(
+		main._diagnostics_overlay.panel_rect() == Rect2(Vector2.ZERO, deck.diagnostics_host.size),
+		"diagnostics use their real parent-local drawing bounds after reflow"
+	)
 	var native_bounds := Rect2(Vector2.ZERO, Vector2(native_size))
 	for rect: Rect2 in [utilities, host, panels, menu]:
-		_assert(native_bounds.encloses(main.get_viewport().get_final_transform() * rect), "utility drawing and input bounds remain inside the native window after whole-UI scaling")
+		_assert(
+			native_bounds.encloses(main.get_viewport().get_final_transform() * rect),
+			"utility drawing and input bounds remain inside the native window after whole-UI scaling"
+		)
 
 
 func _render_preview(main: Control, font_size: int, viewport_size: Vector2i) -> void:
@@ -214,34 +420,61 @@ func _render_preview(main: Control, font_size: int, viewport_size: Vector2i) -> 
 	main._menu.visible = false
 	var session := SessionDiagnostics.new()
 	var sent: Array[int] = []
-	session.configure_probe(func(id: int) -> bool:
-		sent.append(id)
-		return true)
+	session.configure_probe(
+		func(id: int) -> bool:
+			sent.append(id)
+			return true
+	)
 	session.set_connected(true)
 	for tick in [0, 1_000_000, 2_000_000]:
 		session.pump(tick)
 		session.respond(sent.back(), tick + 7_200)
 	main._diagnostics_overlay.set_snapshots(
 		{"ready": true, "mean_fps": 60.0, "p95_frame_ms": 16.7, "frame_graph": [16.0, 20.0, 16.7]},
-		session.snapshot(2_007_200))
-	for _frame in 3: await get_tree().process_frame
+		session.snapshot(2_007_200)
+	)
+	for _frame in 3:
+		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
-	_assert(main._diagnostics_overlay.is_visible_in_tree(), "bar remains visible with gameplay and viewer panels")
-	_assert(get_viewport().get_texture().get_image().save_png(directory.path_join("topbar_%d_font24.png" % viewport_size.x)) == OK,
-		"private display screenshot saves")
+	_assert(
+		main._diagnostics_overlay.is_visible_in_tree(),
+		"bar remains visible with gameplay and viewer panels"
+	)
+	_assert(
+		(
+			get_viewport().get_texture().get_image().save_png(
+				directory.path_join("topbar_%d_font24.png" % viewport_size.x)
+			)
+			== OK
+		),
+		"private display screenshot saves"
+	)
 	main._menu.visible = true
-	_assert(main.workspace.process_mode == Node.PROCESS_MODE_DISABLED and main._diagnostics_overlay.visible,
-		"menu disables workspace input without destroying the header bar")
+	_assert(
+		(
+			main.workspace.process_mode == Node.PROCESS_MODE_DISABLED
+			and main._diagnostics_overlay.visible
+		),
+		"menu disables workspace input without destroying the header bar"
+	)
 	if viewport_size.x == 360:
 		await RenderingServer.frame_post_draw
-		_assert(get_viewport().get_texture().get_image().save_png(directory.path_join("topbar_menu_360_font24.png")) == OK,
-			"private menu screenshot saves for stacking review")
+		_assert(
+			(
+				get_viewport().get_texture().get_image().save_png(
+					directory.path_join("topbar_menu_360_font24.png")
+				)
+				== OK
+			),
+			"private menu screenshot saves for stacking review"
+		)
 
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition:
 		failed = true
 		push_error(message)
+
 
 func _button_named(root: Node, text: String) -> Button:
 	if root is Button and (root as Button).text == text:

@@ -1,6 +1,8 @@
 extends "res://scripts/main.gd"
 
-class ClientFixture extends ContinuumModuleClient:
+
+class ClientFixture:
+	extends ContinuumModuleClient
 	var live := false
 	var connects := 0
 	var disconnects := 0
@@ -31,19 +33,24 @@ class ClientFixture extends ContinuumModuleClient:
 		discards += 1
 		handle.queue_free()
 
+
 var starts := 0
 var use_sdk_setup := false
+
 
 func _has_cli_connection() -> bool:
 	return false
 
+
 func _setup_native_controller() -> void:
 	pass
+
 
 func _cli_option(option: String, fallback: String) -> String:
 	if option == "--workspace-file":
 		return ClientSettings.path_from_args() + ".workspace.json"
 	return super._cli_option(option, fallback)
+
 
 func _start_configured_client(client: ContinuumModuleClient, _generation: int) -> void:
 	starts += 1

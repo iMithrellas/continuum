@@ -19,6 +19,7 @@ var _view_applied := false
 var _stopped := false
 var _release_timer: SceneTreeTimer
 
+
 func _init(client: SpacetimeDBClient) -> void:
 	_client = client as ContinuumModuleClient
 	if _client == null:
@@ -33,6 +34,7 @@ func _init(client: SpacetimeDBClient) -> void:
 	if _client.is_connected_db():
 		_on_connected(PackedByteArray(), &"")
 
+
 func start() -> void:
 	_stopped = false
 	if _subscription and not _subscription.ended:
@@ -43,12 +45,14 @@ func start() -> void:
 		return
 	_subscribe()
 
+
 func _on_connected(_identity: PackedByteArray, _token: String) -> void:
 	if _stopped:
 		return
 	_set_unknown()
 	_view_applied = false
 	_subscribe()
+
 
 func _subscribe() -> void:
 	if _stopped:
@@ -60,15 +64,18 @@ func _subscribe() -> void:
 	_subscription.applied.connect(_on_view_applied)
 	_subscription.end.connect(_on_view_ended)
 
+
 func _on_disconnected() -> void:
 	_view_applied = false
 	_release_subscription(false)
 	_set_unknown()
 
+
 func _on_connection_error(_code: int, _reason: String) -> void:
 	_view_applied = false
 	_release_subscription(false)
 	_set_unknown()
+
 
 func _on_view_applied() -> void:
 	if _stopped:
@@ -77,6 +84,7 @@ func _on_view_applied() -> void:
 	_view_applied = true
 	_refresh_from_view()
 
+
 func _on_view_ended() -> void:
 	_view_applied = false
 	_subscription = null
@@ -84,6 +92,7 @@ func _on_view_ended() -> void:
 	_set_unknown()
 	if _stopped:
 		_client = null
+
 
 func stop() -> void:
 	if _stopped:
@@ -108,6 +117,7 @@ func stop() -> void:
 	if _subscription == null:
 		_client = null
 
+
 func _release_subscription(use_network: bool = true) -> void:
 	if not is_instance_valid(_subscription):
 		_subscription = null
@@ -120,7 +130,10 @@ func _release_subscription(use_network: bool = true) -> void:
 		if subscription.unsubscribe() == OK:
 			_client.get_local_database().clear_role_view()
 			_release_timer = _client.get_tree().create_timer(1.0)
-			_release_timer.timeout.connect(_force_release.bind(weakref(self), weakref(_client), weakref(subscription)), CONNECT_ONE_SHOT)
+			_release_timer.timeout.connect(
+				_force_release.bind(weakref(self), weakref(_client), weakref(subscription)),
+				CONNECT_ONE_SHOT
+			)
 			return
 	_subscription = null
 	_release_timer = null
@@ -134,6 +147,7 @@ func _release_subscription(use_network: bool = true) -> void:
 	else:
 		subscription.queue_free()
 
+
 func _transport_open() -> bool:
 	if not is_instance_valid(_client) or not _client.is_connected_db():
 		return false
@@ -141,32 +155,46 @@ func _transport_open() -> bool:
 	var socket: Variant = connection._websocket if is_instance_valid(connection) else null
 	return socket != null and socket.get_ready_state() == WebSocketPeer.STATE_OPEN
 
+
 ## Lost-ack deadline may outlive the access owner; all captured references are weak.
-static func _force_release(owner_reference: WeakRef, client_reference: WeakRef, reference: WeakRef) -> void:
+static func _force_release(
+	owner_reference: WeakRef, client_reference: WeakRef, reference: WeakRef
+) -> void:
 	var owner: Variant = owner_reference.get_ref()
 	var client: Variant = client_reference.get_ref()
 	var subscription: Variant = reference.get_ref()
-	if owner != null and (not is_instance_valid(owner._subscription) or owner._subscription == subscription):
+	if (
+		owner != null
+		and (not is_instance_valid(owner._subscription) or owner._subscription == subscription)
+	):
 		owner._subscription = null
 		owner._release_timer = null
 		if owner._stopped:
 			owner._client = null
 	if not is_instance_valid(subscription) or subscription.ended:
 		return
-	if is_instance_valid(client) and (client.current_subscriptions.get(subscription.query_id) == subscription \
-			or client._pending_subscriptions.get(subscription.query_id) == subscription):
+	if (
+		is_instance_valid(client)
+		and (
+			client.current_subscriptions.get(subscription.query_id) == subscription
+			or client._pending_subscriptions.get(subscription.query_id) == subscription
+		)
+	):
 		client.discard_subscription(subscription)
 	else:
 		subscription.queue_free()
+
 
 func _on_role_row_updated(_table_name: String, _old_row: Resource, _new_row: Resource) -> void:
 	if _table_name != "my_role":
 		return
 	_refresh_from_view()
 
+
 func _on_role_row_change(table_name: String, _row: Resource) -> void:
 	if table_name == "my_role":
 		_refresh_from_view()
+
 
 func _refresh_from_view() -> void:
 	if _stopped or not _view_applied or _client == null or not _client.is_connected_db():
@@ -190,8 +218,10 @@ func _refresh_from_view() -> void:
 		_:
 			_set_unknown()
 
+
 func _set_unknown() -> void:
 	_set_role(ROLE_UNKNOWN, false, false)
+
 
 func _set_role(next_name: String, next_can_operate: bool, next_is_admin: bool) -> void:
 	if role_name == next_name and can_operate == next_can_operate and is_admin == next_is_admin:

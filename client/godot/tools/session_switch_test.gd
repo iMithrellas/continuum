@@ -2,11 +2,14 @@ extends Node
 
 var failed := false
 
+
 func _ready() -> void:
-	var admin_path := ContinuumClientProfile.token_path(ContinuumClientProfile.ADMIN,
-		"http://127.0.0.1:1", "continuum")
-	var normal_path := ContinuumClientProfile.token_path(ContinuumClientProfile.NORMAL,
-		"http://127.0.0.1:1", "continuum")
+	var admin_path := ContinuumClientProfile.token_path(
+		ContinuumClientProfile.ADMIN, "http://127.0.0.1:1", "continuum"
+	)
+	var normal_path := ContinuumClientProfile.token_path(
+		ContinuumClientProfile.NORMAL, "http://127.0.0.1:1", "continuum"
+	)
 	var admin_file := FileAccess.open(admin_path, FileAccess.WRITE)
 	admin_file.store_string("admin-token-cache")
 	admin_file.close()
@@ -21,33 +24,72 @@ func _ready() -> void:
 	main.configure_connection("http://127.0.0.1:1", "continuum", ContinuumClientProfile.NORMAL)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	_assert(SpacetimeDB.Continuum.token_save_path == normal_path,
-		"admin to normal switch selects the normal identity file")
-	_assert(SpacetimeDB.Continuum.get_token().is_empty(),
-		"fresh production client does not carry the cached admin token")
-	_assert(FileAccess.get_file_as_string(admin_path) == "admin-token-cache",
-		"switching profiles preserves the admin identity file")
+	_assert(
+		SpacetimeDB.Continuum.token_save_path == normal_path,
+		"admin to normal switch selects the normal identity file"
+	)
+	_assert(
+		SpacetimeDB.Continuum.get_token().is_empty(),
+		"fresh production client does not carry the cached admin token"
+	)
+	_assert(
+		FileAccess.get_file_as_string(admin_path) == "admin-token-cache",
+		"switching profiles preserves the admin identity file"
+	)
 
 	main.configure_connection("http://127.0.0.1:2", "other_db", ContinuumClientProfile.NORMAL)
 	await get_tree().process_frame
 	await get_tree().process_frame
-	_assert(SpacetimeDB.Continuum.token_save_path == ContinuumClientProfile.token_path(
-		ContinuumClientProfile.NORMAL, "http://127.0.0.1:2", "other_db"),
-		"endpoint switch selects a fresh endpoint identity file")
-	_assert(SpacetimeDB.Continuum.get_token().is_empty(),
-		"endpoint switch does not retain the previous cached token")
+	_assert(
+		(
+			SpacetimeDB.Continuum.token_save_path
+			== ContinuumClientProfile.token_path(
+				ContinuumClientProfile.NORMAL, "http://127.0.0.1:2", "other_db"
+			)
+		),
+		"endpoint switch selects a fresh endpoint identity file"
+	)
+	_assert(
+		SpacetimeDB.Continuum.get_token().is_empty(),
+		"endpoint switch does not retain the previous cached token"
+	)
 	for profile: String in [ContinuumClientProfile.DEVELOPER, ContinuumClientProfile.ADMIN]:
 		main._profile = profile
 		main._on_menu_join_requested("http://127.0.0.1:3", "menu-db")
 		await get_tree().process_frame
 		await get_tree().process_frame
-		_assert(main._profile == profile and SpacetimeDB.Continuum.token_save_path == ContinuumClientProfile.token_path(profile, "http://127.0.0.1:3", "menu-db"), "Join last preserves selected profile: " + profile)
+		_assert(
+			(
+				main._profile == profile
+				and (
+					SpacetimeDB.Continuum.token_save_path
+					== ContinuumClientProfile.token_path(profile, "http://127.0.0.1:3", "menu-db")
+				)
+			),
+			"Join last preserves selected profile: " + profile
+		)
 		main.leave_session()
-		main._on_server_management_join_requested({"endpoint": "http://127.0.0.1:4", "database": "servers-db"})
+		main._on_server_management_join_requested(
+			{"endpoint": "http://127.0.0.1:4", "database": "servers-db"}
+		)
 		await get_tree().process_frame
 		await get_tree().process_frame
-		_assert(main._profile == profile and SpacetimeDB.Continuum.token_save_path == ContinuumClientProfile.token_path(profile, "http://127.0.0.1:4", "servers-db"), "Servers join preserves selected profile: " + profile)
-		_assert(SpacetimeDB.Continuum.get_token().is_empty(), "joining with another profile never copies cached credentials")
+		_assert(
+			(
+				main._profile == profile
+				and (
+					SpacetimeDB.Continuum.token_save_path
+					== ContinuumClientProfile.token_path(
+						profile, "http://127.0.0.1:4", "servers-db"
+					)
+				)
+			),
+			"Servers join preserves selected profile: " + profile
+		)
+		_assert(
+			SpacetimeDB.Continuum.get_token().is_empty(),
+			"joining with another profile never copies cached credentials"
+		)
 		main.leave_session()
 	main.leave_session()
 	var failures := [0]
@@ -63,9 +105,14 @@ func _ready() -> void:
 	main._on_disconnected()
 	main._on_connected(PackedByteArray(), "late-token")
 	main._on_subscription_applied(old_subscription, old_generation)
-	_assert(failures[0] == 1, "connection error and disconnected emit one terminal failure (%d)" % failures[0])
-	_assert(ready_count[0] == 0 and not main._session_requested,
-		"late connected and subscription callbacks cannot restore a failed session")
+	_assert(
+		failures[0] == 1,
+		"connection error and disconnected emit one terminal failure (%d)" % failures[0]
+	)
+	_assert(
+		ready_count[0] == 0 and not main._session_requested,
+		"late connected and subscription callbacks cannot restore a failed session"
+	)
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(admin_path))
 	main.queue_free()
 	if failed:
@@ -73,6 +120,7 @@ func _ready() -> void:
 		return
 	print("SESSION_SWITCH_PASS")
 	get_tree().quit(0)
+
 
 func _assert(condition: bool, message: String) -> void:
 	if not condition:

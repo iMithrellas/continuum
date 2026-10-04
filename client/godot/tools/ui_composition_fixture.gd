@@ -51,7 +51,9 @@ func _ready() -> void:
 	main._host = "http://fixture.invalid"
 	main._database = "fixture-colony"
 	main._authenticated_identity = "typed-local-fixture-identity"
-	main._return_key = ReturnSnapshots.context_key(main._host, main._database, main._profile, main._authenticated_identity)
+	main._return_key = ReturnSnapshots.context_key(
+		main._host, main._database, main._profile, main._authenticated_identity
+	)
 	main._return_snapshots.forget(main._return_key)
 	main._session_requested = true
 	main._state_ready = true
@@ -103,16 +105,33 @@ func _ready() -> void:
 		for frame in 3:
 			await get_tree().process_frame
 	if _map_view_capture:
-		if not main.workspace.map_only: main.workspace.toggle_map_only()
-		for frame in 4: await get_tree().process_frame
-		check(main.workspace.area.get_global_rect().encloses(main._map_toolbar.get_global_rect()), "map-view toolbar stays wholly within the full map at actual scale")
+		if not main.workspace.map_only:
+			main.workspace.toggle_map_only()
+		for frame in 4:
+			await get_tree().process_frame
+		check(
+			main.workspace.area.get_global_rect().encloses(main._map_toolbar.get_global_rect()),
+			"map-view toolbar stays wholly within the full map at actual scale"
+		)
 	if not _capture.is_empty() and DisplayServer.get_name() != "headless":
 		await RenderingServer.frame_post_draw
 		var image := get_viewport().get_texture().get_image()
 		check(image.get_size() == _screen, "actual main viewport capture matches requested size")
 		check(image.save_png(_capture) == OK, "actual main viewport capture saves")
 	if failures.is_empty():
-		print("UI_LIVE_FIXTURE_PASS screen=%s scale=%d status=%s reduced_motion=%s focus=%s layout_qa=%s" % [_screen, _scale, "problem" if _problem else "nominal", _reduced, _focus, _layout_qa])
+		print(
+			(
+				"UI_LIVE_FIXTURE_PASS screen=%s scale=%d status=%s reduced_motion=%s focus=%s layout_qa=%s"
+				% [
+					_screen,
+					_scale,
+					"problem" if _problem else "nominal",
+					_reduced,
+					_focus,
+					_layout_qa
+				]
+			)
+		)
 	else:
 		for message: String in failures:
 			push_error("UI_LIVE_FIXTURE_FAIL: " + message)
@@ -147,7 +166,9 @@ func _seed_database() -> void:
 	colony.smoothed_productivity = 84.0
 	for id: int in local._tables.colonist:
 		var row: ContinuumColonist = local._tables.colonist[id]
-		row.name = ["Alexandria Verylongfamilyname", "Bram", "Finn", "Enid", "Mara", "Otis", "Rin", "Sora"][id]
+		row.name = [
+			"Alexandria Verylongfamilyname", "Bram", "Finn", "Enid", "Mara", "Otis", "Rin", "Sora"
+		][id]
 		row.hunger = 92.0 if _problem and id == 0 else 10.0
 		row.fatigue = 72.0 if _problem and id == 1 else 12.0
 		row.recreation = 10.0
@@ -165,7 +186,11 @@ func _seed_database() -> void:
 			var alert := ContinuumAlert.new()
 			alert.id = id + 1
 			alert.code = "low_food" if id == 0 else "low_mood"
-			alert.message = "Food reserves are low (40 stored, 5 per colonist)." if id == 0 else "Average colonist mood dropped below 45% (42%)."
+			alert.message = (
+				"Food reserves are low (40 stored, 5 per colonist)."
+				if id == 0
+				else "Average colonist mood dropped below 45% (42%)."
+			)
 			alert.severity = ContinuumSeverity.create(2 if id == 0 else 1)
 			alert.active = true
 			alert.acknowledged = id == 1
@@ -178,7 +203,11 @@ func _seed_database() -> void:
 		event.hour = 0
 		event.minute = id
 		event.game_seconds = id * 60.0
-		event.message = "Bram started hauling" if id < 2 else ("[literal] kestrel changed an order" if id == 2 else "Alert resolved: low food")
+		event.message = (
+			"Bram started hauling"
+			if id < 2
+			else ("[literal] kestrel changed an order" if id == 2 else "Alert resolved: low food")
+		)
 		event.severity = ContinuumSeverity.create(0)
 		local._tables.event_log[event.id] = event
 	TerrainFixture.index_rows(local)
@@ -187,58 +216,158 @@ func _seed_database() -> void:
 func _check_functional_contracts() -> void:
 	check(main.forbidden_connections == 0, "fixture never requests an SDK connection")
 	var icon_notice := FileAccess.get_file_as_string("res://ui/theme/icons/LICENSE")
-	check("ISC License" in icon_notice and "The MIT License (MIT)" in icon_notice and "Cole Bemis" in icon_notice, "licensed icon notices survive a real exported PCK")
+	check(
+		(
+			"ISC License" in icon_notice
+			and "The MIT License (MIT)" in icon_notice
+			and "Cole Bemis" in icon_notice
+		),
+		"licensed icon notices survive a real exported PCK"
+	)
 	for name: String in UiIcons.NAMES:
 		var texture := UiIcons.texture(name)
-		check(texture != null and texture.get_size() == Vector2(16, 16) and not texture.get_image().is_invisible(), "runtime icon geometry rasterizes from source or real PCK: " + name)
-	check(main._metrics.base_font_size == 13 and is_equal_approx(get_window().content_scale_factor, _scale / 100.0), "viewport is sole scale authority")
-	check(main._colonist_cards[0] is RosterRow and main._selected_card is ColonistCard and main._selected_card.visible, "actual main uses compact roster plus selected expanded card")
+		check(
+			(
+				texture != null
+				and texture.get_size() == Vector2(16, 16)
+				and not texture.get_image().is_invisible()
+			),
+			"runtime icon geometry rasterizes from source or real PCK: " + name
+		)
+	check(
+		(
+			main._metrics.base_font_size == 13
+			and is_equal_approx(get_window().content_scale_factor, _scale / 100.0)
+		),
+		"viewport is sole scale authority"
+	)
+	check(
+		(
+			main._colonist_cards[0] is RosterRow
+			and main._selected_card is ColonistCard
+			and main._selected_card.visible
+		),
+		"actual main uses compact roster plus selected expanded card"
+	)
 	var fed: Dictionary = main._selected_card.model.needs[0]
-	check(is_equal_approx(fed.value, 8.0 if _problem else 90.0), "raw hunger is inverted exactly once")
+	check(
+		is_equal_approx(fed.value, 8.0 if _problem else 90.0), "raw hunger is inverted exactly once"
+	)
 	check(fed.trend == "flat", "stable arrow requires an actual game-hour lookback")
-	check(not main._selected_card.model.has("commands") and not main._selected_card.model.has("automation_rules"), "no unsupported rest order or fictional automation")
+	check(
+		(
+			not main._selected_card.model.has("commands")
+			and not main._selected_card.model.has("automation_rules")
+		),
+		"no unsupported rest order or fictional automation"
+	)
 	check(main._resource_labels[0] is ResourceReadout, "actual main uses resource readout controls")
-	check(main.workspace.telemetry.get_combined_minimum_size().y <= 44, "primary metadata retains a padded 44px row")
-	check(main._alert_box is AlertList and main._feed is ActivityFeed, "actual main uses alert and activity components")
+	check(
+		main.workspace.telemetry.get_combined_minimum_size().y <= 44,
+		"primary metadata retains a padded 44px row"
+	)
+	check(
+		main._alert_box is AlertList and main._feed is ActivityFeed,
+		"actual main uses alert and activity components"
+	)
 	check(main._return_digest.baseline_available == false, "first visit invents no return baseline")
-	check(main._connection_label.text == "Live" and main._connection_label.get_theme_color("font_color") == ThemeTokens.color("ink-muted"), "healthy connection is neutral")
-	check(main._identity_label.text == "Operator" and main._authenticated_identity in main._session_menu.tooltip_text, "compact verified role retains actual identity in the account menu tooltip")
+	check(
+		(
+			main._connection_label.text == "Live"
+			and (
+				main._connection_label.get_theme_color("font_color")
+				== ThemeTokens.color("ink-muted")
+			)
+		),
+		"healthy connection is neutral"
+	)
+	check(
+		(
+			main._identity_label.text == "Operator"
+			and main._authenticated_identity in main._session_menu.tooltip_text
+		),
+		"compact verified role retains actual identity in the account menu tooltip"
+	)
 	if _problem:
 		var critical: AlertRow = main._alert_box.get_child(0)
-		check(critical.model.level == "critical" and critical.is_processing() == (not _reduced), "critical pulse obeys reduced motion (preference=%s row=%s processing=%s)" % [_reduced, critical.reduced_motion, critical.is_processing()])
+		check(
+			critical.model.level == "critical" and critical.is_processing() == (not _reduced),
+			(
+				"critical pulse obeys reduced motion (preference=%s row=%s processing=%s)"
+				% [_reduced, critical.reduced_motion, critical.is_processing()]
+			)
+		)
 		var border_before: Color = critical._border.border_color
 		await get_tree().create_timer(0.6).timeout
-		check(critical._border.border_color == border_before if _reduced else critical._border.border_color != border_before, "actual critical border animates only with motion enabled")
-		check(critical.model.ack_handle.is_empty() and critical.model.ack_time.is_empty(), "shared boolean acknowledgement has no invented actor/time")
+		check(
+			(
+				critical._border.border_color == border_before
+				if _reduced
+				else critical._border.border_color != border_before
+			),
+			"actual critical border animates only with motion enabled"
+		)
+		check(
+			critical.model.ack_handle.is_empty() and critical.model.ack_time.is_empty(),
+			"shared boolean acknowledgement has no invented actor/time"
+		)
 		main._set_permissions("viewer", false, false)
 		main._acknowledge(1)
 		check(main.recorded_acknowledgements.is_empty(), "viewer cannot dispatch acknowledgement")
-		check(_find_button(main._alert_box, "Acknowledge") == null, "viewer has no acknowledgement command")
+		check(
+			_find_button(main._alert_box, "Acknowledge") == null,
+			"viewer has no acknowledgement command"
+		)
 		main._set_permissions("operator", true, false)
 		main._acknowledge(1)
 		main._acknowledge(1)
-		check(main.recorded_acknowledgements.size() == 1 and main._ack_requests.has(1), "pending acknowledgement suppresses duplicate dispatch")
-		check(not local._tables.alert[1].acknowledged, "pending intent cannot optimistically change shared acknowledgement")
+		check(
+			main.recorded_acknowledgements.size() == 1 and main._ack_requests.has(1),
+			"pending acknowledgement suppresses duplicate dispatch"
+		)
+		check(
+			not local._tables.alert[1].acknowledged,
+			"pending intent cannot optimistically change shared acknowledgement"
+		)
 		var rejected := ReducerResultMessage.new()
 		rejected.reducer_result = ReducerOutcomeEnum.create_internal_error("fixture rejection")
 		main.fixture_ack_calls[0].response.emit(rejected)
-		check(not main._ack_requests.has(1) and "fixture rejection" in main._alert_box.get_child(0).error_copy, "actual reducer error callback leaves shared state unchanged and exposes failure")
+		check(
+			(
+				not main._ack_requests.has(1)
+				and "fixture rejection" in main._alert_box.get_child(0).error_copy
+			),
+			"actual reducer error callback leaves shared state unchanged and exposes failure"
+		)
 		main._acknowledge(1)
 		var accepted := ReducerResultMessage.new()
 		accepted.reducer_result = ReducerOutcomeEnum.create_ok_empty()
 		main.fixture_ack_calls[1].response.emit(accepted)
-		check(main._ack_requests.has(1) and not local._tables.alert[1].acknowledged, "accepted response still waits for authoritative shared acknowledgement")
+		check(
+			main._ack_requests.has(1) and not local._tables.alert[1].acknowledged,
+			"accepted response still waits for authoritative shared acknowledgement"
+		)
 		local._tables.alert[1].acknowledged = true
 		main._refresh_alerts()
 		await get_tree().process_frame
-		check(not main._ack_requests.has(1) and main._alert_box.get_child(0).model.acknowledged and not main._alert_box.get_child(0).is_processing(), "replicated acknowledgement reconciles pending and stops critical pulse")
+		check(
+			(
+				not main._ack_requests.has(1)
+				and main._alert_box.get_child(0).model.acknowledged
+				and not main._alert_box.get_child(0).is_processing()
+			),
+			"replicated acknowledgement reconciles pending and stops critical pulse"
+		)
 		local._tables.alert[1].acknowledged = false
 		main._refresh_alerts()
 		main._acknowledge(1)
 		var stale: SpacetimeDBReducerCall = main.fixture_ack_calls[-1]
 		main._set_permissions("viewer", false, false)
 		stale.response.emit(rejected)
-		check(main._ack_requests.is_empty(), "permission revocation invalidates pending acknowledgement callbacks")
+		check(
+			main._ack_requests.is_empty(),
+			"permission revocation invalidates pending acknowledgement callbacks"
+		)
 		main._set_permissions("operator", true, false)
 		main._acknowledge(1)
 		stale = main.fixture_ack_calls[-1]
@@ -246,35 +375,85 @@ func _check_functional_contracts() -> void:
 		main._ack_requests.clear()
 		main._alert_box.set_acknowledgement_state(1, false)
 		stale.response.emit(rejected)
-		check(main._alert_box.get_child(0).error_copy.is_empty(), "old-session acknowledgement callback cannot change new-session feedback")
+		check(
+			main._alert_box.get_child(0).error_copy.is_empty(),
+			"old-session acknowledgement callback cannot change new-session feedback"
+		)
 	main._goto_colonist(0)
-	check(main.map.selected_colonist_id == 0, "roster selection reaches actual map selection contract including ID zero")
+	check(
+		main.map.selected_colonist_id == 0,
+		"roster selection reaches actual map selection contract including ID zero"
+	)
 	var center: Vector2 = main.map.world_to_screen(Vector2(8.5, 8.5))
-	check(center.distance_to(main.map.size * 0.5) < 1.0, "Go to centers actual observed coordinates")
-	check(main.map.screen_to_world(center).distance_to(Vector2(8.5, 8.5)) < 0.001, "actual map coordinate picking survives global scale and floating overlays")
-	var focus: Control = main._colonist_cards[0] if main._colonist_cards[0].is_visible_in_tree() else _find_button(main, "Menu")
+	check(
+		center.distance_to(main.map.size * 0.5) < 1.0, "Go to centers actual observed coordinates"
+	)
+	check(
+		main.map.screen_to_world(center).distance_to(Vector2(8.5, 8.5)) < 0.001,
+		"actual map coordinate picking survives global scale and floating overlays"
+	)
+	var focus: Control = (
+		main._colonist_cards[0]
+		if main._colonist_cards[0].is_visible_in_tree()
+		else _find_button(main, "Menu")
+	)
 	if _focus and focus != null:
 		focus.grab_focus()
 	main._show_away_digest()
-	check(main.workspace.process_mode == Node.PROCESS_MODE_DISABLED and main.map.process_mode == Node.PROCESS_MODE_DISABLED, "away digest blocks background map and workspace input")
+	check(
+		(
+			main.workspace.process_mode == Node.PROCESS_MODE_DISABLED
+			and main.map.process_mode == Node.PROCESS_MODE_DISABLED
+		),
+		"away digest blocks background map and workspace input"
+	)
 	main._hide_away_digest()
-	check(main.workspace.process_mode == Node.PROCESS_MODE_INHERIT and main.map.process_mode == Node.PROCESS_MODE_INHERIT, "digest dismissal restores workspace input")
+	check(
+		(
+			main.workspace.process_mode == Node.PROCESS_MODE_INHERIT
+			and main.map.process_mode == Node.PROCESS_MODE_INHERIT
+		),
+		"digest dismissal restores workspace input"
+	)
 	if _focus and focus != null:
-		check(get_viewport().gui_get_focus_owner() == focus, "digest dismissal restores keyboard focus")
+		check(
+			get_viewport().gui_get_focus_owner() == focus,
+			"digest dismissal restores keyboard focus"
+		)
 	for row: Dictionary in _all_event_models():
-		check(not row.has("actor") and not row.has("source"), "raw event messages stay unattributed")
+		check(
+			not row.has("actor") and not row.has("source"), "raw event messages stay unattributed"
+		)
 	var map_rect: Rect2 = main.map.get_global_rect()
-	check(map_rect == main.workspace.area.get_global_rect(), "all panels overlay the full workspace map without reserving geometry")
+	check(
+		map_rect == main.workspace.area.get_global_rect(),
+		"all panels overlay the full workspace map without reserving geometry"
+	)
 	check(not main.workspace.has_method("set_panel_dock"), "no docking API remains")
 	for window: WorkspaceWindow in main.workspace.windows.values():
-		check(window.get_parent() == main.workspace.area and not window.has_signal("dock_requested"), "every panel is a direct overlay with no docking controls")
+		check(
+			window.get_parent() == main.workspace.area and not window.has_signal("dock_requested"),
+			"every panel is a direct overlay with no docking controls"
+		)
 		if window.visible:
-			check(window.size.x >= minf(280, main.workspace.area.size.x), "visible panels retain logical minimum or the actual compact viewport width")
+			check(
+				window.size.x >= minf(280, main.workspace.area.size.x),
+				"visible panels retain logical minimum or the actual compact viewport width"
+			)
 			if not main.workspace.compact:
 				var surface: StyleBox = window.get_theme_stylebox("panel")
-				check(not surface is StyleBoxFlat and surface.shadows.size() == 2, "actual floating frame uses the foundation two-layer shadow")
-			check(_find_button(window, "Dock") == null and _find_button(window, "Float") == null, "no Dock/Float UI is exposed")
-	check(main._session_observations.resource("food").rate_available, "rendered composition retains its actual observed one-hour rate")
+				check(
+					not surface is StyleBoxFlat and surface.shadows.size() == 2,
+					"actual floating frame uses the foundation two-layer shadow"
+				)
+			check(
+				_find_button(window, "Dock") == null and _find_button(window, "Float") == null,
+				"no Dock/Float UI is exposed"
+			)
+	check(
+		main._session_observations.resource("food").rate_available,
+		"rendered composition retains its actual observed one-hour rate"
+	)
 
 
 func _all_event_models() -> Array:
@@ -282,6 +461,7 @@ func _all_event_models() -> Array:
 	for row: ContinuumEventLog in SpacetimeDB.Continuum.db.event_log.iter():
 		rows.append(UiData.event(row))
 	return rows
+
 
 func _pointer_button(pressed: bool, point: Vector2) -> InputEventMouseButton:
 	var event := InputEventMouseButton.new()
@@ -291,75 +471,168 @@ func _pointer_button(pressed: bool, point: Vector2) -> InputEventMouseButton:
 	event.global_position = point
 	return event
 
+
 func _check_header_contracts() -> void:
-	for frame in 4: await get_tree().process_frame
-	check(main.workspace._rows.size() == 2 and main.workspace.area.position.y == main.workspace.header.size.y, "only the measured header reserves global space; tight stock budgets reflow internally")
+	for frame in 4:
+		await get_tree().process_frame
+	check(
+		(
+			main.workspace._rows.size() == 2
+			and main.workspace.area.position.y == main.workspace.header.size.y
+		),
+		"only the measured header reserves global space; tight stock budgets reflow internally"
+	)
 	for row: ScrollContainer in main.workspace._rows:
-		check(row.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER, "global chrome has no scrollbar stripes")
-	check(main.workspace._menu.text == "Panels" and not main.workspace._panel_nav.visible, "one Panels management menu replaces repeated navigation chips")
-	check(main._map_toolbar.get_parent() == main.workspace.area and main._map_toolbar.size.x < main.workspace.area.size.x, "map toolbar is a content-width overlay, not a third global bar")
-	check(not main._intent_feedback.visible or main._intent_feedback.text != "Select: drag rectangle", "default selection instructions are not persistent chrome")
-	check(_find_button(main, "Since you left") == null and main._session_menu.get_popup().get_item_text(0) == "Since you left", "digest is reachable through Menu, not a permanent top-level button")
+		check(
+			row.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_SHOW_NEVER,
+			"global chrome has no scrollbar stripes"
+		)
+	check(
+		main.workspace._menu.text == "Panels" and not main.workspace._panel_nav.visible,
+		"one Panels management menu replaces repeated navigation chips"
+	)
+	check(
+		(
+			main._map_toolbar.get_parent() == main.workspace.area
+			and main._map_toolbar.size.x < main.workspace.area.size.x
+		),
+		"map toolbar is a content-width overlay, not a third global bar"
+	)
+	check(
+		not main._intent_feedback.visible or main._intent_feedback.text != "Select: drag rectangle",
+		"default selection instructions are not persistent chrome"
+	)
+	check(
+		(
+			_find_button(main, "Since you left") == null
+			and main._session_menu.get_popup().get_item_text(0) == "Since you left"
+		),
+		"digest is reachable through Menu, not a permanent top-level button"
+	)
 	var menu_rect: Rect2 = main._session_menu.get_global_rect()
-	check(main.workspace._utilities.get_global_rect().encloses(menu_rect), "account menu remains fully reachable within the utility cluster")
+	check(
+		main.workspace._utilities.get_global_rect().encloses(menu_rect),
+		"account menu remains fully reachable within the utility cluster"
+	)
 	var old_name: String = main.workspace.model.workspaces[main.workspace.model.active].name
 	main.workspace.model.workspaces[main.workspace.model.active].name = "A very long personal workspace name with details"
 	main.workspace._rebuild_navigation()
-	for frame in 4: await get_tree().process_frame
-	check(main.workspace._menu.is_visible_in_tree(), "long workspace names retain management access")
+	for frame in 4:
+		await get_tree().process_frame
+	check(
+		main.workspace._menu.is_visible_in_tree(), "long workspace names retain management access"
+	)
 	main.workspace.model.workspaces[main.workspace.model.active].name = old_name
 	main.workspace._rebuild_navigation()
 	main._session_menu.get_popup().id_pressed.emit(0)
-	check(main._digest_overlay.visible, "moved digest action opens the actual live/frozen return modal")
+	check(
+		main._digest_overlay.visible,
+		"moved digest action opens the actual live/frozen return modal"
+	)
 	main._hide_away_digest()
 	main._session_menu.grab_focus()
 	main._refresh_status()
 	var food: ResourceReadout = main._resource_labels[ContinuumResourceKind.Options.food]
 	var retained_stock := food.get_child(0)
 	main._refresh_status()
-	check(get_viewport().gui_get_focus_owner() == main._session_menu, "numeric status ticks preserve account-menu keyboard focus")
-	check(food.get_child(0) == retained_stock, "unchanged resource ticks retain actual display controls rather than creating blank rendering frames")
+	check(
+		get_viewport().gui_get_focus_owner() == main._session_menu,
+		"numeric status ticks preserve account-menu keyboard focus"
+	)
+	check(
+		food.get_child(0) == retained_stock,
+		"unchanged resource ticks retain actual display controls rather than creating blank rendering frames"
+	)
 	food.set_model({"name": "Food", "availability": "unavailable"}, {"compact": true})
-	check(food.model.value == null and food.model.rate_copy == "Rate unavailable" and food.model.level == "nominal", "compact failed resource availability does not fabricate a zero, rate or forecast")
+	check(
+		(
+			food.model.value == null
+			and food.model.rate_copy == "Rate unavailable"
+			and food.model.level == "nominal"
+		),
+		"compact failed resource availability does not fabricate a zero, rate or forecast"
+	)
 	food.set_model({"name": "Food", "value": 40, "availability": "warming"}, {"compact": true})
-	check(food.model.rate_copy == "Rate warming up" and food.model.level == "nominal", "compact warmup remains explicit without repeated permanent filler")
+	check(
+		food.model.rate_copy == "Rate warming up" and food.model.level == "nominal",
+		"compact warmup remains explicit without repeated permanent filler"
+	)
 	main._refresh_status()
 	main._session_menu.get_popup().popup()
-	check(main._map_input_blocked(main.map.get_global_rect().get_center()), "account popup cannot punch input through to map cells")
+	check(
+		main._map_input_blocked(main.map.get_global_rect().get_center()),
+		"account popup cannot punch input through to map cells"
+	)
 	main._session_menu.get_popup().hide()
 	main.workspace._menu.get_popup().popup()
-	check(main._map_input_blocked(main.map.get_global_rect().get_center()), "Panels popup cannot punch input through to map cells")
+	check(
+		main._map_input_blocked(main.map.get_global_rect().get_center()),
+		"Panels popup cannot punch input through to map cells"
+	)
 	main.workspace._menu.get_popup().hide()
 	main._set_mode(&"excavate")
-	check(main._intent_feedback.is_visible_in_tree() and "Excavate" in main._intent_feedback.text and _find_button(main._intent_feedback.get_parent(), "Cancel · Esc") != null, "active editing intent stays visible with explicit cancel access")
+	check(
+		(
+			main._intent_feedback.is_visible_in_tree()
+			and "Excavate" in main._intent_feedback.text
+			and _find_button(main._intent_feedback.get_parent(), "Cancel · Esc") != null
+		),
+		"active editing intent stays visible with explicit cancel access"
+	)
 	main._set_mode(&"select")
-	check(not main._intent_feedback.get_parent().visible, "standard selection mode has no persistent help row")
+	check(
+		not main._intent_feedback.get_parent().visible,
+		"standard selection mode has no persistent help row"
+	)
 	var selections := [0]
 	var capture_selection := func(_rect: Rect2i) -> void: selections[0] += 1
 	main.map.rectangle_selected.connect(capture_selection)
 	main.workspace.toggle_map_only()
-	for frame in 4: await get_tree().process_frame
+	for frame in 4:
+		await get_tree().process_frame
 	var button: Button = main._map_zoom_buttons.reset
 	var pointer := button.get_global_rect().get_center()
-	check(main._map_input_blocked(pointer), "floating toolbar hit area explicitly excludes map input")
+	check(
+		main._map_input_blocked(pointer), "floating toolbar hit area explicitly excludes map input"
+	)
 	await _native_pointer(_pointer_button(true, pointer))
 	await _native_pointer(_pointer_button(false, pointer))
-	check(selections[0] == 0 and not main.map._dragging, "native toolbar click cannot select cells beneath the overlay")
+	check(
+		selections[0] == 0 and not main.map._dragging,
+		"native toolbar click cannot select cells beneath the overlay"
+	)
 	main.map.rectangle_selected.disconnect(capture_selection)
 	main.workspace.toggle_map_only()
 	main._goto_colonist(0)
 	main._set_permissions("viewer", false, false)
 	main.workspace._build_management_menu()
-	check(main.workspace._menu.get_popup().get_item_index(108) < 0 and main.workspace._menu.get_popup().get_item_index(109) < 0, "Panels menu never exposes unauthorized Admin/Developer entries")
+	check(
+		(
+			main.workspace._menu.get_popup().get_item_index(108) < 0
+			and main.workspace._menu.get_popup().get_item_index(109) < 0
+		),
+		"Panels menu never exposes unauthorized Admin/Developer entries"
+	)
 	main._set_permissions("operator", true, false)
-	for frame in 4: await get_tree().process_frame
+	for frame in 4:
+		await get_tree().process_frame
 	main._refresh_status()
 	if main.workspace.area.size.x >= 640 and not main.workspace.diagnostics_host.visible:
 		for card: ResourceReadout in main._resource_labels.values():
-			check(card.visible, "all four resource pairs remain visible at supported viewport widths (budget %.1f)" % (main.workspace.area.size.x - main.workspace.diagnostics_host.custom_minimum_size.x))
+			check(
+				card.visible,
+				(
+					"all four resource pairs remain visible at supported viewport widths (budget %.1f)"
+					% (
+						main.workspace.area.size.x
+						- main.workspace.diagnostics_host.custom_minimum_size.x
+					)
+				)
+			)
 	if main.workspace.compact:
 		main.workspace._compact_panel = "people"
 		main.workspace._apply_layout()
+
 
 func _pointer_drag(start: Vector2, delta: Vector2) -> void:
 	await _native_pointer(_pointer_button(true, start))
@@ -372,12 +645,14 @@ func _pointer_drag(start: Vector2, delta: Vector2) -> void:
 	await _native_pointer(motion)
 	await _native_pointer(_pointer_button(false, start + delta))
 
+
 func _native_pointer(event: InputEventMouse) -> void:
 	event.position = get_viewport().get_final_transform() * event.position
 	event.global_position = event.position
 	Input.parse_input_event(event)
 	await get_tree().process_frame
 	await get_tree().process_frame
+
 
 func _check_floating_input() -> void:
 	for frame in 4:
@@ -393,33 +668,67 @@ func _check_floating_input() -> void:
 		await get_tree().process_frame
 		var origin := window.position
 		await _pointer_drag(window.titlebar.global_position + Vector2(70, 14), Vector2(18, 12))
-		check(window.position.distance_to(origin + Vector2(18, 12)) < 1, "production titlebar pointer drag uses logical global coordinates at current UI scale")
+		check(
+			window.position.distance_to(origin + Vector2(18, 12)) < 1,
+			"production titlebar pointer drag uses logical global coordinates at current UI scale"
+		)
 		var before := window.size
 		await _pointer_drag(window.grip.get_global_rect().get_center(), Vector2(20, 16))
-		check(window.size.distance_to(before + Vector2(20, 16)) < 1, "production resize corner receives pointer input without clipping")
+		check(
+			window.size.distance_to(before + Vector2(20, 16)) < 1,
+			"production resize corner receives pointer input without clipping"
+		)
 		main.workspace.model.show_panel_headers = false
 		main.workspace._apply_layout()
 		await get_tree().process_frame
 		origin = window.position
 		await _pointer_drag(window.drag_strip.global_position + Vector2(70, 12), Vector2(16, 10))
-		check(window.position.distance_to(origin + Vector2(16, 10)) < 1 and window.drag_strip.visible, "hidden headers retain a working discoverable pointer drag strip")
+		check(
+			window.position.distance_to(origin + Vector2(16, 10)) < 1 and window.drag_strip.visible,
+			"hidden headers retain a working discoverable pointer drag strip"
+		)
 		main.workspace.state("people").pinned = true
 		main.workspace._apply_layout()
 		origin = window.position
 		await _pointer_drag(window.drag_strip.global_position + Vector2(70, 12), Vector2(16, 10))
-		check(window.position == origin and not window.grip.visible, "pin alone locks floating geometry")
+		check(
+			window.position == origin and not window.grip.visible,
+			"pin alone locks floating geometry"
+		)
 		main.workspace.model.show_panel_headers = true
 		main.workspace.model.workspaces[main.workspace.model.active].panels.people = saved
 		main.workspace._apply_layout()
-	check(main.map.get_global_rect() == map_rect, "moving/resizing/pinning overlays never changes map geometry")
+	check(
+		main.map.get_global_rect() == map_rect,
+		"moving/resizing/pinning overlays never changes map geometry"
+	)
 	var world_point := Vector2(8.5, 8.5)
-	var global_point: Vector2 = main.map.get_global_transform() * main.map.world_to_screen(world_point)
-	check(main.map.screen_to_world(main.map.get_global_transform().affine_inverse() * global_point).distance_to(world_point) < 0.001, "global map picking round-trips at actual UI scale after panel input")
+	var global_point: Vector2 = (
+		main.map.get_global_transform() * main.map.world_to_screen(world_point)
+	)
+	check(
+		(
+			(
+				main
+				. map
+				. screen_to_world(main.map.get_global_transform().affine_inverse() * global_point)
+				. distance_to(world_point)
+			)
+			< 0.001
+		),
+		"global map picking round-trips at actual UI scale after panel input"
+	)
 	main.workspace.edit_workspace(false)
 	await get_tree().process_frame
-	check(main.workspace._dialog.visible and main.workspace.blocks_map_input(map_rect.get_center()), "workspace popup blocks map input over the full map")
+	check(
+		main.workspace._dialog.visible and main.workspace.blocks_map_input(map_rect.get_center()),
+		"workspace popup blocks map input over the full map"
+	)
 	var popup_focus: Control = main.workspace._dialog.gui_get_focus_owner()
-	check(popup_focus != null and main.workspace._dialog.is_ancestor_of(popup_focus), "workspace popup retains keyboard focus inside its own viewport controls")
+	check(
+		popup_focus != null and main.workspace._dialog.is_ancestor_of(popup_focus),
+		"workspace popup retains keyboard focus inside its own viewport controls"
+	)
 	main.workspace._dialog.hide()
 	await get_tree().process_frame
 
@@ -448,7 +757,11 @@ func _check_panel_scrollbar_padding() -> void:
 		var bar := window.scroll.get_v_scroll_bar()
 		var gap := ThemeTokens.number("space-2") if bar.visible else 0.0
 		var right := bar.global_position.x if bar.visible else window.scroll.get_global_rect().end.x
-		check(absf(right - window.content.get_global_rect().end.x - gap) <= 1, "actual %s panel reserves a gutter only for a visible scrollbar" % window.name)
+		check(
+			absf(right - window.content.get_global_rect().end.x - gap) <= 1,
+			"actual %s panel reserves a gutter only for a visible scrollbar" % window.name
+		)
+
 
 func _check_roster_layout_and_input() -> void:
 	var window: WorkspaceWindow = main.workspace.windows.people
@@ -458,11 +771,13 @@ func _check_roster_layout_and_input() -> void:
 	if not main.workspace.compact:
 		var original_width := window.size.x
 		window.size.x = WorkspaceLayout.MIN_SIZE.x
-		for frame in 4: await get_tree().process_frame
+		for frame in 4:
+			await get_tree().process_frame
 		_check_panel_scrollbar_padding()
 		_check_roster_body_width(window)
 		window.size.x = original_width
-		for frame in 4: await get_tree().process_frame
+		for frame in 4:
+			await get_tree().process_frame
 	var viewport := window.scroll.get_global_rect()
 	var other: RosterRow = main._colonist_cards[1]
 	var point := other.get_global_rect().get_center()
@@ -474,16 +789,29 @@ func _check_roster_layout_and_input() -> void:
 			click.pressed = pressed
 			get_viewport().push_input(click, true)
 		await get_tree().process_frame
-		check(main._selected_colonist == 1, "actual GUI pick reaches roster selection through decorative descendants")
+		check(
+			main._selected_colonist == 1,
+			"actual GUI pick reaches roster selection through decorative descendants"
+		)
 		main._select_colonist(0)
+
 
 func _check_roster_body_width(window: WorkspaceWindow) -> void:
 	var body := window.content.get_global_rect()
 	for row: RosterRow in main._colonist_cards.values():
 		var rect := row.get_global_rect()
-		check(rect.position.x >= body.position.x and rect.end.x <= body.end.x + 1, "roster fits scrollbar-aware panel body without horizontal clipping: %s row=%s body=%s" % [row.model.name, rect, body])
+		check(
+			rect.position.x >= body.position.x and rect.end.x <= body.end.x + 1,
+			(
+				"roster fits scrollbar-aware panel body without horizontal clipping: %s row=%s body=%s"
+				% [row.model.name, rect, body]
+			)
+		)
 	var expanded: Rect2 = main._selected_card.get_global_rect()
-	check(expanded.end.x <= body.end.x + 1, "expanded needs and actions fit scrollbar-aware body at %s logical pixels" % window.size.x)
+	check(
+		expanded.end.x <= body.end.x + 1,
+		"expanded needs and actions fit scrollbar-aware body at %s logical pixels" % window.size.x
+	)
 
 
 func _check_tick_focus() -> void:
@@ -495,12 +823,18 @@ func _check_tick_focus() -> void:
 	var original := actor.hunger
 	actor.hunger = original + 0.1
 	main._refresh_colonists()
-	check(get_viewport().gui_get_focus_owner() == button and is_instance_valid(button), "changing authoritative need values retains the focused Go to control")
+	check(
+		get_viewport().gui_get_focus_owner() == button and is_instance_valid(button),
+		"changing authoritative need values retains the focused Go to control"
+	)
 	actor.hunger = original
 	main._refresh_colonists()
 	for frame in 6:
 		await get_tree().process_frame
-	check(main.workspace._visible_control_rect(button).encloses(button.get_global_rect()), "focused expanded-card action is fully onscreen through nested scrolling")
+	check(
+		main.workspace._visible_control_rect(button).encloses(button.get_global_rect()),
+		"focused expanded-card action is fully onscreen through nested scrolling"
+	)
 
 
 func _check_contrast(node: Node, ground: Color) -> void:
@@ -512,7 +846,10 @@ func _check_contrast(node: Node, ground: Color) -> void:
 		var ink: Color = node.get_theme_color("font_color")
 		var a := _luminance(ink)
 		var b := _luminance(ground)
-		check((maxf(a, b) + 0.05) / (minf(a, b) + 0.05) >= 4.5, "selected roster label has readable contrast on its actual nested ground: " + node.text)
+		check(
+			(maxf(a, b) + 0.05) / (minf(a, b) + 0.05) >= 4.5,
+			"selected roster label has readable contrast on its actual nested ground: " + node.text
+		)
 	for child: Node in node.get_children():
 		_check_contrast(child, ground)
 
@@ -525,9 +862,14 @@ func _luminance(color: Color) -> float:
 func _check_day_readouts(node: Node) -> void:
 	if node is Label:
 		var text: String = node.text
-		var day_number := text.to_upper().begins_with("DAY") and text.substr(3).strip_edges().is_valid_int()
+		var day_number := (
+			text.to_upper().begins_with("DAY") and text.substr(3).strip_edges().is_valid_int()
+		)
 		if day_number or text.is_valid_int():
-			check("Mono" in node.get_theme_font("font").get_font_name(), "activity day number is a mono readout, not condensed text")
+			check(
+				"Mono" in node.get_theme_font("font").get_font_name(),
+				"activity day number is a mono readout, not condensed text"
+			)
 	for child: Node in node.get_children():
 		_check_day_readouts(child)
 

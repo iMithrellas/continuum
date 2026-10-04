@@ -167,7 +167,11 @@ func _center_camera_at(world: Vector2) -> void:
 ## Streaming owner supplies an epoch-checked frame after exact cache updates.
 ## This installs visual data only; overview values never enter terrain_model.
 func set_terrain_frame(frame: Dictionary) -> bool:
-	if not layered or not has_world_snapshot() or not terrain_view.rebuild_frame(terrain_model, frame):
+	if (
+		not layered
+		or not has_world_snapshot()
+		or not terrain_view.rebuild_frame(terrain_model, frame)
+	):
 		return false
 	terrain_view.set_visible(true)
 	terrain_view.update_entities(entity_descriptors())
@@ -197,7 +201,9 @@ func zoom_at(factor: float, point: Vector2) -> void:
 	cancel_gestures()
 	var world := screen_to_world(point)
 	var minimum := minf(0.25, ThemeTokens.number("tile") / _fit_cell_size())
-	_zoom = clampf(_zoom * factor, minimum, maxf(1.0, ThemeTokens.number("tile") * 4.0 / _fit_cell_size()))
+	_zoom = clampf(
+		_zoom * factor, minimum, maxf(1.0, ThemeTokens.number("tile") * 4.0 / _fit_cell_size())
+	)
 	var centred := ((size - Vector2(_grid) * _cell_size()) * 0.5).floor()
 	_pan = point - (world - Vector2(grid_bounds().position)) * _cell_size() - centred
 	_layout_terrain()
@@ -222,6 +228,7 @@ func reset_camera() -> void:
 	if _fit_cell_size() > 0:
 		zoom_at(ThemeTokens.number("tile") / _fit_cell_size(), size * 0.5)
 
+
 func prepare_stream_camera(focus: Vector2i) -> void:
 	_grid = Vector2i(terrain_model.width, terrain_model.height)
 	layered = true
@@ -234,6 +241,7 @@ func prepare_stream_camera(focus: Vector2i) -> void:
 	_zoom = ThemeTokens.number("tile") / maxf(_fit_cell_size(), 0.0001)
 	_center_camera_at(Vector2(focus))
 	_layout_terrain()
+
 
 func focus_detail_at(point: Vector2) -> void:
 	var world := screen_to_world(point)
@@ -272,8 +280,13 @@ func visible_grid_rect(padding := 0) -> Rect2i:
 		return Rect2i()
 	var start := screen_to_world(Vector2.ZERO).floor()
 	var end := screen_to_world(size).ceil()
-	return Rect2i(Vector2i(start) - Vector2i.ONE * padding,
-		Vector2i(end - start) + Vector2i.ONE * padding * 2).intersection(grid_bounds())
+	return (
+		Rect2i(
+			Vector2i(start) - Vector2i.ONE * padding,
+			Vector2i(end - start) + Vector2i.ONE * padding * 2
+		)
+		. intersection(grid_bounds())
+	)
 
 
 func grid_bounds() -> Rect2i:
@@ -381,7 +394,9 @@ func clear_selection() -> void:
 
 
 static func designation_rect(row: Variant) -> Rect2i:
-	return Rect2i(Vector2i(row.x_0, row.y_0), Vector2i(row.x_1 - row.x_0 + 1, row.y_1 - row.y_0 + 1))
+	return Rect2i(
+		Vector2i(row.x_0, row.y_0), Vector2i(row.x_1 - row.x_0 + 1, row.y_1 - row.y_0 + 1)
+	)
 
 
 func visible_tiles() -> Array[ContinuumTile]:
@@ -419,7 +434,11 @@ func tiles_in_rect(rect: Rect2i) -> Array[ContinuumTile]:
 	for y in range(area.position.y, area.end.y):
 		for x in range(area.position.x, area.end.x):
 			for tile: ContinuumTile in _tile_index.get(Vector2i(x, y), []):
-				if not seen.has(tile.id) and rect.has_point(Vector2i(tile.x, tile.y)) and row_visible(tile):
+				if (
+					not seen.has(tile.id)
+					and rect.has_point(Vector2i(tile.x, tile.y))
+					and row_visible(tile)
+				):
 					seen[tile.id] = true
 					_rectangle_tiles.append(tile)
 	return _rectangle_tiles
@@ -438,8 +457,12 @@ func tile_at(xy: Vector2i) -> ContinuumTile:
 
 
 static func tile_footprint(tile: ContinuumTile) -> Rect2i:
-	return Rect2i(Vector2i(tile.x, tile.y), Vector2i(
-		LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1)))
+	return Rect2i(
+		Vector2i(tile.x, tile.y),
+		Vector2i(
+			LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1)
+		)
+	)
 
 
 static func table_rows(db: Object, name: String) -> Array:
@@ -503,7 +526,9 @@ func _process(delta: float) -> void:
 	if not has_world_snapshot():
 		return
 	var changed: bool = false
-	var animation_frame := int(Time.get_ticks_msec() / float(COLONIST_WALK_FRAME_MS)) % COLONIST_WALK_FRAME_COUNT
+	var animation_frame := (
+		int(Time.get_ticks_msec() / float(COLONIST_WALK_FRAME_MS)) % COLONIST_WALK_FRAME_COUNT
+	)
 	if animation_frame != _walk_frame:
 		_walk_frame = animation_frame
 		for colonist in _colonists:
@@ -513,9 +538,18 @@ func _process(delta: float) -> void:
 	for colonist: ContinuumColonist in _colonists:
 		if layered:
 			var previous: Dictionary = _visual_motion.get(colonist.id, {})
-			if previous.get("source") == Vector3(colonist.x, colonist.y, colonist.z) and previous.get("next") == Vector3(colonist.next_x, colonist.next_y, colonist.next_z) and previous.progress == colonist.move_progress:
+			if (
+				previous.get("source") == Vector3(colonist.x, colonist.y, colonist.z)
+				and (
+					previous.get("next")
+					== Vector3(colonist.next_x, colonist.next_y, colonist.next_z)
+				)
+				and previous.progress == colonist.move_progress
+			):
 				continue
-			var sample := LayeredTerrainModel.sample_movement(colonist, _visual_motion.get(colonist.id, {}), delta * 8.0)
+			var sample := LayeredTerrainModel.sample_movement(
+				colonist, _visual_motion.get(colonist.id, {}), delta * 8.0
+			)
 			changed = changed or _visual_feet.get(colonist.id) != sample.position
 			_visual_motion[colonist.id] = sample
 			_visual_feet[colonist.id] = sample.position
@@ -549,7 +583,8 @@ func _colonist_render_position(colonist: ContinuumColonist) -> Vector2:
 		position.y += 1.0 if colonist.target_y > colonist.y else -1.0
 	return Vector2(
 		lerpf(float(colonist.x), position.x, progress),
-		lerpf(float(colonist.y), position.y, progress))
+		lerpf(float(colonist.y), position.y, progress)
+	)
 
 
 ## Called by [Main] after subscribed world rows change.
@@ -595,7 +630,9 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 		_work_labels_dirty = true
 	if full or changed_tables.has("colonist"):
 		_colonists = SpacetimeDB.Continuum.db.colonist.iter()
-		_colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool: return a.id < b.id)
+		_colonists.sort_custom(
+			func(a: ContinuumColonist, b: ContinuumColonist) -> bool: return a.id < b.id
+		)
 		for id in _visual_feet.keys():
 			if SpacetimeDB.Continuum.db.colonist.id.find(id) == null:
 				_visual_feet.erase(id)
@@ -613,23 +650,41 @@ func refresh(changed_tables: Dictionary = {}) -> void:
 	layered = not geometry_rows.is_empty()
 	if layered:
 		var changed := false
-		if not streamed_terrain and (full or changed_tables.has("world_geometry") or changed_tables.has("terrain_chunk") or changed_tables.has("terrain_material")):
-			changed = terrain_model.sync(geometry_rows[0], table_rows(SpacetimeDB.Continuum.db, "terrain_chunk"),
-				table_rows(SpacetimeDB.Continuum.db, "terrain_material"))
+		if (
+			not streamed_terrain
+			and (
+				full
+				or changed_tables.has("world_geometry")
+				or changed_tables.has("terrain_chunk")
+				or changed_tables.has("terrain_material")
+			)
+		):
+			changed = terrain_model.sync(
+				geometry_rows[0],
+				table_rows(SpacetimeDB.Continuum.db, "terrain_chunk"),
+				table_rows(SpacetimeDB.Continuum.db, "terrain_material")
+			)
 		_grid = Vector2i(terrain_model.width, terrain_model.height)
 		_has_state = true
 		_layout_terrain()
 		if changed:
 			if not streamed_terrain:
 				terrain_view.rebuild(terrain_model)
-			if not _frozen_selection.is_empty() and not terrain_model.selection_valid(_frozen_selection):
+			if (
+				not _frozen_selection.is_empty()
+				and not terrain_model.selection_valid(_frozen_selection)
+			):
 				clear_selection()
 		if full or changed or changed_tables.has("tile") or changed_tables.has("item_stack"):
 			_invalidate_terrain_entities()
 	terrain_view.set_visible(layered)
 	_sync_regions()
 	_sync_work_labels()
-	if full or changed_tables.has("excavation_designation") or _excavation_revision != terrain_model.revision:
+	if (
+		full
+		or changed_tables.has("excavation_designation")
+		or _excavation_revision != terrain_model.revision
+	):
 		_cache_excavations()
 	if layered:
 		terrain_view.update_entities(entity_descriptors())
@@ -657,7 +712,11 @@ func _cache_tiles() -> void:
 
 func _feet(colonist: ContinuumColonist) -> Vector3:
 	# Dictionary.get's fallback is eagerly evaluated in GDScript.
-	return _visual_feet[colonist.id] if _visual_feet.has(colonist.id) else LayeredTerrainModel.movement_position(colonist)
+	return (
+		_visual_feet[colonist.id]
+		if _visual_feet.has(colonist.id)
+		else LayeredTerrainModel.movement_position(colonist)
+	)
 
 
 func _cell_size() -> float:
@@ -679,11 +738,21 @@ func _draw() -> void:
 
 	if not ready:
 		draw_rect(Rect2(Vector2.ZERO, size), ThemeTokens.color("bg-000"))
-		draw_string(_font, origin + Vector2(0.0, size.y * 0.5), "Waiting for colony state…",
-				HORIZONTAL_ALIGNMENT_CENTER, size.x, metrics.font(13), ThemeTokens.color("ink-muted"))
+		draw_string(
+			_font,
+			origin + Vector2(0.0, size.y * 0.5),
+			"Waiting for colony state…",
+			HORIZONTAL_ALIGNMENT_CENTER,
+			size.x,
+			metrics.font(13),
+			ThemeTokens.color("ink-muted")
+		)
 		return
 	if not layered:
-		draw_rect(Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)), ThemeTokens.color("map-ground-deep"))
+		draw_rect(
+			Rect2(origin, Vector2(cell * _grid.x, cell * _grid.y)),
+			ThemeTokens.color("map-ground-deep")
+		)
 	if layered and (terrain_view.is_overview() or terrain_view.is_frame_suspended()):
 		_draw_terrain_status()
 		return
@@ -692,9 +761,20 @@ func _draw() -> void:
 		var selected: ContinuumTile = SpacetimeDB.Continuum.db.tile.id.find(selected_tile_id)
 		if selected != null and row_visible(selected):
 			var selection := tile_footprint(selected)
-			MapPaint.selection(self, Rect2(origin + Vector2(selection.position) * cell, Vector2(selection.size) * cell).grow(-2 * metrics.scale), metrics.scale)
-	for tile: ContinuumTile in ([] if layered else visible_tiles()):
-		var footprint := Vector2(LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1))
+			MapPaint.selection(
+				self,
+				(
+					Rect2(
+						origin + Vector2(selection.position) * cell, Vector2(selection.size) * cell
+					)
+					. grow(-2 * metrics.scale)
+				),
+				metrics.scale
+			)
+	for tile: ContinuumTile in [] if layered else visible_tiles():
+		var footprint := Vector2(
+			LayeredTerrainModel.field(tile, "width", 1), LayeredTerrainModel.field(tile, "depth", 1)
+		)
 		var rect := Rect2(origin + Vector2(tile.x * cell, tile.y * cell), footprint * cell)
 		if not rect.intersects(Rect2(Vector2.ZERO, size)):
 			continue
@@ -710,7 +790,12 @@ func _draw() -> void:
 			var width := maxf(1.0, cell * 0.07)
 			draw_line(a, b, ThemeTokens.color("map-paper"), width + 2 * metrics.scale)
 			draw_line(a, b, ThemeTokens.color("map-ink"), width)
-			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), ThemeTokens.color("map-paper"), width + 2 * metrics.scale)
+			draw_line(
+				Vector2(a.x, b.y),
+				Vector2(b.x, a.y),
+				ThemeTokens.color("map-paper"),
+				width + 2 * metrics.scale
+			)
 			draw_line(Vector2(a.x, b.y), Vector2(b.x, a.y), ThemeTokens.color("map-ink"), width)
 
 		if tile.id == selected_tile_id:
@@ -723,8 +808,18 @@ func _draw() -> void:
 				if layered and terrain_model.depth_at(Vector2i(x, y)) != 0:
 					continue
 				var corner := origin + Vector2(x, y) * cell
-				draw_line(corner, corner + Vector2(cell, 0), MapPaint.translucent("map-paper", 0.12), metrics.scale)
-				draw_line(corner, corner + Vector2(0, cell), MapPaint.translucent("map-paper", 0.12), metrics.scale)
+				draw_line(
+					corner,
+					corner + Vector2(cell, 0),
+					MapPaint.translucent("map-paper", 0.12),
+					metrics.scale
+				)
+				draw_line(
+					corner,
+					corner + Vector2(0, cell),
+					MapPaint.translucent("map-paper", 0.12),
+					metrics.scale
+				)
 
 	if not layered:
 		_draw_colonists(origin, cell)
@@ -735,8 +830,9 @@ func _draw() -> void:
 	if _selected_actor_centre != null:
 		_draw_actor_intent(_selected_actor_centre, cell)
 	if _selection_rect.size != Vector2i.ZERO and not _dragging:
-		var selection_rect := Rect2(origin + Vector2(_selection_rect.position) * cell,
-			Vector2(_selection_rect.size) * cell)
+		var selection_rect := Rect2(
+			origin + Vector2(_selection_rect.position) * cell, Vector2(_selection_rect.size) * cell
+		)
 		MapPaint.selection(self, selection_rect.grow(-2 * metrics.scale), metrics.scale)
 	_draw_drag_preview(origin, cell)
 	_draw_terrain_status()
@@ -745,7 +841,16 @@ func _draw() -> void:
 func _draw_terrain_status() -> void:
 	var status := terrain_view.presentation_status()
 	if not status.is_empty():
-		MapPaint.plate(self, Vector2(8, size.y - 38) * Vector2(metrics.scale, 1), status, "", metrics.scale, false, _terrain_status_cache, Rect2(Vector2.ZERO, size))
+		MapPaint.plate(
+			self,
+			Vector2(8, size.y - 38) * Vector2(metrics.scale, 1),
+			status,
+			"",
+			metrics.scale,
+			false,
+			_terrain_status_cache,
+			Rect2(Vector2.ZERO, size)
+		)
 
 
 func _draw_drag_preview(origin: Vector2, cell: float) -> void:
@@ -755,13 +860,22 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 	var rect := MapUiModel.normalize_rect(_drag_start, _drag_current)
 	if interaction_mode == &"facility":
 		rect = Rect2i(_drag_start, Vector2i(facility_width, facility_depth))
-	var invalid: bool = interaction_mode == &"facility" and layered and (terrain_model.uniform_base(rect) != selected_base \
-		or not terrain_model.placement_clear(rect, selected_base, facility_height))
+	var invalid: bool = (
+		interaction_mode == &"facility"
+		and layered
+		and (
+			terrain_model.uniform_base(rect) != selected_base
+			or not terrain_model.placement_clear(rect, selected_base, facility_height)
+		)
+	)
 	var preview := Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell)
 	MapPaint.selection(self, preview, metrics.scale)
 	var occupied := 0
 	for tile: ContinuumTile in facility_tiles():
-		if rect.intersects(tile_footprint(tile)) and tile.kind.value != ContinuumTileKind.Options.empty:
+		if (
+			rect.intersects(tile_footprint(tile))
+			and tile.kind.value != ContinuumTileKind.Options.empty
+		):
 			occupied += 1
 	var text := "%d×%d · %d cells" % [rect.size.x, rect.size.y, rect.size.x * rect.size.y]
 	if interaction_mode == &"build" and planning_preview.is_valid():
@@ -776,29 +890,68 @@ func _draw_drag_preview(origin: Vector2, cell: float) -> void:
 		if layered and terrain_model.uniform_base(rect) == null:
 			text += "  MIXED / UNKNOWN ELEVATIONS"
 	elif interaction_mode == &"excavate":
-		text += "  z=%d..%d (%.1fm)" % [selected_base, selected_base + excavation_height - 1, excavation_height * 0.5]
+		text += (
+			"  z=%d..%d (%.1fm)"
+			% [selected_base, selected_base + excavation_height - 1, excavation_height * 0.5]
+		)
 	elif interaction_mode == &"facility":
-		text = "%dx%d facility at z=%d; clearance %.1fm" % [facility_width, facility_depth, selected_base, facility_height * 0.5]
+		text = (
+			"%dx%d facility at z=%d; clearance %.1fm"
+			% [facility_width, facility_depth, selected_base, facility_height * 0.5]
+		)
 	if invalid:
 		text += " · Blocked"
 	if rect.size == Vector2i.ONE:
 		var tile := tile_at(_drag_start)
-		var kind := build_kind if interaction_mode in [&"build", &"facility"] else (tile.kind.value if tile != null else ContinuumTileKind.Options.empty)
+		var kind := (
+			build_kind
+			if interaction_mode in [&"build", &"facility"]
+			else (tile.kind.value if tile != null else ContinuumTileKind.Options.empty)
+		)
 		var potential := _potential_yield(_drag_start, kind)
-		if not potential.is_empty() and interaction_mode != &"excavate" and not (interaction_mode == &"build" and planning_preview.is_valid()):
+		if (
+			not potential.is_empty()
+			and interaction_mode != &"excavate"
+			and not (interaction_mode == &"build" and planning_preview.is_valid())
+		):
 			text = potential + " · " + text
 	text = "Release to %s · " % ("select" if interaction_mode == &"select" else "request") + text
-	MapPaint.plate(self, preview.position + Vector2(4, 4) * metrics.scale, "", text, metrics.scale, false, _preview_plate_cache, Rect2(Vector2.ZERO, size))
+	MapPaint.plate(
+		self,
+		preview.position + Vector2(4, 4) * metrics.scale,
+		"",
+		text,
+		metrics.scale,
+		false,
+		_preview_plate_cache,
+		Rect2(Vector2.ZERO, size)
+	)
 
 
 ## Hover predicts only known geometry; the server still decides every request.
 func _draw_hover_preview(origin: Vector2, cell: float) -> void:
 	if _hover_cell == null or _panning or interaction_mode == &"select":
 		return
-	var rect := Rect2i(_hover_cell, Vector2i(facility_width, facility_depth) if interaction_mode == &"facility" else Vector2i.ONE)
+	var rect := Rect2i(
+		_hover_cell,
+		(
+			Vector2i(facility_width, facility_depth)
+			if interaction_mode == &"facility"
+			else Vector2i.ONE
+		)
+	)
 	var preview := Rect2(origin + Vector2(rect.position) * cell, Vector2(rect.size) * cell)
 	MapPaint.selection(self, preview, metrics.scale)
-	MapPaint.plate(self, preview.position + Vector2(0, -28) * metrics.scale, "", action_hint(_hover_cell), metrics.scale, false, _preview_plate_cache, Rect2(Vector2.ZERO, size))
+	MapPaint.plate(
+		self,
+		preview.position + Vector2(0, -28) * metrics.scale,
+		"",
+		action_hint(_hover_cell),
+		metrics.scale,
+		false,
+		_preview_plate_cache,
+		Rect2(Vector2.ZERO, size)
+	)
 
 
 ## A compact instruction with local geometry facts, never an approval verdict.
@@ -811,9 +964,19 @@ func action_hint(xy: Vector2i) -> String:
 	match interaction_mode:
 		&"facility":
 			var rect := Rect2i(xy, Vector2i(facility_width, facility_depth))
-			var hint := "%s %d×%d" % [ContinuumTileKind.parse_enum_name(build_kind).capitalize(), facility_width, facility_depth]
+			var hint := (
+				"%s %d×%d"
+				% [
+					ContinuumTileKind.parse_enum_name(build_kind).capitalize(),
+					facility_width,
+					facility_depth
+				]
+			)
 			if layered and terrain_model.uniform_base(rect) != base:
-				return "Mixed / unknown elevations · %d×%d footprint" % [facility_width, facility_depth]
+				return (
+					"Mixed / unknown elevations · %d×%d footprint"
+					% [facility_width, facility_depth]
+				)
 			if layered and not terrain_model.placement_clear(rect, base, facility_height):
 				return "Terrain clearance blocked · z=%d" % base
 			for y in range(rect.position.y, rect.end.y):
@@ -828,7 +991,8 @@ func action_hint(xy: Vector2i) -> String:
 		&"excavate":
 			return "Excavate · drag area · z=%d..%d" % [base, base + excavation_height - 1]
 		&"build":
-			if planning_preview.is_valid(): return planning_preview.call(Rect2i(xy, Vector2i.ONE))
+			if planning_preview.is_valid():
+				return planning_preview.call(Rect2i(xy, Vector2i.ONE))
 			var hint := ContinuumTileKind.parse_enum_name(build_kind).capitalize()
 			var potential := _potential_yield(xy, build_kind)
 			if not potential.is_empty():
@@ -840,22 +1004,41 @@ func action_hint(xy: Vector2i) -> String:
 ## Operational Tile ecology wins. Otherwise inspect only the exact acknowledged
 ## compact column in detail; representatives/neighbours cannot supply potential.
 func _ecology_fields(tile: ContinuumTile, xy: Variant = null) -> Dictionary:
-	if layered and (terrain_model.presentation_mode != &"detail" or terrain_view.is_overview() or terrain_view.is_frame_suspended()):
+	if (
+		layered
+		and (
+			terrain_model.presentation_mode != &"detail"
+			or terrain_view.is_overview()
+			or terrain_view.is_frame_suspended()
+		)
+	):
 		return {}
 	if tile != null and _source_db != null:
 		var terrain: ContinuumTerrain = _source_db.terrain.tile_id.find(tile.id)
 		if terrain != null:
-			return {"soil_fertility": terrain.soil_fertility, "moisture": terrain.moisture,
-				"forest_density": terrain.forest_density}
+			return {
+				"soil_fertility": terrain.soil_fertility,
+				"moisture": terrain.moisture,
+				"forest_density": terrain.forest_density
+			}
 	if not layered or not xy is Vector2i:
 		return {}
 	var data := terrain_model.frame_samples(Rect2i(xy, Vector2i.ONE), 1, 1)
 	if data.mode != &"detail" or data.cut != terrain_model.cut or data.samples.size() != 1:
 		return {}
 	var sample: Dictionary = data.samples[0]
-	if sample.xy != xy or sample.state != &"surface" or not sample.has_all(TerrainArt.ECOLOGY_FIELDS) or not TerrainArt.valid_ecology(sample):
+	if (
+		sample.xy != xy
+		or sample.state != &"surface"
+		or not sample.has_all(TerrainArt.ECOLOGY_FIELDS)
+		or not TerrainArt.valid_ecology(sample)
+	):
 		return {}
-	return {"soil_fertility": sample.soil_fertility, "forest_density": sample.forest_density, "moisture": sample.moisture}
+	return {
+		"soil_fertility": sample.soil_fertility,
+		"forest_density": sample.forest_density,
+		"moisture": sample.moisture
+	}
 
 
 ## Placement previews describe the anchor's potential, never a footprint average
@@ -863,12 +1046,23 @@ func _ecology_fields(tile: ContinuumTile, xy: Variant = null) -> Dictionary:
 func _potential_yield(xy: Vector2i, kind: int) -> String:
 	if kind not in [ContinuumTileKind.Options.farm, ContinuumTileKind.Options.forest]:
 		return ""
-	if layered and (terrain_model.presentation_mode != &"detail" or terrain_view.is_overview() or terrain_view.is_frame_suspended()):
+	if (
+		layered
+		and (
+			terrain_model.presentation_mode != &"detail"
+			or terrain_view.is_overview()
+			or terrain_view.is_frame_suspended()
+		)
+	):
 		return "potential unknown"
 	var fields := _ecology_fields(tile_at(xy), xy)
 	if fields.is_empty():
 		return "potential unknown"
-	var work := ContinuumWorkType.Options.farming if kind == ContinuumTileKind.Options.farm else ContinuumWorkType.Options.logging
+	var work := (
+		ContinuumWorkType.Options.farming
+		if kind == ContinuumTileKind.Options.farm
+		else ContinuumWorkType.Options.logging
+	)
 	return "potential %.0f%%" % (100.0 * ProductionSuitability.multiplier(work, fields))
 
 
@@ -951,12 +1145,18 @@ func _sync_work_labels() -> void:
 				var order: ContinuumWorkOrder = _work_orders_by_tile.get(tile.id, {}).get(work)
 				var state := "NO ORDER"
 				if order != null:
-					state = str(PRIORITY_NAMES.get(order.priority, "Unknown")).to_upper() if order.enabled else "PAUSED"
+					state = (
+						str(PRIORITY_NAMES.get(order.priority, "Unknown")).to_upper()
+						if order.enabled
+						else "PAUSED"
+					)
 				states[state] = true
 		var labels := PackedStringArray()
 		for state in ["OFF", "PAUSED", "NO ORDER", "HIGH", "NORMAL", "LOW", "UNKNOWN"]:
 			if states.has(state):
-				labels.append("ORDER " + state if state in ["HIGH", "NORMAL", "LOW", "UNKNOWN"] else state)
+				labels.append(
+					"ORDER " + state if state in ["HIGH", "NORMAL", "LOW", "UNKNOWN"] else state
+				)
 		region.work_label = " / ".join(labels)
 
 
@@ -975,29 +1175,50 @@ func _draw_zone_labels(origin: Vector2, cell: float) -> void:
 						_camera_regions.append(region)
 	var viewport := Rect2(Vector2.ZERO, size)
 	for region: Dictionary in _camera_regions:
-		var bounds := Rect2(origin + Vector2(region.bounds.position) * cell, Vector2(region.bounds.size) * cell)
+		var bounds := Rect2(
+			origin + Vector2(region.bounds.position) * cell, Vector2(region.bounds.size) * cell
+		)
 		if not bounds.intersects(viewport):
 			continue
 		var focused := _region_focused(region)
 		var forest: bool = region.kind == ContinuumTileKind.Options.forest
 		if focused or (not forest and cell >= 8 * metrics.scale):
 			for edge: PackedVector2Array in region.visible_edges:
-				draw_line(origin + edge[0] * cell, origin + edge[1] * cell, MapPaint.translucent("map-ink", 0.38), metrics.scale)
+				draw_line(
+					origin + edge[0] * cell,
+					origin + edge[1] * cell,
+					MapPaint.translucent("map-ink", 0.38),
+					metrics.scale
+				)
 		if region.label_visible and region_label_visible(region, cell):
 			var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
 			var title := ContinuumTileKind.parse_enum_name(region.kind).to_upper()
 			if not region.work_label.is_empty() and MapLabelLod.work(cell, metrics.scale, focused):
 				title += " · " + region.work_label
-			MapPaint.plate(self, anchor, title, str(region.count), metrics.scale, false, region.plate_cache, viewport if viewport.has_point(anchor) else Rect2())
+			MapPaint.plate(
+				self,
+				anchor,
+				title,
+				str(region.count),
+				metrics.scale,
+				false,
+				region.plate_cache,
+				viewport if viewport.has_point(anchor) else Rect2()
+			)
 
 
 func _region_focused(region: Dictionary) -> bool:
-	if (_hover_cell != null and region.cells.has(_hover_cell)) or region.get("sites", {}).has(selected_tile_id):
+	if (
+		(_hover_cell != null and region.cells.has(_hover_cell))
+		or region.get("sites", {}).has(selected_tile_id)
+	):
 		return true
 	if _selection_rect.has_area() and _selection_rect.intersects(region.bounds):
-		if _selection_rect.encloses(region.bounds): return true
+		if _selection_rect.encloses(region.bounds):
+			return true
 		for xy: Vector2i in region.cells:
-			if _selection_rect.has_point(xy): return true
+			if _selection_rect.has_point(xy):
+				return true
 	return false
 
 
@@ -1006,7 +1227,9 @@ func region_label_visible(region: Dictionary, cell: float) -> bool:
 	if not MapLabelLod.region(cell, metrics.scale, focused):
 		return false
 	var minimum := 12 if region.kind == ContinuumTileKind.Options.forest else 3
-	return focused or (region.count >= minimum and region.bounds.size.x * cell >= 58 * metrics.scale)
+	return (
+		focused or (region.count >= minimum and region.bounds.size.x * cell >= 58 * metrics.scale)
+	)
 
 
 func _draw_ground_items(origin: Vector2, cell: float) -> void:
@@ -1016,8 +1239,10 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 		if stack.amount <= 0.0:
 			continue
 		var column := 0.56 if stack.kind.value == ContinuumResourceKind.Options.meat else 0.04
-		var rect := Rect2(origin + Vector2(stack.x + column, stack.y + 0.65) * cell,
-				Vector2(cell * 0.40, cell * 0.33))
+		var rect := Rect2(
+			origin + Vector2(stack.x + column, stack.y + 0.65) * cell,
+			Vector2(cell * 0.40, cell * 0.33)
+		)
 		MapPaint.crate(self, rect)
 
 
@@ -1027,8 +1252,9 @@ func _draw_ground_items(origin: Vector2, cell: float) -> void:
 func _legacy_colonist_descriptors(origin: Vector2, cell: float) -> Array[Dictionary]:
 	var descriptors: Array[Dictionary] = []
 	var colonists: Array[ContinuumColonist] = _colonists.duplicate()
-	colonists.sort_custom(func(a: ContinuumColonist, b: ContinuumColonist) -> bool:
-		return a.id < b.id)
+	colonists.sort_custom(
+		func(a: ContinuumColonist, b: ContinuumColonist) -> bool: return a.id < b.id
+	)
 	var occupants: Dictionary[Vector2i, Array] = {}
 	for colonist: ContinuumColonist in colonists:
 		if not row_visible(colonist):
@@ -1042,15 +1268,17 @@ func _legacy_colonist_descriptors(origin: Vector2, cell: float) -> Array[Diction
 		var colonist: ContinuumColonist = colonists[index]
 		if not row_visible(colonist):
 			continue
-		var grid_pos: Vector2 = _visual_positions.get(colonist.id,
-				Vector2(colonist.x, colonist.y))
+		var grid_pos: Vector2 = _visual_positions.get(colonist.id, Vector2(colonist.x, colonist.y))
 		var centre := origin + (grid_pos + Vector2(0.5, 0.5)) * cell
 		var sharing: Array = occupants[Vector2i(colonist.x, colonist.y)]
 		if sharing.size() > 1:
-			centre += Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * cell * 0.25
+			centre += (
+				Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * cell * 0.25
+			)
 		var sprite_size := cell * (0.62 if sharing.size() > 1 else 0.82)
-		var sprite_rect := Rect2(centre - Vector2.ONE * sprite_size * 0.5,
-				Vector2.ONE * sprite_size)
+		var sprite_rect := Rect2(
+			centre - Vector2.ONE * sprite_size * 0.5, Vector2.ONE * sprite_size
+		)
 		descriptors.append({"colonist": colonist, "rect": sprite_rect})
 	return descriptors
 
@@ -1063,15 +1291,20 @@ func _draw_colonists(origin: Vector2, cell: float) -> void:
 func _draw_legacy_colonist(descriptor: Dictionary, cell: float) -> void:
 	var colonist: ContinuumColonist = descriptor.colonist
 	var sprite_rect: Rect2 = descriptor.rect
-	var walking := colonist.x != colonist.target_x \
-			or colonist.y != colonist.target_y \
-			or colonist.move_progress > 0.001
+	var walking := (
+		colonist.x != colonist.target_x
+		or colonist.y != colonist.target_y
+		or colonist.move_progress > 0.001
+	)
 	var frame := _walk_frame if walking else 0
-	var source_rect := Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0.0,
-			COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE)
+	var source_rect := Rect2(
+		frame * COLONIST_WALK_FRAME_SIZE, 0.0, COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE
+	)
 	MapPaint.sprite(self, COLONIST_WALK_TEXTURE, sprite_rect, source_rect, metrics.scale)
 	if colonist.carried_amount > 0.0:
-		var cargo_rect := Rect2(sprite_rect.end - Vector2.ONE * cell * 0.25, Vector2.ONE * cell * 0.25)
+		var cargo_rect := Rect2(
+			sprite_rect.end - Vector2.ONE * cell * 0.25, Vector2.ONE * cell * 0.25
+		)
 		MapPaint.crate(self, cargo_rect)
 
 
@@ -1094,35 +1327,87 @@ func _get_tooltip(at_position: Vector2) -> String:
 	if layered:
 		var surface: Variant = terrain_model.surface_at(grid_pos)
 		if surface == null:
-			lines.insert(0, "No known surface at (%d, %d), cut z=%d" % [grid_pos.x, grid_pos.y, terrain_model.cut])
+			lines.insert(
+				0,
+				(
+					"No known surface at (%d, %d), cut z=%d"
+					% [grid_pos.x, grid_pos.y, terrain_model.cut]
+				)
+			)
 			return "\n".join(lines)
 		var material_id := terrain_model.material_at(surface)
-		lines.append("%s material #%d at (%d, %d, %d) | depth %d (%.1fm) | base z=%d" % [
-			LayeredTerrainModel.field(terrain_model.materials.get(material_id), "name", "unknown"), material_id,
-			surface.x, surface.y, surface.z, terrain_model.depth_at(grid_pos), terrain_model.depth_at(grid_pos) * 0.5,
-			terrain_model.base_at(grid_pos)])
+		lines.append(
+			(
+				"%s material #%d at (%d, %d, %d) | depth %d (%.1fm) | base z=%d"
+				% [
+					LayeredTerrainModel.field(
+						terrain_model.materials.get(material_id), "name", "unknown"
+					),
+					material_id,
+					surface.x,
+					surface.y,
+					surface.z,
+					terrain_model.depth_at(grid_pos),
+					terrain_model.depth_at(grid_pos) * 0.5,
+					terrain_model.base_at(grid_pos)
+				]
+			)
+		)
 	var tile := tile_at(grid_pos)
 	var fields := _ecology_fields(tile, grid_pos)
 	if tile != null:
-		lines.append("%s (%d, %d) / %s" % [
-			ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(), tile.x, tile.y,
-			"enabled" if tile.enabled else "disabled"])
+		lines.append(
+			(
+				"%s (%d, %d) / %s"
+				% [
+					ContinuumTileKind.parse_enum_name(tile.kind.value).capitalize(),
+					tile.x,
+					tile.y,
+					"enabled" if tile.enabled else "disabled"
+				]
+			)
+		)
 	if not fields.is_empty():
-		lines.append("Soil: %s  fertility %.2f  moisture %.2f" % [
-			_soil_name(fields.soil_fertility, fields.moisture), fields.soil_fertility, fields.moisture])
-		lines.append("Cover potential: %s  density %.2f" % [
-			_cover_name(fields.forest_density), fields.forest_density])
+		lines.append(
+			(
+				"Soil: %s  fertility %.2f  moisture %.2f"
+				% [
+					_soil_name(fields.soil_fertility, fields.moisture),
+					fields.soil_fertility,
+					fields.moisture
+				]
+			)
+		)
+		lines.append(
+			(
+				"Cover potential: %s  density %.2f"
+				% [_cover_name(fields.forest_density), fields.forest_density]
+			)
+		)
 	if tile != null:
 		for work: int in compatible_work(tile.kind.value):
 			var description := "no order (no production)"
 			for order: ContinuumWorkOrder in db.work_order.iter():
 				if order.tile_id == tile.id and order.work.value == work:
-					description = "#%d: %s / %s" % [order.id, "enabled" if order.enabled else "paused",
-						PRIORITY_NAMES.get(order.priority, "Unknown")]
+					description = (
+						"#%d: %s / %s"
+						% [
+							order.id,
+							"enabled" if order.enabled else "paused",
+							PRIORITY_NAMES.get(order.priority, "Unknown")
+						]
+					)
 					break
-			lines.append("%s order: %s" % [ContinuumWorkType.parse_enum_name(work).capitalize(), description])
+			lines.append(
+				"%s order: %s" % [ContinuumWorkType.parse_enum_name(work).capitalize(), description]
+			)
 		if not compatible_work(tile.kind.value).is_empty():
-			lines.append("Priority ranks enabled orders; stock policy can still suspend production.\nOld goods remain haulable.")
+			(
+				lines
+				. append(
+					"Priority ranks enabled orders; stock policy can still suspend production.\nOld goods remain haulable."
+				)
+			)
 	var potential_work: Array[int] = []
 	if interaction_mode in [&"build", &"facility"]:
 		potential_work = compatible_work(build_kind)
@@ -1130,31 +1415,73 @@ func _get_tooltip(at_position: Vector2) -> String:
 			lines.append("Placement anchor potential at (%d, %d):" % [grid_pos.x, grid_pos.y])
 	elif tile != null:
 		potential_work = compatible_work(tile.kind.value)
-	if potential_work.is_empty() and (tile == null or tile.kind.value == ContinuumTileKind.Options.empty):
-		potential_work = [ContinuumWorkType.Options.farming, ContinuumWorkType.Options.logging, ContinuumWorkType.Options.hunting]
+	if (
+		potential_work.is_empty()
+		and (tile == null or tile.kind.value == ContinuumTileKind.Options.empty)
+	):
+		potential_work = [
+			ContinuumWorkType.Options.farming,
+			ContinuumWorkType.Options.logging,
+			ContinuumWorkType.Options.hunting
+		]
 	for work: int in potential_work:
 		lines.append(ProductionSuitability.work_line(work, fields))
 	if not potential_work.is_empty():
-		lines.append(ProductionSuitability.description(potential_work[0], fields).replace(". ", ".\n").replace(", ", ",\n"))
+		lines.append(
+			(
+				ProductionSuitability
+				. description(potential_work[0], fields)
+				. replace(". ", ".\n")
+				. replace(", ", ",\n")
+			)
+		)
 	for region: Dictionary in _excavation_regions:
 		if region.cells.has(grid_pos):
 			lines.append(region.status)
 	for stack: ContinuumItemStack in db.item_stack.iter():
 		if row_visible(stack) and Vector2i(stack.x, stack.y) == grid_pos:
-			lines.append("Ground: %.1f %s" % [stack.amount,
-				ContinuumResourceKind.parse_enum_name(stack.kind.value)])
+			lines.append(
+				(
+					"Ground: %.1f %s"
+					% [stack.amount, ContinuumResourceKind.parse_enum_name(stack.kind.value)]
+				)
+			)
 	for colonist: ContinuumColonist in db.colonist.iter():
 		var feet := _feet(colonist)
-		var tooltip_xy := Vector2i(floori(feet.x), floori(feet.y)) if layered else Vector2i(colonist.x, colonist.y)
+		var tooltip_xy := (
+			Vector2i(floori(feet.x), floori(feet.y))
+			if layered
+			else Vector2i(colonist.x, colonist.y)
+		)
 		if row_visible(colonist) and tooltip_xy == grid_pos:
-			lines.append("%s: %s / %s / %s" % [colonist.name,
-				ContinuumWorkType.parse_enum_name(colonist.work.value),
-				"produce + haul" if colonist.haul_role.value == ContinuumHaulRole.Options.both
-						else ContinuumHaulRole.parse_enum_name(colonist.haul_role.value),
-				ContinuumActivity.parse_enum_name(colonist.activity.value)])
-			lines.append("Cargo: %.1f %s" % [colonist.carried_amount,
-				ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)]
-					if colonist.carried_amount > 0.0 else "Cargo: empty hands")
+			lines.append(
+				(
+					"%s: %s / %s / %s"
+					% [
+						colonist.name,
+						ContinuumWorkType.parse_enum_name(colonist.work.value),
+						(
+							"produce + haul"
+							if colonist.haul_role.value == ContinuumHaulRole.Options.both
+							else ContinuumHaulRole.parse_enum_name(colonist.haul_role.value)
+						),
+						ContinuumActivity.parse_enum_name(colonist.activity.value)
+					]
+				)
+			)
+			lines.append(
+				(
+					(
+						"Cargo: %.1f %s"
+						% [
+							colonist.carried_amount,
+							ContinuumResourceKind.parse_enum_name(colonist.carried_kind.value)
+						]
+					)
+					if colonist.carried_amount > 0.0
+					else "Cargo: empty hands"
+				)
+			)
 			lines.append(colonist_intent(colonist))
 	return "\n".join(lines)
 
@@ -1181,7 +1508,9 @@ func _cell_at(position: Vector2, clamp_to_grid := false) -> Variant:
 	var cell := _cell_size()
 	if cell <= 0.0 or not Rect2(Vector2.ZERO, size).has_point(position):
 		return null
-	var grid_rect := Rect2(world_to_screen(Vector2(grid_bounds().position)), Vector2(cell * _grid.x, cell * _grid.y))
+	var grid_rect := Rect2(
+		world_to_screen(Vector2(grid_bounds().position)), Vector2(cell * _grid.x, cell * _grid.y)
+	)
 	if not grid_rect.has_point(position):
 		return null
 	var local := screen_to_world(position)
@@ -1213,7 +1542,11 @@ func _input(event: InputEvent) -> void:
 		cancel_gestures()
 		tool_cancelled.emit()
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+	if (
+		event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_RIGHT
+		and event.pressed
+	):
 		cancel_gestures()
 		tool_cancelled.emit()
 		return
@@ -1223,7 +1556,11 @@ func _input(event: InputEvent) -> void:
 		_pan_pointer = point
 		get_viewport().set_input_as_handled()
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_MIDDLE and not event.pressed:
+	if (
+		event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_MIDDLE
+		and not event.pressed
+	):
 		_panning = false
 		return
 	if event is InputEventMouseMotion and _dragging:
@@ -1234,7 +1571,12 @@ func _input(event: InputEvent) -> void:
 			_drag_current = _cell_at(point)
 			queue_redraw()
 		return
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and not event.pressed and _dragging:
+	if (
+		event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_LEFT
+		and not event.pressed
+		and _dragging
+	):
 		var release := event as InputEventMouseButton
 		var point := get_global_transform().affine_inverse() * release.position
 		if _cell_at(point) == null or not _drag_inside:
@@ -1265,7 +1607,11 @@ func _input(event: InputEvent) -> void:
 func _gui_input(event: InputEvent) -> void:
 	if not has_world_snapshot():
 		return
-	if event is InputEventMouse and input_blocked.is_valid() and input_blocked.call(get_global_transform() * event.position):
+	if (
+		event is InputEventMouse
+		and input_blocked.is_valid()
+		and input_blocked.call(get_global_transform() * event.position)
+	):
 		cancel_gestures()
 		_clear_hover()
 		return
@@ -1277,7 +1623,13 @@ func _gui_input(event: InputEvent) -> void:
 			queue_redraw()
 	if event is InputEventMouseButton and event.pressed:
 		if event.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-			zoom_at(pow(1.2, event.factor if event.button_index == MOUSE_BUTTON_WHEEL_UP else -event.factor), event.position)
+			zoom_at(
+				pow(
+					1.2,
+					event.factor if event.button_index == MOUSE_BUTTON_WHEEL_UP else -event.factor
+				),
+				event.position
+			)
 			accept_event()
 			return
 		if event.button_index == MOUSE_BUTTON_MIDDLE:
@@ -1289,8 +1641,7 @@ func _gui_input(event: InputEvent) -> void:
 			return
 	if _panning:
 		return
-	if event is InputEventMouseButton and event.pressed \
-			and event.button_index == MOUSE_BUTTON_LEFT:
+	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var point := (event as InputEventMouseButton).position
 		if terrain_model.presentation_mode == &"overview":
 			focus_detail_at(point)
@@ -1308,7 +1659,9 @@ func _gui_input(event: InputEvent) -> void:
 		_drag_layer = terrain_model.cut
 		var source := _source_db
 		var surface: Variant = terrain_model.surface_at(grid_pos) if layered else null
-		cell_selected.emit(surface if surface != null else Vector3i(grid_pos.x, grid_pos.y, selected_base))
+		cell_selected.emit(
+			surface if surface != null else Vector3i(grid_pos.x, grid_pos.y, selected_base)
+		)
 		if not has_world_snapshot() or _source_db != source:
 			return
 		_dragging = true
@@ -1343,10 +1696,16 @@ func actor_groups(rows: Array) -> Dictionary:
 	var region := Rect2(visible_grid_rect(LayeredTerrainView.CAMERA_PADDING))
 	for row in rows:
 		var id := int(LayeredTerrainModel.field(row, "id", -1))
-		var position: Vector3 = _visual_feet[id] if _visual_feet.has(id) else LayeredTerrainModel.movement_position(row)
+		var position: Vector3 = (
+			_visual_feet[id] if _visual_feet.has(id) else LayeredTerrainModel.movement_position(row)
+		)
 		if not region.intersects(Rect2(Vector2(position.x, position.y), Vector2.ONE)):
 			continue
-		if not terrain_model.position_visible(position, int(LayeredTerrainModel.field(row, "body_width", 1)), int(LayeredTerrainModel.field(row, "body_depth", 1))):
+		if not terrain_model.position_visible(
+			position,
+			int(LayeredTerrainModel.field(row, "body_width", 1)),
+			int(LayeredTerrainModel.field(row, "body_depth", 1))
+		):
 			continue
 		var key := Vector3i(floori(position.x), floori(position.y), floori(position.z))
 		if not groups.has(key):
@@ -1363,12 +1722,24 @@ func _invalidate_terrain_entities() -> void:
 	for tile: ContinuumTile in _facilities:
 		if not row_visible(tile):
 			continue
-		_index_entity({"type": "facility", "rect": Rect2(tile_footprint(tile)), "z": tile.z,
-			"kind": tile.kind.value, "enabled": tile.enabled})
+		_index_entity(
+			{
+				"type": "facility",
+				"rect": Rect2(tile_footprint(tile)),
+				"z": tile.z,
+				"kind": tile.kind.value,
+				"enabled": tile.enabled
+			}
+		)
 	for stack: ContinuumItemStack in _stacks:
 		if row_visible(stack) and stack.amount > 0:
-			_index_entity({"type": "stack", "z": stack.z,
-				"rect": Rect2(Vector2(stack.x + 0.05, stack.y + 0.65), Vector2(0.4, 0.33))})
+			_index_entity(
+				{
+					"type": "stack",
+					"z": stack.z,
+					"rect": Rect2(Vector2(stack.x + 0.05, stack.y + 0.65), Vector2(0.4, 0.33))
+				}
+			)
 
 
 func _index_entity(entity: Dictionary) -> void:
@@ -1413,9 +1784,24 @@ func entity_descriptors() -> Array:
 			centre += Vector2.from_angle(TAU * sharing.find(colonist.id) / sharing.size()) * 0.15
 		var sprite_size := 0.62 if sharing.size() > 1 else 0.82
 		var frame := _walk_frame if colonist.move_progress > 0 else 0
-		entities.append({"type": "colonist", "z": floori(feet.z), "rect": Rect2(centre - Vector2.ONE * sprite_size * 0.5, Vector2.ONE * sprite_size),
-			"texture": COLONIST_WALK_TEXTURE, "source": Rect2(frame * COLONIST_WALK_FRAME_SIZE, 0, COLONIST_WALK_FRAME_SIZE, COLONIST_WALK_FRAME_SIZE),
-			"id": colonist.id, "outline": metrics.scale / maxf(_cell_size(), 0.0001), "cargo": colonist.carried_amount > 0})
+		entities.append(
+			{
+				"type": "colonist",
+				"z": floori(feet.z),
+				"rect": Rect2(centre - Vector2.ONE * sprite_size * 0.5, Vector2.ONE * sprite_size),
+				"texture": COLONIST_WALK_TEXTURE,
+				"source":
+				Rect2(
+					frame * COLONIST_WALK_FRAME_SIZE,
+					0,
+					COLONIST_WALK_FRAME_SIZE,
+					COLONIST_WALK_FRAME_SIZE
+				),
+				"id": colonist.id,
+				"outline": metrics.scale / maxf(_cell_size(), 0.0001),
+				"cargo": colonist.carried_amount > 0
+			}
+		)
 	return entities
 
 
@@ -1429,13 +1815,31 @@ func _draw_excavations(origin: Vector2, cell: float) -> void:
 				continue
 			var area := run.intersection(visible)
 			var rect := Rect2(origin + Vector2(area.position) * cell, Vector2(area.size) * cell)
-			MapPaint.hatch(self, rect, -origin, 6 * cell / ThemeTokens.number("tile"), MapPaint.translucent("map-plan", 0.24 if region.enabled else 0.12), metrics.scale)
+			MapPaint.hatch(
+				self,
+				rect,
+				-origin,
+				6 * cell / ThemeTokens.number("tile"),
+				MapPaint.translucent("map-plan", 0.24 if region.enabled else 0.12),
+				metrics.scale
+			)
 		for edge: PackedVector2Array in region.edges:
-			MapPaint.plan_edge(self, origin + edge[0] * cell, origin + edge[1] * cell, metrics.scale)
+			MapPaint.plan_edge(
+				self, origin + edge[0] * cell, origin + edge[1] * cell, metrics.scale
+			)
 		var anchor := origin + Vector2(region.anchor) * cell + Vector2.ONE * 4 * metrics.scale
 		var viewport := Rect2(Vector2.ZERO, size)
 		if MapLabelLod.work(cell, metrics.scale, _region_focused(region)):
-			MapPaint.plate(self, anchor, region.status, "", metrics.scale, true, region.plate_cache, viewport if viewport.has_point(anchor) else Rect2())
+			MapPaint.plate(
+				self,
+				anchor,
+				region.status,
+				"",
+				metrics.scale,
+				true,
+				region.plate_cache,
+				viewport if viewport.has_point(anchor) else Rect2()
+			)
 
 
 func _cache_excavations() -> void:
@@ -1455,9 +1859,19 @@ func _cache_excavations() -> void:
 					footprints.append({"kind": 0, "z": surface.z, "rect": Rect2i(x, y, 1, 1)})
 		for region: Dictionary in MapRegions.build(footprints):
 			region["enabled"] = designation.enabled
-			region["status"] = "EXCAVATION #%d · %s · %d/%d done" % [designation.id,
-				str(PRIORITY_NAMES.get(designation.priority, "Unknown")).to_upper() if designation.enabled else "PAUSED",
-				designation.completed_cells, designation.total_cells]
+			region["status"] = (
+				"EXCAVATION #%d · %s · %d/%d done"
+				% [
+					designation.id,
+					(
+						str(PRIORITY_NAMES.get(designation.priority, "Unknown")).to_upper()
+						if designation.enabled
+						else "PAUSED"
+					),
+					designation.completed_cells,
+					designation.total_cells
+				]
+			)
 			region["plate_cache"] = {}
 			_excavation_regions.append(region)
 
@@ -1483,7 +1897,9 @@ func _draw_actor_overlays(origin: Vector2, cell: float) -> void:
 		if layered:
 			for entity: Dictionary in entity_descriptors():
 				if entity.type == "colonist" and entity.id == selected_colonist_id:
-					_draw_actor_ring(origin + entity.rect.get_center() * cell, entity.rect.size.x * cell * 0.6)
+					_draw_actor_ring(
+						origin + entity.rect.get_center() * cell, entity.rect.size.x * cell * 0.6
+					)
 					_selected_actor_centre = origin + entity.rect.get_center() * cell
 		else:
 			for descriptor: Dictionary in _legacy_colonist_descriptors(origin, cell):
@@ -1492,9 +1908,21 @@ func _draw_actor_overlays(origin: Vector2, cell: float) -> void:
 					_selected_actor_centre = descriptor.rect.get_center()
 	for pin: Dictionary in _alert_pins:
 		var position: Vector3i = pin.cell
-		if layered and not terrain_model.entity_visible({"x": position.x, "y": position.y, "z": position.z}):
+		if (
+			layered
+			and not terrain_model.entity_visible(
+				{"x": position.x, "y": position.y, "z": position.z}
+			)
+		):
 			continue
-		var rect := Rect2(origin + Vector2(position.x + 0.5, position.y + 0.5) * cell - Vector2.ONE * 10 * metrics.scale, Vector2.ONE * 20 * metrics.scale)
+		var rect := Rect2(
+			(
+				origin
+				+ Vector2(position.x + 0.5, position.y + 0.5) * cell
+				- Vector2.ONE * 10 * metrics.scale
+			),
+			Vector2.ONE * 20 * metrics.scale
+		)
 		if not rect.intersects(Rect2(Vector2.ZERO, size)):
 			continue
 		draw_rect(rect, ThemeTokens.color("map-paper"))
@@ -1512,17 +1940,29 @@ func colonist_intent(colonist: ContinuumColonist) -> String:
 	if colonist.goal == null or colonist.goal.value == ContinuumGoal.Options.nothing:
 		return "No current goal"
 	var goal := ContinuumGoal.parse_enum_name(colonist.goal.value).capitalize()
-	return "%s · destination (%d, %d, %d)" % [goal, colonist.target_x, colonist.target_y, colonist.target_z]
+	return (
+		"%s · destination (%d, %d, %d)"
+		% [goal, colonist.target_x, colonist.target_y, colonist.target_z]
+	)
 
 
 ## A target marker obeys the same full-body exposure contract as the actor.
 func destination_visible(colonist: ContinuumColonist) -> bool:
-	if not has_world_snapshot() or colonist.goal == null or colonist.goal.value == ContinuumGoal.Options.nothing:
+	if (
+		not has_world_snapshot()
+		or colonist.goal == null
+		or colonist.goal.value == ContinuumGoal.Options.nothing
+	):
 		return false
 	var xy := Vector2i(colonist.target_x, colonist.target_y)
 	if not visible_grid_rect().has_point(xy):
 		return false
-	return not layered or terrain_model.position_visible(Vector3(xy.x, xy.y, colonist.target_z), colonist.body_width, colonist.body_depth)
+	return (
+		not layered
+		or terrain_model.position_visible(
+			Vector3(xy.x, xy.y, colonist.target_z), colonist.body_width, colonist.body_depth
+		)
+	)
 
 
 func _draw_actor_intent(centre: Vector2, cell: float) -> void:
@@ -1537,13 +1977,47 @@ func _draw_actor_intent(centre: Vector2, cell: float) -> void:
 		if target == Vector3i(colonist.x, colonist.y, colonist.z):
 			text += " · at destination"
 		elif destination_visible(colonist):
-			var rect := Rect2(world_to_screen(Vector2(target.x, target.y)), Vector2.ONE * cell).grow(-2 * metrics.scale)
+			var rect := (
+				Rect2(world_to_screen(Vector2(target.x, target.y)), Vector2.ONE * cell)
+				. grow(-2 * metrics.scale)
+			)
 			MapPaint.destination(self, rect, metrics.scale)
-			MapPaint.plate(self, rect.position - Vector2(0, 26) * metrics.scale, "DESTINATION", "", metrics.scale, false, _destination_plate_cache, Rect2(Vector2.ZERO, size))
+			MapPaint.plate(
+				self,
+				rect.position - Vector2(0, 26) * metrics.scale,
+				"DESTINATION",
+				"",
+				metrics.scale,
+				false,
+				_destination_plate_cache,
+				Rect2(Vector2.ZERO, size)
+			)
 		else:
 			text += " · outside view"
-	var activity := ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize() if colonist.activity != null else ""
+	var activity := (
+		ContinuumActivity.parse_enum_name(colonist.activity.value).capitalize()
+		if colonist.activity != null
+		else ""
+	)
 	var at := centre + Vector2(cell * 0.6, -cell * 0.6)
 	at.y = minf(at.y, size.y - 56 * metrics.scale)
-	var header := MapPaint.plate(self, at, colonist.name + " · " + activity, "", metrics.scale, false, _actor_name_cache, Rect2(Vector2.ZERO, size))
-	MapPaint.plate(self, header.position + Vector2(0, header.size.y), "", text, metrics.scale, false, _actor_plate_cache, Rect2(Vector2.ZERO, size))
+	var header := MapPaint.plate(
+		self,
+		at,
+		colonist.name + " · " + activity,
+		"",
+		metrics.scale,
+		false,
+		_actor_name_cache,
+		Rect2(Vector2.ZERO, size)
+	)
+	MapPaint.plate(
+		self,
+		header.position + Vector2(0, header.size.y),
+		"",
+		text,
+		metrics.scale,
+		false,
+		_actor_plate_cache,
+		Rect2(Vector2.ZERO, size)
+	)
