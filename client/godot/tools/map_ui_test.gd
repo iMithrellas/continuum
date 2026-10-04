@@ -12,6 +12,7 @@ var selected_rects: Array[Rect2i] = []
 var reducer_calls: Array = []
 var isolated_path := ""
 var failed := false
+var assertions := 0
 
 
 func _ready() -> void:
@@ -37,7 +38,7 @@ func _ready() -> void:
 	await _test_controller_surface()
 	if failed:
 		return
-	print("MAP_UI_PASS")
+	print("MAP_UI_PASS ", assertions, " assertions")
 	get_tree().quit(0)
 
 
@@ -129,6 +130,9 @@ func _test_controller_surface() -> void:
 	var main := TestMainScene.instantiate()
 	get_tree().root.add_child.call_deferred(main)
 	await main.ready
+	# Exercise the ordinary-player authorization catalog even under developer CLI.
+	main._profile = "normal"
+	main._set_permissions("Unknown", false, false)
 	isolated_path = main.fixture_workspace_path
 	main.apply_font_size(10, false)
 	_assert(
@@ -150,8 +154,8 @@ func _test_controller_surface() -> void:
 			and main._settings.ui_scale_percent == 150
 			and main.get_window().content_scale_factor == 1.5
 			and main._feed.custom_minimum_size.y == 70
-			and main._history_chart.custom_minimum_size.y == 190
-			and main._clock_group.custom_minimum_size.y == 44
+			and main._history_chart.custom_minimum_size.y == 108
+			and main.workspace.windows.status.size.y == 30
 			and main._haul_button.get_theme_font_size("font_size") == 13
 			and (
 				main._connection_label.get_theme_font_size("font_size")
@@ -165,7 +169,7 @@ func _test_controller_surface() -> void:
 		is_equal_approx(
 			_label_baseline(main._clock) - main._clock_group.global_position.y, clock_baseline
 		),
-		"clock baseline inside the padded time group remains stable at 150 percent"
+		"clock baseline inside the status micro remains stable at 150 percent"
 	)
 	main.apply_font_size(13, false)
 	_assert(
@@ -234,33 +238,62 @@ func _test_controller_surface() -> void:
 func _test_header_geometry(main: Control) -> void:
 	for frame in 8:
 		await get_tree().process_frame
-	var status: Rect2 = main.workspace._rows[0].get_global_rect()
+	var status: Rect2 = main.workspace.windows.status.get_global_rect()
 	var clock: Rect2 = main._clock_group.get_global_rect()
 	_assert(
-		clock.size.y == 44 and status.encloses(clock),
 		(
-			"44px time group fits the actual status viewport: clock=%s status=%s scale=%.2f"
-			% [clock, status, main.get_window().content_scale_factor]
-		)
+			not main.workspace.header.visible
+			and main.workspace.area.position == Vector2.ZERO
+			and main.workspace.area.size == main.size
+			and main.map.get_global_rect() == main.workspace.area.get_global_rect()
+		),
+		"Atlas map owns the full logical viewport without a global header"
+	)
+	_assert(
+		(
+			status.size.y == 30
+			and status.encloses(clock)
+			and (
+				absf(status.get_center().x - main.workspace.area.get_global_rect().get_center().x)
+				<= 1
+			)
+		),
+		"30px status micro is centered on the viewport independently of other panels"
 	)
 	for label: Label in [main._clock, main._population]:
+		if not label.is_visible_in_tree():
+			continue
 		_assert(
 			(
 				clock.encloses(label.get_global_rect())
 				and label.get_combined_minimum_size().x <= label.size.x
 			),
-			"clock and crew text fit their content-sized surface without clipping"
-		)
-		_assert(
-			(
-				label.global_position.x >= clock.position.x + 8
-				and label.get_global_rect().end.x <= clock.end.x - 8
-			),
-			"time-group text keeps real 8px horizontal insets"
+			"clock and crew text fit their content-sized micro without clipping"
 		)
 	_assert(
-		main._clock.get_global_rect().end.y <= main._population.global_position.y,
-		"primary clock and secondary crew occupy distinct lines"
+		(
+			not main._clock.text.contains("\n")
+			and not main._population.text.contains("\n")
+			and (
+				not main._population.is_visible_in_tree()
+				or absf(_label_baseline(main._clock) - _label_baseline(main._population)) <= 1
+			)
+		),
+		"clock and crew occupy one micro line"
+	)
+	var resource_state: Dictionary = main.workspace.state("resources")
+	var was_open: bool = resource_state.open
+	var was_minimized: bool = resource_state.minimized
+	resource_state.open = true
+	resource_state.minimized = false
+	main.workspace.focus_panel("resources")
+	main.workspace._apply_layout()
+	for frame in 8:
+		await get_tree().process_frame
+	var resources: Rect2 = main.workspace.windows.resources.get_global_rect()
+	_assert(main.workspace.windows.resources.visible, "independent Resources panel opens")
+	_assert(
+		main.workspace.area.get_global_rect().encloses(resources), "Resources stays within viewport"
 	)
 	var previous_card := Rect2()
 	var previous_baseline := 0.0
@@ -268,18 +301,13 @@ func _test_header_geometry(main: Control) -> void:
 		var bounds := card.get_global_rect()
 		_assert(
 			(
-				card.get_combined_minimum_size().y == 44
-				and bounds.size.y == 44
-				and status.encloses(bounds)
+				main._resource_group.get_global_rect().encloses(bounds)
+				and card.get_parent() == main._resource_group
+				and bounds.position.x >= resources.position.x
+				and bounds.end.x <= resources.end.x
+				and main.workspace.windows.resources.scroll.clip_contents
 			),
-			"calm resource cards keep a bounded 44px logical height inside the status viewport"
-		)
-		_assert(
-			(
-				not bounds.intersects(clock)
-				and not bounds.intersects(main._session_group.get_global_rect())
-			),
-			"resource cards cannot overlap time or session metadata"
+			"resource readouts fit independent panel width; vertical overflow is scroll-clipped"
 		)
 		for label: Label in card.find_children("*", "Label", true, false):
 			_assert(
@@ -289,20 +317,23 @@ func _test_header_geometry(main: Control) -> void:
 				),
 				"resource names, values and secondary text fit their card"
 			)
-		var value: Label = card.get_child(0).get_child(0).get_child(-1)
+		var value: Label = card.find_child("ResourceValue", true, false)
+		_assert(
+			value != null, "resource value has a semantic label rather than a child-index contract"
+		)
 		var baseline := _label_baseline(value)
 		if previous_card.has_area():
 			_assert(not previous_card.intersects(bounds), "adjacent resource cards never overlap")
 			if previous_card.position.y == bounds.position.y:
 				_assert(
-					(
-						bounds.position.x - previous_card.end.x >= 4
-						and absf(baseline - previous_baseline) <= 1
-					),
-					"resource values share a stable row baseline with a visible inter-card gutter"
+					absf(baseline - previous_baseline) <= 1,
+					"resource values share a stable row baseline"
 				)
 		previous_card = bounds
 		previous_baseline = baseline
+	resource_state.open = was_open
+	resource_state.minimized = was_minimized
+	main.workspace._apply_layout()
 
 
 func _label_baseline(label: Label) -> float:
@@ -317,9 +348,13 @@ func _label_baseline(label: Label) -> float:
 
 func _test_workspace_surface(main: Control) -> void:
 	_assert(
-		main._sections.size() == 11 and main.workspace.windows.size() == 11,
-		"workspace manager exposes eleven extensible panels"
+		main._sections.size() == 15 and main.workspace.windows.size() == 15,
+		"Atlas catalog exposes fifteen extensible panels"
 	)
+	var authorized_count := 0
+	for allowed: bool in main.workspace.authorized.values():
+		authorized_count += int(allowed)
+	_assert(authorized_count == 13, "normal Operator has thirteen authorized Atlas panels")
 	_assert(
 		main.workspace.model.workspaces.size() == 4 and main.workspace.model.active == "daily",
 		"workspace manager starts on the daily built-in layout"
@@ -412,28 +447,6 @@ func _test_workspace_surface(main: Control) -> void:
 		"production UI fits a phone viewport without a fixed-width sidebar"
 	)
 	await _test_header_geometry(main)
-	var utilities: Rect2 = main.workspace._utilities.get_global_rect()
-	var status: Rect2 = main.workspace._rows[0].get_global_rect()
-	var views: Rect2 = main.workspace._rows[1].get_global_rect()
-	_assert(
-		(
-			main.workspace.area.position.y == main.workspace.header.size.y
-			and main.workspace.header.size.y <= 202
-			and status.size.y <= 96
-		),
-		(
-			"narrow header has a bounded padded utility row, two status rows and view tabs (actual %.1f)"
-			% main.workspace.header.size.y
-		)
-	)
-	_assert(
-		(
-			utilities.end.y + 8 <= status.position.y
-			and status.end.y + 8 <= views.position.y
-			and views.end.y <= main.workspace.area.global_position.y
-		),
-		"stacked utilities, status and view tabs have real gutters and cannot overlap the map"
-	)
 	await _test_planning_header_geometry(main)
 	main.size = desktop_size
 	await get_tree().process_frame
@@ -450,53 +463,29 @@ func _test_workspace_surface(main: Control) -> void:
 	main.workspace._apply_layout()
 
 
-## Preserve the idle 202px budget. An armed tool adds exactly its measured row,
-## with real padding and usable map space; transient idle notices add no rows.
+## Atlas tool feedback does not reserve map rows; Escape still works from Cancel.
 func _test_planning_header_geometry(main: Control) -> void:
-	var quiet_height: float = main.workspace.header.size.y
+	var quiet_bounds: Rect2 = main.map.get_global_rect()
 	var row: HBoxContainer = main._intent_feedback.get_parent()
 	_assert(not row.visible, "Inspect mode has no empty or cancelled-tool status row")
 	main._set_mode(&"excavate")
 	for frame in 8:
 		await get_tree().process_frame
-	var expected_extra: float = (
-		row.size.y + main.workspace.status_content.get_theme_constant("separation")
-	)
 	_assert(
 		(
 			row.visible
-			and is_equal_approx(main.workspace.header.size.y, quiet_height + expected_extra)
+			and not main.workspace.header.visible
+			and main.map.get_global_rect() == quiet_bounds
 		),
-		"active tool reserves exactly one measured status row, without inflating resource typography or padding"
-	)
-	var bounds := row.get_global_rect()
-	var telemetry: Rect2 = main.workspace.telemetry.get_global_rect()
-	var status: Rect2 = main.workspace._rows[0].get_global_rect()
-	var views: Rect2 = main.workspace._rows[1].get_global_rect()
-	_assert(
-		(
-			status.encloses(bounds)
-			and telemetry.end.y + 8 <= bounds.position.y
-			and bounds.end.y + 8 <= views.position.y
-		),
-		"active-tool status has distinct eight-pixel gutters below telemetry and above view navigation"
-	)
-	for child: Control in row.get_children():
-		_assert(
-			bounds.encloses(child.get_global_rect()),
-			"active-tool label and Cancel button fit the narrow status row"
-		)
-	_assert(
-		(
-			main.workspace.area.position.y == main.workspace.header.size.y
-			and main.workspace.area.size.y >= main.size.y * 0.7
-		),
-		"armed narrow header preserves at least seventy percent of the tall viewport for map/panels"
+		"armed tool keeps feedback populated without shrinking the Atlas map"
 	)
 	await _test_header_geometry(main)
 	var menu_was_visible: bool = main._menu.visible
 	main._menu.hide()
-	row.get_child(1).grab_focus()
+	main.workspace.state("construction").open = true
+	main.workspace.focus_panel("construction")
+	main.workspace._apply_layout()
+	main._construction_panel.activate.grab_focus()
 	var escape := InputEventKey.new()
 	escape.keycode = KEY_ESCAPE
 	escape.pressed = true
@@ -505,7 +494,7 @@ func _test_planning_header_geometry(main: Control) -> void:
 		await get_tree().process_frame
 	_assert(
 		main._planning_system == &"",
-		"native Escape from the focused header Cancel action disarms the map tool"
+		"native Escape from the focused planning action disarms the map tool"
 	)
 	escape = escape.duplicate()
 	escape.pressed = false
@@ -520,9 +509,9 @@ func _test_planning_header_geometry(main: Control) -> void:
 		(
 			not row.visible
 			and main.map.interaction_mode == &"select"
-			and is_equal_approx(main.workspace.header.size.y, quiet_height)
+			and main.map.get_global_rect() == quiet_bounds
 		),
-		"cancel and subsequent idle outcome feedback restore the original header budget exactly"
+		"cancel and subsequent idle outcome feedback preserve the full map viewport"
 	)
 	_assert(
 		(
@@ -646,6 +635,7 @@ func _key(keycode: Key) -> InputEventKey:
 
 
 func _assert(condition: bool, message: String) -> void:
+	assertions += 1
 	if not condition:
 		_fail(message)
 

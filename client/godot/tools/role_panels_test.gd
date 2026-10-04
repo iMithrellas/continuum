@@ -2,9 +2,11 @@
 extends Node
 
 var failed := false
+var assertions := 0
 
 
 func check(condition: bool, message: String) -> void:
+	assertions += 1
 	if not condition:
 		failed = true
 		push_error("ROLE_PANELS_FAIL: " + message)
@@ -60,8 +62,24 @@ func _ready() -> void:
 	)
 	for profile: String in ["normal", "admin", "developer"]:
 		main._profile = profile
+		main._authenticated_identity = "0123456789abcdef0123456789abcdef"
 		for role: String in ["unknown", "viewer", "operator", "admin"]:
 			main._set_permissions(role, role in ["operator", "admin"], role == "admin")
+			check(
+				(
+					main._identity_label.text.contains("Identity: 01234567")
+					and not main._identity_label.text.contains(main._authenticated_identity)
+					and main._identity_label.tooltip_text.contains(
+						"Verified server role: " + role.capitalize()
+					)
+					and main._identity_label.tooltip_text.contains(main._authenticated_identity)
+					and (
+						main._identity_label.get_parent()
+						== main.workspace.windows.session.micro_content
+					)
+				),
+				"independent Session micro shows truthful role and identity prefix with full tooltip"
+			)
 			check(
 				main.workspace.authorized.admin == (role == "admin"),
 				"admin access follows verified role independently of profile"
@@ -77,8 +95,14 @@ func _ready() -> void:
 			if role == "viewer":
 				check(
 					(
-						main._identity_label.text.begins_with("Read-only")
+						(
+							main._identity_label.text.begins_with("Read-only")
+							or main._identity_label.text.begins_with("Viewer")
+						)
 						and main._identity_label.tooltip_text.contains("Operator access")
+						and not main._can_operate
+						and main._construction_panel.activate.disabled
+						and main._zones_panel.activate.disabled
 					),
 					"viewer badge explains the read-only restriction and correct management role"
 				)
@@ -173,7 +197,7 @@ func _ready() -> void:
 	offline_client.free()
 	await get_tree().process_frame
 	if not failed:
-		print("ROLE_PANELS_PASS")
+		print("ROLE_PANELS_PASS ", assertions, " assertions")
 	get_tree().quit(1 if failed else 0)
 
 

@@ -517,26 +517,71 @@ func test_layout_migration() -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	file.store_string(
 		JSON.stringify(
-			{"version": 3, "active": "build", "workspaces": saved, "show_panel_headers": false}
+			{"version": 3, "active": "build", "workspaces": saved, "show_panel_headers": false},
+			"",
+			true,
+			true
 		)
 	)
 	file.close()
 	check(model.load_from(path), "legacy workspace loads")
 	check(
-		(
-			model.workspaces.build.panels.operations == saved.build.panels.operations
-			and not model.show_panel_headers
-		),
-		"Zones preserves old Build & work orders geometry flags z and headers"
+		not model.show_panel_headers and model.active == "build",
+		"headers and active preset survive"
 	)
 	check(
 		not model.workspaces.build.panels.construction.open,
 		"new Construction panel does not cover a migrated arrangement"
 	)
 	for id in saved:
+		check(model.workspaces.has(id), "saved workspace retained: " + id)
+		check(model.workspaces[id].name == saved[id].name, "saved workspace name retained: " + id)
+		check(
+			not model.workspaces[id].panels.construction.open,
+			"new Construction stays closed: " + id
+		)
 		for panel in saved[id].panels:
 			check(
-				model.workspaces[id].panels[panel] == saved[id].panels[panel],
-				"all other saved panel state survives: " + id + "/" + panel
+				model.workspaces[id].panels.has(panel), "saved panel retained: " + id + "/" + panel
+			)
+			check_migrated_panel(
+				model.workspaces[id].panels[panel], saved[id].panels[panel], id + "/" + panel
 			)
 	DirAccess.remove_absolute(path)
+
+
+func check_migrated_panel(actual: Dictionary, expected: Dictionary, context: String) -> void:
+	check(actual.keys().size() == expected.keys().size(), context + " retains all fields")
+	check(actual.rect.size() == 4, context + " retains four normalized coordinates")
+	for index in 4:
+		check(
+			(
+				(actual.rect[index] is float or actual.rect[index] is int)
+				and absf(float(actual.rect[index]) - float(expected.rect[index])) <= 0.00001
+			),
+			context + " normalized rect coordinate " + str(index)
+		)
+	for flag in ["open", "minimized", "pinned"]:
+		check(actual[flag] is bool and actual[flag] == expected[flag], context + " exact " + flag)
+	check(actual.z is int and actual.z == expected.z, context + " exact integer z")
+	check(actual.has("design") == expected.has("design"), context + " retains design presence")
+	if expected.has("design"):
+		check(
+			actual.design.keys().size() == expected.design.keys().size(), context + " design fields"
+		)
+		for anchor in ["x", "y"]:
+			check(
+				actual.design[anchor] == expected.design[anchor],
+				context + " exact anchor " + anchor
+			)
+		for number in ["dx", "dy", "width", "height"]:
+			check(
+				(
+					(actual.design[number] is float or actual.design[number] is int)
+					and (
+						absf(float(actual.design[number]) - float(expected.design[number]))
+						<= 0.00001
+					)
+				),
+				context + " design numeric " + number
+			)
