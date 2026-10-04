@@ -232,3 +232,8 @@ test-native:
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/session_handoff_test.tscn
     {{ quote(godot) }} --headless --path client/godot --scene res://tools/native_ready_handoff_test.tscn
     scripts/internal/test-native-server-windows
+    GODOT={{ quote(godot) }} python3 scripts/internal/test-managed-servers.py
+
+# Multi-server UI lifecycle with fake managers and disposable file/lock checks.
+test-managed-servers:
+    GODOT={{ quote(godot) }} python3 scripts/internal/test-managed-servers.py

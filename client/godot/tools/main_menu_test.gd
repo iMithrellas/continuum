@@ -260,16 +260,35 @@ func _test_sdk_menu_route() -> void:
 	var host := "http://127.0.0.1:%d/" % server.get_local_port()
 	main.configure_connection(host, "Menu-Colony", ContinuumClientProfile.NORMAL, true)
 	var accepted := false
+	var validated := false
+	var authentication: StreamPeerTCP
+	var authentication_headers := ""
 	for _frame in 240:
 		if not accepted and server.is_connection_available():
-			_assert(peer.accept_stream(server.take_connection()) == OK, "private WebSocket handshake accepts SDK")
-			accepted = true
+			if not validated:
+				authentication = server.take_connection()
+			else:
+				_assert(peer.accept_stream(server.take_connection()) == OK, "private WebSocket handshake accepts SDK")
+				accepted = true
+		if authentication != null:
+			authentication.poll()
+			if authentication.get_available_bytes() > 0:
+				authentication_headers += authentication.get_utf8_string(authentication.get_available_bytes())
+			if authentication_headers.contains("\r\n\r\n"):
+				_assert(authentication_headers.begins_with("POST /v1/identity/websocket-token HTTP/1.1\r\n") and authentication_headers.contains("Authorization: Bearer private-menu-fixture-token\r\n"), "real SDK validates its cached identity before opening a WebSocket")
+				var body := '{"token":"short-lived-menu-fixture-token"}'
+				var response := "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s" % [body.to_utf8_buffer().size(), body]
+				_assert(authentication.put_data(response.to_utf8_buffer()) == OK, "private authentication response is sent")
+				authentication.disconnect_from_host()
+				authentication = null
+				validated = true
 		if accepted:
 			peer.poll()
 		await get_tree().process_frame
 		if client.is_connected_db():
 			break
-	_assert(client.is_connected_db(), "actual SDK transport becomes live")
+	_assert(validated and client.is_connected_db(), "actual SDK transport becomes live after credential validation")
+	_assert(client.get_token() == "private-menu-fixture-token", "actual SDK retains its durable identity, not the short-lived validation token")
 	_assert(client.base_url == host.trim_suffix("/") and client.database_name == "menu-colony", "SDK strips one trailing slash and lowercases database, retaining HTTP client base_url")
 	_assert(client._connection._target_url.begins_with("ws://127.0.0.1:%d/v1/database/menu-colony/subscribe?" % server.get_local_port()), "SDK converts only the transport URL to WebSocket")
 	if not client.is_connected_db():

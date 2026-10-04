@@ -159,9 +159,19 @@ var _server_history: ContinuumConnectionHistory
 var _server_probes: ContinuumServerProbes
 var _server_management: ContinuumServerManagement
 var _native_controller: ContinuumNativeServerController
+var _native_catalog: ContinuumNativeServerCatalog
+var _native_controllers: Dictionary = {}
+var _native_states: Dictionary = {}
+var _native_autostarts: Dictionary = {}
+var _native_deleting: Dictionary = {}
+var _native_updating: Dictionary = {}
+var _retiring_native_controllers: Array[ContinuumNativeServerController] = []
+var _native_server_id := "default"
 var _native_join_epoch := -1
 var _native_join_generation := -1
 var _native_force_dialog: ConfirmationDialog
+var _native_delete_dialog: ConfirmationDialog
+var _native_update_dialog: ConfirmationDialog
 var _exit_requested := false
 var _layer_label: Label
 var _cell_label: Label
@@ -237,7 +247,7 @@ func _ready() -> void:
 	_server_management = ServerManagementControl.new()
 	_server_management.apply_metrics(_metrics)
 	_server_management.set_connection_defaults(_settings.server_host, _settings.database)
-	_server_management.set_native_autostart(_settings.native_autostart)
+	_server_management.set_native_autostart(false)
 	_server_management.set_history_store(_server_history)
 	_server_management.set_probe_service(_server_probes)
 	_server_management.set_local_management_state({"can_start": false, "can_stop": false, "can_force_stop": false,
@@ -271,6 +281,10 @@ func _ready() -> void:
 	_server_management.local_force_stop_requested.connect(_native_force_stop)
 	_server_management.local_refresh_requested.connect(_native_refresh)
 	_server_management.native_autostart_requested.connect(set_native_autostart)
+	_server_management.local_server_selected.connect(_select_native_server)
+	_server_management.local_create_requested.connect(_create_native_server)
+	_server_management.local_delete_requested.connect(_native_delete)
+	_server_management.local_module_update_requested.connect(_native_update_module)
 	_menu.exit_requested.connect(_request_exit)
 	_menu.visibility_changed.connect(_sync_menu_input)
 	_server_management.visibility_changed.connect(_sync_menu_input)
@@ -338,12 +352,82 @@ func _ready() -> void:
 
 
 func _setup_native_controller() -> void:
-	_native_controller = NativeServerController.new()
-	_native_controller.state_changed.connect(_on_native_state, CONNECT_DEFERRED)
-	_native_controller.server_ready.connect(_on_native_ready.bind(_native_controller.get_instance_id()), CONNECT_DEFERRED)
-	add_child(_native_controller)
-	_native_controller.autostart_changed.connect(_on_native_autostart_changed)
-	_native_controller.request_autostart_status()
+	_native_catalog = ContinuumNativeServerCatalog.new()
+	if _native_catalog.load_from() != OK:
+		_server_management.set_status("Could not read the managed server list. Local servers were not changed; you can still join manually.", true)
+		return
+	for entry in _native_catalog.entries(): _add_native_controller(entry)
+	if not _native_catalog.entry("default").is_empty(): _select_native_server("default")
+	elif not _native_catalog.entries().is_empty(): _select_native_server(str(_native_catalog.entries()[0].id))
+	else: _refresh_native_browser()
+
+func _make_native_controller(entry: Dictionary) -> ContinuumNativeServerController:
+	var controller := NativeServerController.new()
+	controller.manager_factory = func() -> ContinuumNativeServerManager:
+		var manager := ContinuumNativeServerManager.new()
+		manager.configure_instance(str(entry.id), int(entry.port))
+		return manager
+	return controller
+
+func _add_native_controller(entry: Dictionary) -> void:
+	var id := str(entry.id)
+	var controller := _make_native_controller(entry)
+	_native_controllers[id] = controller
+	controller.state_changed.connect(_on_native_instance_state.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
+	controller.server_ready.connect(_on_native_ready.bind(controller.get_instance_id()), CONNECT_DEFERRED)
+	controller.autostart_changed.connect(_on_native_instance_autostart.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
+	controller.deletion_finished.connect(_on_native_deleted.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
+	controller.module_update_finished.connect(_on_native_module_updated.bind(id, controller.get_instance_id()), CONNECT_DEFERRED)
+	add_child(controller)
+	controller.request_autostart_status()
+
+func _select_native_server(id: String) -> void:
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]): return
+	_invalidate_native_join()
+	_native_server_id = id
+	_native_controller = _native_controllers[id]
+	_refresh_native_browser()
+
+func _create_native_server(display_name: String) -> void:
+	if _closing or _exit_requested or _manual_connection_busy() or _server_management._native_busy: return
+	var result := _native_catalog.create(display_name)
+	if not result.get("ok", false):
+		_server_management.set_status(str(result.error), true)
+		return
+	_add_native_controller(result.entry)
+	_select_native_server(str(result.entry.id))
+	_server_management._local_name.clear()
+	_server_management.set_status("Created %s. Start it to prepare a new colony." % str(result.entry.name))
+
+func _on_native_instance_state(value: String, message: String, id: String, source_id: int) -> void:
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	_native_states[id] = {"state": value, "message": message}
+	_refresh_native_browser()
+
+func _on_native_instance_autostart(enabled: bool, error: String, id: String, source_id: int) -> void:
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	if error.is_empty(): _native_autostarts[id] = enabled
+	if id == _native_server_id: _on_native_autostart_changed(enabled, error)
+
+func _refresh_native_browser() -> void:
+	var servers := _native_catalog.entries()
+	for server in servers:
+		server["state"] = _native_states.get(server.id, {}).get("state", "checking")
+	_server_management.set_managed_servers(servers, _native_server_id)
+	_server_management.set_native_autostart(bool(_native_autostarts.get(_native_server_id, false)))
+	var selected: Dictionary = _native_states.get(_native_server_id, {"state": "checking", "message": "Checking native server..."})
+	if not is_instance_valid(_native_controller):
+		selected = {"state": "unknown", "message": "Create a local server to start a new colony."}
+	_on_native_state(str(selected.state), str(selected.message))
+
+func _all_native_controllers() -> Array[ContinuumNativeServerController]:
+	var controllers: Array[ContinuumNativeServerController] = []
+	for controller in _native_controllers.values():
+		if is_instance_valid(controller): controllers.append(controller)
+	for controller in _retiring_native_controllers:
+		if is_instance_valid(controller): controllers.append(controller)
+	if is_instance_valid(_native_controller) and not controllers.has(_native_controller): controllers.append(_native_controller)
+	return controllers
 
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
@@ -384,11 +468,12 @@ func _on_native_autostart_changed(enabled: bool, error: String) -> void:
 		_server_management.set_status(error, true)
 	else:
 		_settings.native_autostart = enabled
-		_settings.save_to()
-	_server_management.set_native_autostart(_settings.native_autostart)
+		_native_autostarts[_native_server_id] = enabled
+	_server_management.set_native_autostart(bool(_native_autostarts.get(_native_server_id, false)))
 
 func _native_start() -> void:
 	if _native_controller == null or _closing or _exit_requested: return
+	if _native_updating.has(_native_server_id) or _native_deleting.has(_native_server_id): return
 	if _session_requested and _direct_launch and not _state_ready:
 		leave_session()
 		_show_server_management()
@@ -397,6 +482,9 @@ func _native_start() -> void:
 	_server_management.set_status("")
 	_native_join_epoch = _native_controller.request_start()
 	_native_join_generation = _session_generation
+	var local_state := _server_management.local_management_state.duplicate(true)
+	local_state["startup_pending"] = _native_join_epoch >= 0
+	_server_management.set_local_management_state(local_state)
 	if _native_join_epoch < 0:
 		_invalidate_native_join()
 		_server_management.set_native_busy(false)
@@ -409,7 +497,7 @@ func _invalidate_native_join() -> void:
 
 func cancel_local_setup() -> void:
 	_invalidate_native_join()
-	if _session_requested and not _state_ready and _host == ContinuumNativeServerManager.DEFAULT_HOST:
+	if _session_requested and not _state_ready and _is_selected_native_session():
 		leave_session()
 	if _native_controller != null:
 		_native_controller.cancel_startup()
@@ -434,12 +522,11 @@ func _request_exit() -> void:
 	if SpacetimeDB.Continuum.is_connected_db():
 		SpacetimeDB.Continuum.disconnect_db()
 	_menu.set_status("Closing after the current atomic setup step finishes...")
-	if _native_controller != null:
-		_native_controller.request_shutdown()
+	for controller in _all_native_controllers(): controller.request_shutdown()
 
 func _native_stop() -> void:
 	_invalidate_native_join()
-	if _session_requested and _host == ContinuumNativeServerManager.DEFAULT_HOST:
+	if _session_requested and _is_selected_native_session():
 		leave_session()
 		_show_server_management()
 	if _native_controller != null: _native_controller.request_stop(false)
@@ -450,12 +537,139 @@ func _native_force_stop() -> void:
 		_native_force_dialog = ConfirmationDialog.new()
 		_native_force_dialog.title = "Force stop native server?"
 		_native_force_dialog.dialog_text = "The native server did not stop gracefully. Terminate both owned processes?"
-		_native_force_dialog.confirmed.connect(func() -> void: _native_controller.request_stop(true))
 		add_child(_native_force_dialog)
+	# Capture the exact target. Changing selection while a dialog is open must
+	# never force-stop a different server.
+	for connection in _native_force_dialog.confirmed.get_connections(): _native_force_dialog.confirmed.disconnect(connection.callable)
+	var source_id := _native_controller.get_instance_id()
+	_native_force_dialog.confirmed.connect(func() -> void:
+		var target = instance_from_id(source_id)
+		if is_instance_valid(target) and target.cached_state() == "stop_timeout": target.request_stop(true))
 	_native_force_dialog.popup_centered()
 
+func _is_selected_native_session() -> bool:
+	if _native_catalog == null: return _host == ContinuumNativeServerManager.DEFAULT_HOST
+	var entry := _native_catalog.entry(_native_server_id)
+	return not entry.is_empty() and _matches_native_endpoint(_host, _database, int(entry.port))
+
+func _matches_native_endpoint(host: String, database: String, port: int) -> bool:
+	var parsed := ContinuumServerEndpoint.parse(host)
+	return not parsed.is_empty() and database.strip_edges().to_lower() == "continuum" and \
+		str(parsed.canonical) in ["http://127.0.0.1:%d" % port, "http://localhost:%d" % port, "ws://127.0.0.1:%d" % port, "ws://localhost:%d" % port]
+
+func _native_delete() -> void:
+	if not is_instance_valid(_native_controller) or _native_controller.cached_state() not in ["offline", "deleted"]: return
+	var entry := _native_catalog.entry(_native_server_id)
+	if entry.is_empty(): return
+	if _native_delete_dialog == null:
+		_native_delete_dialog = ConfirmationDialog.new()
+		_native_delete_dialog.title = "Permanently delete server?"
+		_native_delete_dialog.ok_button_text = "Delete permanently"
+		_native_delete_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		add_child(_native_delete_dialog)
+	for connection in _native_delete_dialog.confirmed.get_connections(): _native_delete_dialog.confirmed.disconnect(connection.callable)
+	var source_id := _native_controller.get_instance_id()
+	var id := _native_server_id
+	_native_delete_dialog.dialog_text = 'Delete "%s" at 127.0.0.1:%d?\n\nAll of this server’s colony data, configuration, and logs will be permanently removed. This cannot be undone. Other servers are not affected.' % [entry.name, int(entry.port)]
+	_native_delete_dialog.confirmed.connect(func() -> void:
+		var target = instance_from_id(source_id)
+		if not is_instance_valid(target) or not _native_controllers.has(id) or _native_controllers[id] != target or target.cached_state() not in ["offline", "deleted"] or _native_updating.has(id): return
+		_native_deleting[id] = true
+		if id == _native_server_id:
+			_invalidate_native_join()
+			_server_management.set_native_busy(true)
+			_server_management.set_status("Deleting %s..." % str(entry.name))
+		target.request_delete())
+	_popup_native_confirmation(_native_delete_dialog)
+
+func _native_update_module() -> void:
+	if _closing or _exit_requested or not is_instance_valid(_native_controller) or _native_controller.cached_state() != "offline": return
+	var entry := _native_catalog.entry(_native_server_id)
+	if entry.is_empty(): return
+	if _native_update_dialog == null:
+		_native_update_dialog = ConfirmationDialog.new()
+		_native_update_dialog.title = "Update server module?"
+		_native_update_dialog.ok_button_text = "Prepare update"
+		_native_update_dialog.get_label().autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		add_child(_native_update_dialog)
+	for connection in _native_update_dialog.confirmed.get_connections(): _native_update_dialog.confirmed.disconnect(connection.callable)
+	var source_id := _native_controller.get_instance_id()
+	var id := _native_server_id
+	_native_update_dialog.dialog_text = 'Prepare the current module for "%s"?\n\nYour colony data is kept. Publication refuses any schema change that requires deleting data. Other servers keep their existing modules.\n\nThe server stays stopped until you choose Start local server to publish the update.' % entry.name
+	_native_update_dialog.confirmed.connect(func() -> void:
+		var target = instance_from_id(source_id)
+		if _closing or _exit_requested or not is_instance_valid(target) or not _native_controllers.has(id) or _native_controllers[id] != target or target.cached_state() != "offline" or _native_deleting.has(id) or _native_updating.has(id): return
+		_native_updating[id] = true
+		if not target.request_module_update():
+			_native_updating.erase(id)
+			_server_management.set_status("Module update could not be queued; refresh and retry.", true)
+		else:
+			_refresh_native_browser()
+			_server_management.set_status("Preparing the module update for %s..." % entry.name))
+	_popup_native_confirmation(_native_update_dialog)
+
+func _popup_native_confirmation(dialog: ConfirmationDialog) -> void:
+	var available_width := maxi(1, int(get_window().size.x / get_window().content_scale_factor) - 24)
+	dialog.get_label().custom_minimum_size.x = minf(_metrics.px(260), maxf(1, available_width - 32))
+	dialog.popup_centered(Vector2i(mini(_metrics.px(440), available_width), 0))
+
+func _on_native_module_updated(error: String, id: String, source_id: int) -> void:
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	_native_updating.erase(id)
+	_refresh_native_browser()
+	var entry := _native_catalog.entry(id)
+	_server_management.set_status(error if not error.is_empty() else "Module prepared for %s. Start this server to publish it without deleting colony data." % entry.get("name", id), not error.is_empty())
+	_native_controllers[id].request_autostart_status()
+
+func _on_native_deleted(error: String, id: String, source_id: int) -> void:
+	if not _native_controllers.has(id) or not is_instance_valid(_native_controllers[id]) or _native_controllers[id].get_instance_id() != source_id: return
+	_native_deleting.erase(id)
+	if not error.is_empty():
+		_refresh_native_browser()
+		_server_management.set_status(error, true)
+		return
+	var entry := _native_catalog.entry(id)
+	if _native_catalog.remove(id) != OK:
+		_refresh_native_browser()
+		_server_management.set_status("Server data was deleted, but its list entry could not be removed. Fix directory permissions and retry Delete.", true)
+		return
+	var controller: ContinuumNativeServerController = _native_controllers[id]
+	controller.request_shutdown()
+	_native_controllers.erase(id)
+	_native_states.erase(id)
+	_native_autostarts.erase(id)
+	_retiring_native_controllers.append(controller)
+	_retire_native_controller(controller)
+	# Saved connections are only browser metadata, never an authority to delete.
+	var history_error := false
+	for saved in _server_history.entries():
+		if _matches_native_endpoint(saved.endpoint, saved.database, int(entry.port)):
+			if saved.favorite and _server_history.remove_favorite(saved.key) != OK: history_error = true
+			if _server_history.remove_history(saved.key) != OK: history_error = true
+	if _matches_native_endpoint(_settings.server_host, _settings.database, int(entry.port)):
+		_settings.server_host = ""
+		_settings.database = ""
+		if _settings.save_to(_cli_option("--settings-file", ClientSettings.path_from_args())) != OK: history_error = true
+		_menu._refresh_last_button()
+	if id == _native_server_id:
+		_native_controller = null
+		_native_server_id = ""
+		var remaining := _native_catalog.entries()
+		if not remaining.is_empty(): _select_native_server(str(remaining[0].id))
+	_refresh_native_browser()
+	_server_management._refresh_history_list()
+	_server_management.set_status("Deleted %s and its colony data.%s" % [str(entry.name), " Could not clear all saved connection metadata; update connection settings or remove remaining history manually." if history_error else ""], history_error)
+
+func _retire_native_controller(controller: ContinuumNativeServerController) -> void:
+	while is_instance_valid(controller) and not controller.finish_shutdown():
+		await get_tree().process_frame
+	_retiring_native_controllers.erase(controller)
+	if is_instance_valid(controller): controller.queue_free()
+
 func _native_refresh() -> void:
-	if _native_controller != null: _native_controller.request_status()
+	if _native_controller != null:
+		_native_controller.request_status()
+		_native_controller.request_autostart_status()
 
 func _on_native_ready(value_host: String, value_database: String, epoch: int,
 		source_id: int) -> void:
@@ -474,21 +688,24 @@ func _on_native_ready(value_host: String, value_database: String, epoch: int,
 func _on_native_state(value: String, message: String) -> void:
 	if _exit_requested:
 		return
-	var can_start := value == "offline"
+	var can_start := value in ["offline", "online"]
 	var can_stop := value in ["online", "starting", "unhealthy"]
 	var can_force := value == "stop_timeout"
 	var display := "Native server: %s" % value
 	if message.is_empty():
 		match value:
-			"offline": message = "No managed native server was found. You can still join an existing server manually."
+			"offline": message = "This server is stopped. Starting it preserves its colony. Update module… prepares the current module if the client reports a schema mismatch. Deleting permanently removes colony data."
 			"conflict": message = "Native ownership does not match this configuration. Local start and stop are unavailable; you can still join manually."
 			"unhealthy": message = "The owned native server did not pass its health check."
 	if not message.is_empty(): display += " | " + message
-	_server_management.set_local_management_state({"can_start": can_start, "can_stop": can_stop,
-		"can_force_stop": can_force, "message": display})
-	_server_management.set_native_busy(value in ["installing", "preparing", "starting"])
+	_server_management.set_local_management_state({"state": value, "can_start": can_start, "can_stop": can_stop,
+		"can_force_stop": can_force, "can_delete": value in ["offline", "deleted"], "can_update": value == "offline", "startup_pending": _native_join_epoch >= 0, "module_update_pending": _native_updating.has(_native_server_id), "message": display})
+	var busy := not _native_deleting.is_empty() or not _native_updating.is_empty() or value in ["installing", "preparing", "starting", "deleting"]
+	for controller in _all_native_controllers():
+		if controller != _native_controller and controller.cached_state() in ["installing", "preparing", "starting", "deleting"]: busy = true
+	_server_management.set_native_busy(busy)
 	if not _session_requested:
-		_menu.set_busy(value in ["installing", "preparing", "starting"])
+		_menu.set_busy(busy)
 
 
 ## Menu-facing diagnostics API. Graph collection is subordinate to diagnostics.
@@ -559,7 +776,7 @@ func _replace_client_and_connect(generation: int) -> void:
 func _start_configured_client(client: ContinuumModuleClient, generation: int) -> void:
 	if not _client_epoch_current(client, generation):
 		return
-	client.token_save_path = ContinuumClientProfile.token_path(_profile, _host, _database)
+	ContinuumClientProfile.configure_credentials(client, _profile, _host, _database, _native_catalog)
 	client.handle_window_close = false
 	_access = _create_access(client)
 	_bind_access(_access, client, generation)
@@ -779,7 +996,10 @@ func _process(delta: float) -> void:
 	if _large_world != null:
 		_large_world.tick(delta)
 	if _exit_requested:
-		if _native_controller == null or _native_controller.finish_shutdown():
+		var finished := true
+		for controller in _all_native_controllers():
+			if not controller.finish_shutdown(): finished = false
+		if finished:
 			get_tree().quit()
 		return
 	_process_diagnostics()
@@ -872,8 +1092,7 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 	_subscription = SpacetimeDB.Continuum.subscribe(LargeWorldSession.bootstrap_queries(SpacetimeDB.Continuum.db, queries))
 	if _subscription.error != OK:
 		_set_connection_text("Subscription failed · %d" % _subscription.error, ThemeTokens.color("critical"))
-		if not _direct_launch:
-			_fail_manual_session("Subscription failed (%d)." % _subscription.error)
+		_fail_manual_session("Could not subscribe to colony state: %s." % error_string(_subscription.error), true)
 		return
 	_subscription.applied.connect(_on_subscription_applied.bind(_subscription, _session_generation))
 	_subscription.end.connect(_on_bootstrap_ended.bind(_subscription, _session_generation))
@@ -881,6 +1100,13 @@ func _on_connected(identity: PackedByteArray, _token: String) -> void:
 
 func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int) -> void:
 	if _subscription != subscription or not _session_epoch_current(generation):
+		return
+	if subscription.error != OK:
+		var message := "Server rejected the colony subscription: %s" % subscription.error_message
+		if subscription.error_message.contains("no such table"):
+			message = "The server module does not match this client: %s\n\nFor a managed local server, stop it, choose Update module…, then start it again. Updates never delete colony data. For a remote server, ask its owner to publish the matching module." % subscription.error_message
+		_set_connection_text(message, ThemeTokens.color("critical"))
+		_fail_manual_session(message, true)
 		return
 	_state_ready = false
 	_set_connection_text("World subscription ended; reconnect required.", ThemeTokens.color("critical"))
@@ -894,6 +1120,7 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 	_menu.set_busy(false)
 	_menu.set_status("World subscription failed or ended. You can retry.", true)
 	_server_management.set_busy(false)
+	_server_management.set_status("World subscription failed or ended. You can retry.", true)
 
 func _on_bootstrap_timeout(subscription: Variant, generation: int) -> void:
 	if subscription is WeakRef:
@@ -901,7 +1128,7 @@ func _on_bootstrap_timeout(subscription: Variant, generation: int) -> void:
 	if not is_instance_valid(subscription):
 		return
 	if _subscription == subscription and _session_epoch_current(generation) and not subscription.active:
-		_on_bootstrap_ended(subscription, generation)
+		_fail_manual_session("Timed out waiting for colony state. Check that the server module matches this client, then retry.", true)
 
 
 func _release_main_subscription() -> void:
@@ -976,7 +1203,9 @@ func _on_connection_error(code: int, reason: String) -> void:
 	_reset_diagnostics_samples()
 	_release_main_subscription()
 	_set_connection_text("Connection error · %d: %s" % [code, reason], ThemeTokens.color("critical"))
-	if _session_requested and _direct_launch:
+	if _session_requested and code in [401, 403]:
+		_fail_manual_session("Authentication failed (%d): %s" % [code, reason], true)
+	elif _session_requested and _direct_launch:
 		_server_management.set_status("Connection error %d: %s. Retrying in the background; you can join another server." % [code, reason], true)
 		_server_management.set_busy(false)
 		_menu.set_busy(_server_management._native_busy)
@@ -985,9 +1214,9 @@ func _on_connection_error(code: int, reason: String) -> void:
 		_fail_manual_session("Connection error %d: %s" % [code, reason])
 
 
-func _fail_manual_session(message: String) -> void:
+func _fail_manual_session(message: String, terminal := false) -> void:
 	_end_session_observations()
-	if not _session_requested or _direct_launch:
+	if not _session_requested or (_direct_launch and not terminal):
 		return
 	_session_requested = false
 	_session_generation += 1

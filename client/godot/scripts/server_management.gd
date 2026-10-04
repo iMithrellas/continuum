@@ -12,6 +12,10 @@ signal local_stop_requested
 signal local_force_stop_requested
 signal local_refresh_requested
 signal native_autostart_requested(enabled: bool)
+signal local_server_selected(server_id: String)
+signal local_create_requested(display_name: String)
+signal local_delete_requested
+signal local_module_update_requested
 signal world_selected(world_id: String, world_slug: String)
 
 const Endpoint = preload("res://scripts/server_endpoint.gd")
@@ -21,6 +25,8 @@ var history: ContinuumConnectionHistory
 var probes: ContinuumServerProbes
 var selected_key := ""
 var local_management_state: Dictionary = {}
+var selected_server_id := "default"
+var _managed_servers: Array[Dictionary] = []
 var _world_catalog: Array[Dictionary] = []
 var _search := ""
 var _host := ""
@@ -39,6 +45,12 @@ var _local_start: Button
 var _local_cancel: Button
 var _local_stop: Button
 var _local_force: Button
+var _local_delete: Button
+var _local_update: Button
+var _local_create: Button
+var _local_name: LineEdit
+var _managed_list: VBoxContainer
+var _managed_rows: Dictionary = {}
 var _native_autostart: CheckButton
 var _native_note: Label
 var _status: Label
@@ -99,6 +111,35 @@ func set_local_management_state(state: Dictionary) -> void:
 	if is_instance_valid(_local_start):
 		_update_local_controls()
 
+func set_managed_servers(servers: Array[Dictionary], selected_id: String) -> void:
+	var ids_changed := servers.size() != _managed_servers.size()
+	for index in mini(servers.size(), _managed_servers.size()):
+		if servers[index].id != _managed_servers[index].id: ids_changed = true
+	_managed_servers = servers.duplicate(true)
+	selected_server_id = selected_id
+	if is_instance_valid(_managed_list):
+		if ids_changed or _managed_rows.size() != servers.size(): _refresh_managed_list()
+		else: _update_managed_rows()
+
+func request_server_selection(server_id: String) -> void:
+	if _busy or _native_busy: return
+	for server in _managed_servers:
+		if server.id == server_id:
+			local_server_selected.emit(server_id)
+			return
+
+func request_local_create() -> void:
+	if not _busy and not _native_busy:
+		local_create_requested.emit(_local_name.text)
+
+func request_local_delete() -> void:
+	if not _busy and not _native_busy and bool(local_management_state.get("can_delete", false)):
+		local_delete_requested.emit()
+
+func request_local_module_update() -> void:
+	if not _busy and not _native_busy and bool(local_management_state.get("can_update", false)):
+		local_module_update_requested.emit()
+
 func set_native_autostart(enabled: bool) -> void:
 	_autostart_enabled = enabled
 	if is_instance_valid(_native_autostart):
@@ -119,10 +160,12 @@ func set_status(message: String, warning := false) -> void:
 			_reveal_status.call_deferred()
 
 func _reveal_status() -> void:
-	if is_instance_valid(_status) and _status.is_inside_tree():
+	if is_instance_valid(_status) and _status.is_inside_tree() and _status.visible:
 		var scroll := _status.find_parent("ServerContentScroll") as ScrollContainer
 		if scroll:
-			scroll.ensure_control_visible(_status)
+			# Status is first in the body. A long error can be taller than the
+			# viewport; reveal its beginning, not its last line.
+			scroll.scroll_vertical = 0
 
 func set_busy(busy: bool) -> void:
 	_busy = busy
@@ -142,10 +185,18 @@ func set_native_busy(busy: bool) -> void:
 
 func _update_local_controls() -> void:
 	_local_start.disabled = _busy or _native_busy or not bool(local_management_state.get("can_start", false))
+	_local_start.text = "Join local server" if local_management_state.get("state", "") == "online" else "Start local server"
 	_local_stop.disabled = not bool(local_management_state.get("can_stop", false))
 	_local_force.disabled = not bool(local_management_state.get("can_force_stop", false))
-	_local_cancel.visible = _native_busy
-	_native_autostart.disabled = _busy or _native_busy
+	var state := str(local_management_state.get("state", ""))
+	_local_cancel.visible = _native_busy and not bool(local_management_state.get("module_update_pending", false)) and (state in ["installing", "preparing", "starting"] or bool(local_management_state.get("startup_pending", state.is_empty())))
+	_native_autostart.disabled = _busy or _native_busy or local_management_state.get("state", "") in ["unknown", "checking", "unsupported", "conflict", "deleted"]
+	if is_instance_valid(_local_delete):
+		_local_delete.disabled = _busy or _native_busy or not bool(local_management_state.get("can_delete", false))
+		_local_update.disabled = _busy or _native_busy or not bool(local_management_state.get("can_update", false))
+		_local_create.disabled = _busy or _native_busy
+		_local_name.editable = not _busy and not _native_busy
+	_update_managed_rows()
 	_native_note.text = str(local_management_state.get("message", "Checking native server..."))
 
 func select_world(world_id: String, world_slug: String) -> void:
@@ -229,6 +280,7 @@ func _on_probe_finished(key: String, _result: Dictionary) -> void:
 	_update_probe_label(key)
 
 func _build_ui() -> void:
+	var draft_name := _local_name.text if is_instance_valid(_local_name) else ""
 	if is_instance_valid(_content):
 		remove_child(_content)
 		_content.queue_free()
@@ -264,9 +316,12 @@ func _build_ui() -> void:
 	_status_glyph.custom_minimum_size = Vector2(16, 16)
 	_status_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_status_glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	_status_glyph.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_status_glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_status_row.add_child(_status_glyph)
 	_status_tag = _label("Warning ·")
+	_status_tag.autowrap_mode = TextServer.AUTOWRAP_OFF
+	_status_tag.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	_status_tag.add_theme_color_override("font_color", ThemeTokens.color("warn"))
 	_status_row.add_child(_status_tag)
 	_status = _label("")
@@ -293,8 +348,23 @@ func _build_ui() -> void:
 	_join_button = _button("Join server", _join_server)
 	direct.add_child(_join_button)
 
-	var local := _section(_sections, "Local server")
-	local.add_child(_label("Run a persistent server on this computer. Starting it also joins the colony."))
+	var local := _section(_sections, "Managed local servers")
+	local.add_child(_label("Run independent, persistent servers on this computer. Select a server to start, join, stop, or delete it."))
+	_managed_list = VBoxContainer.new()
+	_managed_list.name = "ManagedServers"
+	local.add_child(_managed_list)
+	_refresh_managed_list()
+	_local_name = LineEdit.new()
+	_local_name.name = "NewServerName"
+	_local_name.placeholder_text = "New server name"
+	_local_name.max_length = 64
+	_local_name.text = draft_name
+	_local_name.custom_minimum_size.y = _metrics.px(34)
+	_local_name.text_submitted.connect(func(_text: String) -> void: request_local_create())
+	local.add_child(_local_name)
+	_local_create = _button("Create server", request_local_create)
+	local.add_child(_local_create)
+	local.add_child(_label("Selected server"))
 	var actions := HFlowContainer.new()
 	local.add_child(actions)
 	_local_start = _button("Start local server", request_local_start)
@@ -305,6 +375,12 @@ func _build_ui() -> void:
 	actions.add_child(_local_stop)
 	_local_force = _button("Force stop", request_local_force_stop)
 	actions.add_child(_local_force)
+	_local_update = _button("Update module…", request_local_module_update)
+	_local_update.tooltip_text = "Stop this server first. Prepare the current module, preserving all colony data. Start the server to publish compatible schema updates."
+	actions.add_child(_local_update)
+	_local_delete = _button("Delete server…", request_local_delete)
+	_local_delete.tooltip_text = "Permanently delete the selected server and its colony data. Stop it first."
+	actions.add_child(_local_delete)
 	actions.add_child(_button("Refresh", func() -> void: local_refresh_requested.emit()))
 	_native_autostart = CheckButton.new()
 	_native_autostart.text = "Start at login"
@@ -330,6 +406,37 @@ func _build_ui() -> void:
 	_refresh_history_list()
 	set_busy(_busy)
 	_layout_content()
+
+func _refresh_managed_list() -> void:
+	for child in _managed_list.get_children():
+		_managed_list.remove_child(child)
+		child.queue_free()
+	_managed_rows.clear()
+	if _managed_servers.is_empty():
+		_managed_list.add_child(_label("No managed servers. Create one to start a new colony."))
+	for server in _managed_servers:
+		var row := VBoxContainer.new()
+		_managed_list.add_child(row)
+		var title := _label("")
+		row.add_child(title)
+		var address := _label("")
+		ThemeTokens.apply_label(address, "log")
+		row.add_child(address)
+		var actions := HFlowContainer.new()
+		row.add_child(actions)
+		var select := _button("Manage", request_server_selection.bind(str(server.id)))
+		actions.add_child(select)
+		_managed_rows[server.id] = {"title": title, "address": address, "select": select}
+	_update_managed_rows()
+
+func _update_managed_rows() -> void:
+	for server in _managed_servers:
+		if not _managed_rows.has(server.id): continue
+		var row: Dictionary = _managed_rows[server.id]
+		var selected: bool = server.id == selected_server_id
+		row.title.text = ("Selected · " if selected else "") + str(server.name)
+		row.address.text = "http://127.0.0.1:%d / continuum · %s" % [int(server.port), server.get("state", "checking")]
+		row.select.disabled = selected or _busy or _native_busy
 
 func _layout_content() -> void:
 	if not is_instance_valid(_content):

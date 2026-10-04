@@ -13,9 +13,30 @@ existing server.
 1. On a fresh checkout, build the module and import the Godot project (see
    [Build](#build) below).
 2. Launch the client with `just run`.
-3. In **Servers**, choose **Start local server** to start or reconnect to your
-   local persistent colony. To join an existing server instead, choose **Join**
+3. In **Servers**, select a managed local server and choose **Start local server**
+   (or **Join local server** if it is already running). Use **Create server** with
+   a name to add another independent colony; each server has its own port and
+   save data, and several can run at once. To join an existing server instead, choose **Join**
    and enter its host and database (the default database is `continuum`).
+
+Select **Manage** beside a local server to control it. **Stop local** shuts down
+only that server and keeps its colony data. Once stopped, **Delete server…** asks
+for confirmation before permanently removing that server's colony, configuration,
+and logs. This cannot be undone. **Remove history** only removes a saved connection;
+it does not stop or delete a server. Remote servers cannot be stopped or deleted
+through these local controls.
+
+If Join reports a missing table such as `production_policy`, the server module
+does not match the client. Restart the client to load the latest UI, then select
+the affected server and use **Stop local → Update module… → Start local server**.
+This prepares the current module and publishes it without deleting colony data;
+incompatible changes fail rather than resetting the save. Other servers are not
+updated or stopped.
+
+Managed servers keep separate client credentials, even when a deleted server's
+port is reused. Existing identities are migrated only after server verification;
+a recreated local server obtains its own identity automatically. Authentication
+errors are not module errors, and updating a module does not reset credentials.
 
 Local server data persists after the client closes. Fresh worlds target
 2048 × 2048 cells with the starter colony near the centre. The server prepares

@@ -1,8 +1,5 @@
-## Shared contract for the managed native SpacetimeDB instance.
-##
-## One manager owns one physical server and one module database. Logical worlds
-## must be represented inside that database; this class intentionally has no
-## world argument and never starts a per-world process.
+## One manager owns one independent native server and one module database.
+## Profiles have isolated ports/data; logical worlds still share their server.
 class_name ContinuumNativeServerManager extends RefCounted
 
 signal status_changed(status: String)
@@ -18,7 +15,7 @@ const START_TIMEOUT_MS := 15000
 const PROVISION_TIMEOUT_MS := 120000
 const HEALTH_INTERVAL_MS := 1000
 
-enum State { UNKNOWN, CHECKING, OFFLINE, STARTING, ONLINE, UNHEALTHY, STOPPING, STOP_TIMEOUT, UNSUPPORTED, CONFLICT, INSTALLING, PREPARING }
+enum State { UNKNOWN, CHECKING, OFFLINE, STARTING, ONLINE, UNHEALTHY, STOPPING, STOP_TIMEOUT, UNSUPPORTED, CONFLICT, INSTALLING, PREPARING, DELETING, DELETED }
 
 var host := DEFAULT_HOST
 var database := DEFAULT_DATABASE
@@ -34,6 +31,9 @@ var log_file := ""
 var manifest_file := ""
 var lock_file := ""
 var platform_adapter: RefCounted
+var instance_id := "default"
+var _root := ""
+var _instance_dir := ""
 
 var _pid := -1
 var _started_at := ""
@@ -52,6 +52,8 @@ var _last_health_check := -1
 func _init() -> void:
 	platform_adapter = _default_adapter()
 	var root := _native_root()
+	_root = root.simplify_path()
+	_instance_dir = _root.path_join(RUNTIME_VERSION)
 	executable = root.path_join("spacetimedb/%s/spacetimedb-standalone" % RUNTIME_VERSION)
 	cli_executable = root.path_join("spacetimedb/%s/spacetimedb-cli" % RUNTIME_VERSION)
 	supervisor = root.path_join("spacetimedb/%s/native-server-supervisor.sh" % RUNTIME_VERSION)
@@ -67,14 +69,81 @@ func _init() -> void:
 		cli_executable = platform_adapter.cli_path(root.path_join("spacetimedb/%s" % RUNTIME_VERSION))
 		supervisor = root.path_join("helpers/windows-supervisor.ps1")
 		platform_adapter.configure(supervisor, executable, cli_executable, data_dir, config_dir, manifest_file, lock_file)
+	_adopt_updated_module()
 
-func _native_root() -> String:
+static func native_root() -> String:
 	var configured_root := OS.get_environment("CONTINUUM_NATIVE_ROOT")
 	if not configured_root.is_empty():
 		return configured_root
 	if OS.get_name() == "Windows":
 		return OS.get_environment("LOCALAPPDATA").path_join("Continuum/native")
 	return (OS.get_environment("XDG_DATA_HOME") if not OS.get_environment("XDG_DATA_HOME").is_empty() else OS.get_environment("HOME").path_join(".local/share")).path_join("Continuum/native")
+
+func _native_root() -> String:
+	return native_root()
+
+static func valid_instance_id(value: String) -> bool:
+	if value == "default": return true
+	return value.begins_with("server-") and value.length() == 31 and value.trim_prefix("server-").is_valid_hex_number() and value == value.to_lower()
+
+func configure_instance(id: String, port: int) -> bool:
+	if _state != State.UNKNOWN or not valid_instance_id(id) or port < 1024 or port > 65535 or (id == "default" and port != 3001):
+		return false
+	instance_id = id
+	host = "http://127.0.0.1:%d" % port
+	_instance_dir = _root.path_join(RUNTIME_VERSION if id == "default" else "servers/" + id)
+	data_dir = _instance_dir.path_join("data")
+	config_dir = _instance_dir.path_join("config")
+	log_file = _instance_dir.path_join("server.log")
+	manifest_file = _instance_dir.path_join("server.json")
+	lock_file = data_dir + ".lock"
+	module_artifact = _root.path_join("modules/%s/continuum_module.wasm" % RUNTIME_VERSION)
+	if id != "default": supervisor = _control_assets_dir().path_join("windows-supervisor.ps1" if OS.get_name() == "Windows" else "native-server-supervisor.sh")
+	_adopt_updated_module()
+	if OS.get_name() == "Windows":
+		platform_adapter.configure(supervisor, executable, cli_executable, data_dir, config_dir, manifest_file, lock_file)
+	return true
+
+## New profiles use a separate helper path so an old running server's executable
+## identity is never changed while adding a server to an existing installation.
+func prepare_control_helper() -> bool:
+	if module_artifact == _profile_module_path(): return not _stage_control_helper(_update_assets_dir()).is_empty()
+	return instance_id == "default" or not _stage_control_helper().is_empty()
+
+func _control_assets_dir() -> String:
+	return _root.path_join("bootstrap/%s/multi-server-v1" % RUNTIME_VERSION)
+
+func _profile_module_path() -> String:
+	return _instance_dir.path_join("continuum_module.wasm")
+
+func _update_assets_dir() -> String:
+	return _root.path_join("bootstrap/%s/module-updates-v1" % RUNTIME_VERSION)
+
+func _adopt_updated_module() -> void:
+	if not _has_instance_paths() or not FileAccess.file_exists(_profile_module_path()): return
+	module_artifact = _profile_module_path()
+	supervisor = _update_assets_dir().path_join("windows-supervisor.ps1" if OS.get_name() == "Windows" else "native-server-supervisor.sh")
+	if OS.get_name() == "Windows":
+		platform_adapter.configure(supervisor, executable, cli_executable, data_dir, config_dir, manifest_file, lock_file)
+
+func _stage_control_helper(directory := "") -> String:
+	if directory.is_empty(): directory = _control_assets_dir()
+	var filename := "windows-supervisor.ps1" if OS.get_name() == "Windows" else "native-server-supervisor.sh"
+	var files := [filename]
+	if OS.get_name() == "Windows": files.append("WindowsNativeProcessControl.cs")
+	if DirAccess.make_dir_recursive_absolute(directory) != OK: return ""
+	for asset: String in files:
+		var destination := directory.path_join(asset)
+		if FileAccess.file_exists(destination): continue
+		var source := "res://native/" + asset
+		if OS.has_feature("editor"):
+			var checkout_source := ProjectSettings.globalize_path("res://../../scripts/native-hosting/" + asset)
+			if FileAccess.file_exists(checkout_source): source = checkout_source
+		var temporary := destination + ".tmp.%d-%d" % [OS.get_process_id(), get_instance_id()]
+		if DirAccess.copy_absolute(source, temporary, 493 if asset.ends_with(".sh") else -1) != OK or DirAccess.rename_absolute(temporary, destination) != OK:
+			DirAccess.remove_absolute(temporary)
+			return ""
+	return directory.path_join(filename)
 
 func _module_source() -> String:
 	if not module_source_override.is_empty(): return module_source_override
@@ -92,11 +161,15 @@ func runtime_installed() -> bool:
 
 ## Reads durable ownership and health. Safe to call after the UI process restarts.
 func status() -> String:
-	if _state in [State.STARTING, State.STOPPING, State.STOP_TIMEOUT]:
+	if _state in [State.STARTING, State.STOPPING, State.STOP_TIMEOUT, State.DELETING, State.DELETED]:
+		return state()
+	if FileAccess.file_exists(_instance_dir.path_join(".continuum-deleted")):
+		_set_state(State.DELETED)
 		return state()
 	var manifest := _read_manifest()
 	if manifest.is_empty():
-		_set_state(State.OFFLINE)
+		if not FileAccess.file_exists(manifest_file): _adopt_updated_module()
+		_set_state(State.CONFLICT if FileAccess.file_exists(manifest_file) else State.OFFLINE)
 		return state()
 	if not _identity_matches(manifest):
 		_set_state(State.CONFLICT)
@@ -147,7 +220,7 @@ func start() -> bool:
 		_set_state(State.UNSUPPORTED)
 		return false
 	var current := "offline" if _state in [State.INSTALLING, State.PREPARING] else status()
-	if ["online", "starting", "unhealthy", "stopping", "stop_timeout", "conflict"].has(current):
+	if current != "offline":
 		return false
 	_set_state(State.STARTING)
 	if not _ensure_dirs():
@@ -156,25 +229,90 @@ func start() -> bool:
 	progress.emit("Starting the locked native supervisor (provisioning is first-use only)...")
 	return _launch_server()
 
-## Builds the checkout module once when no packaged artifact was supplied. Runtime
-## installation is explicit and is chained by the controller before this step.
+## Destruction is explicit, offline-only, and performed under the same OS lock as
+## launch. Keep the lock inode/tombstone so stale clients cannot resurrect data.
+func delete_data() -> Dictionary:
+	if not _has_instance_paths():
+		return {"ok": false, "error": "Refusing to delete data outside this managed server's directory."}
+	if status() not in ["offline", "deleted"] or FileAccess.file_exists(manifest_file):
+		return {"ok": false, "error": "Stop this server and resolve any ownership conflict before deleting it."}
+	var autostart := set_autostart(false)
+	if not autostart.get("ok", false): return autostart
+	var helper := _stage_control_helper(_update_assets_dir() if module_artifact == _profile_module_path() else "")
+	if helper.is_empty() or not _ensure_dirs():
+		return {"ok": false, "error": "Could not prepare the safe server deletion helper."}
+	_set_state(State.DELETING)
+	var result: Dictionary = platform_adapter.delete_server(helper, lock_file, manifest_file, _instance_dir)
+	_set_state(State.DELETED if result.get("ok", false) else State.OFFLINE)
+	return result
+
+func _has_instance_paths() -> bool:
+	var expected := _root.path_join(RUNTIME_VERSION if instance_id == "default" else "servers/" + instance_id)
+	return valid_instance_id(instance_id) and _root.is_absolute_path() and _instance_dir == expected \
+		and data_dir == expected.path_join("data") and config_dir == expected.path_join("config") \
+		and manifest_file == expected.path_join("server.json") and log_file == expected.path_join("server.log") and lock_file == data_dir + ".lock"
+
+## Explicit stopped-server update. Never replaces the shared artifact or the
+## deployed digest pin. The locked supervisor publishes with delete-data=never
+## on the next start, and records the new pin only after successful publication.
+func update_module() -> Dictionary:
+	if not _supported() or not _has_instance_paths():
+		return {"ok": false, "error": "Cannot update this managed server's module on this platform or outside its directory."}
+	if status() != "offline" or FileAccess.file_exists(manifest_file):
+		return {"ok": false, "error": "Stop this server and resolve any ownership conflict before updating its module."}
+	_set_state(State.PREPARING)
+	progress.emit("Preparing the current module for this server; existing colony data will be preserved...")
+	var source := _current_module_source(true)
+	var helper := _stage_control_helper(_update_assets_dir())
+	if source.is_empty() or helper.is_empty() or not _ensure_dirs():
+		_set_state(State.OFFLINE)
+		return {"ok": false, "error": "Could not prepare the current module or its update helper. Check the build and directory permissions, then retry."}
+	var candidate := _update_assets_dir().path_join("module-candidate-%d-%d.wasm" % [OS.get_process_id(), get_instance_id()])
+	if not _copy_module(source, candidate):
+		return {"ok": false, "error": "Could not stage the module update; the existing module was not changed."}
+	var registration := get_autostart()
+	var result := set_autostart(false) if registration.get("ok", false) else registration
+	if result.get("ok", false):
+		result = platform_adapter.install_module(helper, lock_file, manifest_file, _instance_dir, candidate, _file_sha256(candidate))
+		if result.get("ok", false): _adopt_updated_module()
+		if registration.get("enabled", false):
+			var restored := set_autostart(true)
+			if not restored.get("ok", false):
+				var outcome := "Module prepared, but " if result.get("ok", false) else str(result.get("error", "Module update failed.")) + " Also, "
+				result = {"ok": false, "error": outcome + "login startup could not be restored. Check Start at login before relying on it. " + str(restored.get("error", ""))}
+	DirAccess.remove_absolute(candidate)
+	_set_state(State.OFFLINE)
+	return result
+
+## First use snapshots the current module for this profile, never a stale shared
+## cache. Published profiles retain their pin until an explicit update request.
 func prepare_module() -> bool:
+	if _has_instance_paths() and not FileAccess.file_exists(data_dir.path_join(".continuum-module.sha256")):
+		var result := update_module()
+		if not result.get("ok", false): _fail(str(result.get("error", "Could not prepare this server's module.")))
+		return bool(result.get("ok", false))
 	_set_state(State.PREPARING)
 	progress.emit("Preparing the pinned native module...")
 	if FileAccess.file_exists(module_artifact):
 		_set_state(State.OFFLINE)
 		return true
+	var source := _current_module_source()
+	return not source.is_empty() and _stage_module(source)
+
+func _current_module_source(refresh := false) -> String:
 	var source := _module_source()
+	var cargo_manifest := ProjectSettings.globalize_path("res://../../backend/spacetimedb/Cargo.toml")
+	if refresh and OS.has_feature("editor") and FileAccess.file_exists(cargo_manifest) and module_source_override.is_empty() and OS.get_environment("CONTINUUM_NATIVE_MODULE").is_empty():
+		source = "" # An old export asset is not the current source checkout.
 	if not source.is_empty() and FileAccess.file_exists(source):
-		return _stage_module(source)
+		return source
 	if not OS.has_feature("editor"):
 		_fail("This exported build has no packaged native module; use a source checkout or install a packaged build.")
-		return false
-	var cargo_manifest := ProjectSettings.globalize_path("res://../../backend/spacetimedb/Cargo.toml")
+		return ""
 	if not FileAccess.file_exists(cargo_manifest):
 		_fail("Native module is missing. Install the packaged module or use a source checkout with Cargo.")
-		return false
-	progress.emit("Building the native module once from the source checkout...")
+		return ""
+	progress.emit("Building the current native module from the source checkout...")
 	var output: Array = []
 	var code: int
 	if OS.get_name() == "Windows":
@@ -183,28 +321,32 @@ func prepare_module() -> bool:
 		code = OS.execute("/usr/bin/timeout", ["300", "cargo", "build", "--manifest-path", cargo_manifest, "--release", "--target", "wasm32-unknown-unknown"], output, true)
 	if code != 0:
 		_fail("Could not build the native module. Install Cargo and the wasm32-unknown-unknown target.")
-		return false
+		return ""
 	var built_module := ProjectSettings.globalize_path("res://../../backend/spacetimedb/target/wasm32-unknown-unknown/release/continuum_module.wasm")
 	if not FileAccess.file_exists(built_module):
 		_fail("Cargo completed without producing continuum_module.wasm.")
-		return false
-	return _stage_module(built_module)
+		return ""
+	return built_module
 
 func _stage_module(source: String) -> bool:
-	if DirAccess.make_dir_recursive_absolute(module_artifact.get_base_dir()) != OK:
+	if not _copy_module(source, module_artifact): return false
+	_set_state(State.OFFLINE)
+	return true
+
+func _copy_module(source: String, destination: String) -> bool:
+	if DirAccess.make_dir_recursive_absolute(destination.get_base_dir()) != OK:
 		_fail("Could not create the native module destination; fix the destination and retry.")
 		return false
-	var temporary := module_artifact + ".tmp"
+	var temporary := destination + ".tmp"
 	var error := DirAccess.copy_absolute(source, temporary)
 	if error == OK and _file_sha256(source) == _file_sha256(temporary):
-		error = DirAccess.rename_absolute(temporary, module_artifact)
+		error = DirAccess.rename_absolute(temporary, destination)
 	else:
 		error = ERR_FILE_CORRUPT if error == OK else error
 	if error != OK:
 		DirAccess.remove_absolute(temporary)
-		_fail("Could not install the native module at %s (error %d); fix the destination and retry." % [module_artifact, error])
+		_fail("Could not install the native module at %s (error %d); fix the destination and retry." % [destination, error])
 		return false
-	_set_state(State.OFFLINE)
 	return true
 
 func install_native() -> bool:
@@ -277,6 +419,7 @@ func stop(force := false) -> bool:
 		status()
 	var manifest := _read_manifest()
 	if not _identity_matches(manifest):
+		_fail("Native ownership does not match this server's configuration. Refresh its status before stopping it.")
 		return false
 	if force and (_shutdown_manifest.is_empty() or not _same_owner(manifest, _shutdown_manifest)):
 		_fail("Native server ownership changed during shutdown.")
@@ -300,9 +443,22 @@ func stop(force := false) -> bool:
 			_fail("Native supervisor force termination could not be requested.")
 			return false
 	else:
+		# A stop targets the freshly verified manifest, not cached PID/hash fields
+		# left by an earlier runtime or module helper. Force still requires the
+		# exact shutdown snapshot captured by the initial graceful request.
+		if not supervisor_alive and not runtime_alive:
+			_fail("The owned native server processes have already exited. Refresh its status.")
+			return false
+		if not supervisor_alive and platform_adapter.has_method("supports_runtime_adoption") and not platform_adapter.supports_runtime_adoption():
+			_fail("The native supervisor has exited; waiting for its runtime to close.")
+			return false
+		_adopted_runtime = not supervisor_alive
+		_pid = runtime_pid if _adopted_runtime else supervisor_pid
+		_started_at = str(manifest.runtime_started_at) if _adopted_runtime else str(manifest.started_at)
+		_runtime_pid = runtime_pid
+		_runtime_started_at = str(manifest.runtime_started_at)
 		_shutdown_manifest = manifest.duplicate(true)
-		if _pid <= 1 or _started_at.is_empty() \
-				or not platform_adapter.terminate(_pid, false, _started_at, _active_binary(), _active_binary_hash()):
+		if not platform_adapter.terminate(_pid, false, _started_at, _active_binary(), _active_binary_hash()):
 			_fail("Native server rejected graceful shutdown.")
 			return false
 	_stop_deadline = Time.get_ticks_msec() + STOP_TIMEOUT_MS
@@ -421,9 +577,15 @@ func get_autostart() -> Dictionary:
 	return platform_adapter.get_autostart(supervisor, data_dir)
 
 func can_stop() -> bool:
-	if _pid <= 1 or _started_at.is_empty():
-		status()
-	return _pid > 1 and not _started_at.is_empty() and platform_adapter.is_process_identity(_pid, _started_at, _active_binary(), _active_binary_hash(), -1)
+	var manifest := _read_manifest()
+	if not _identity_matches(manifest): return false
+	var supervisor_pid := int(manifest.pid)
+	var supervisor_owned: bool = platform_adapter.is_process_identity(supervisor_pid, str(manifest.started_at), supervisor, str(manifest.supervisor_sha256))
+	var runtime_pid := int(manifest.runtime_pid)
+	var runtime_owned: bool = platform_adapter.is_process_identity(runtime_pid, str(manifest.runtime_started_at), executable, str(manifest.runtime_sha256), supervisor_pid if supervisor_owned else -1)
+	if (platform_adapter.process_exists(supervisor_pid) and not supervisor_owned) or (platform_adapter.process_exists(runtime_pid) and not runtime_owned): return false
+	if supervisor_owned: return runtime_owned
+	return runtime_owned and (not platform_adapter.has_method("supports_runtime_adoption") or platform_adapter.supports_runtime_adoption())
 
 func _supported() -> bool:
 	if platform_adapter != null and platform_adapter.has_method("supports_native_hosting"):
@@ -476,7 +638,9 @@ func _ensure_dirs() -> bool:
 func _read_manifest() -> Dictionary:
 	if not FileAccess.file_exists(manifest_file):
 		return {}
-	var parsed = JSON.parse_string(FileAccess.get_file_as_string(manifest_file))
+	var parser := JSON.new()
+	if parser.parse(FileAccess.get_file_as_string(manifest_file)) != OK: return {}
+	var parsed = parser.data
 	return parsed if parsed is Dictionary else {}
 
 func _same_owner(left: Dictionary, right: Dictionary) -> bool:
@@ -559,7 +723,7 @@ func _set_state(value: int) -> void:
 		status_changed.emit(_state_name(value))
 
 func _state_name(value: int) -> String:
-	return ["unknown", "checking", "offline", "starting", "online", "unhealthy", "stopping", "stop_timeout", "unsupported", "conflict", "installing", "preparing"][value]
+	return ["unknown", "checking", "offline", "starting", "online", "unhealthy", "stopping", "stop_timeout", "unsupported", "conflict", "installing", "preparing", "deleting", "deleted"][value]
 
 func _default_adapter() -> RefCounted:
 	var windows_adapter := "res://scripts/native_server_windows_adapter.gd"

@@ -1,14 +1,18 @@
 param(
-    [ValidateSet('start','stop','force','cleanup')][string]$Command,
+    [ValidateSet('start','stop','force','cleanup','delete','install-module')][string]$Command,
     [string]$Runtime, [string]$Cli, [string]$Module, [string]$ListenAddress = '127.0.0.1:3001', [string]$Database,
     [string]$Data, [string]$ConfigDir, [string]$Lock, [string]$Log, [string]$Manifest, [string]$ModuleSha256, [string]$StartupNonce,
-    [int]$SupervisorPid, [string]$SupervisorCreationTime, [string]$ManifestSha256
+    [int]$SupervisorPid, [string]$SupervisorCreationTime, [string]$ManifestSha256, [string]$InstanceDir
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 Add-Type -Path (Join-Path $PSScriptRoot 'WindowsNativeProcessControl.cs')
 function Fail([string]$message, [int]$code = 64) { [Console]::Error.WriteLine($message); exit $code }
 function Safe([string]$value) { return $value -and $value.IndexOfAny([char[]]"`r`n").Equals(-1) -and $value.IndexOf('"') -lt 0 }
+function IsLocalListenAddress([string]$Address) {
+    if ($Address -notmatch '^127\.0\.0\.1:([1-9][0-9]{3,4})$') { return $false }
+    return [int]$Matches[1] -ge 1024 -and [int]$Matches[1] -le 65535
+}
 function AtomicJson($value) { $tmp = "$Manifest.tmp.$PID"; [IO.File]::WriteAllText($tmp, ($value | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false)); Move-Item -LiteralPath $tmp -Destination $Manifest -Force }
 function Liveness([int]$ProcessId) { if ($ProcessId -le 1) { return 'Dead' }; return [WindowsNativeProcessControl]::LivenessForPid([uint32]$ProcessId).ToString() }
 function WaitDead([int]$ProcessId, [int]$milliseconds = 5000) {
@@ -22,6 +26,31 @@ function CompletePublish($processLease, [string]$pinPath, [string]$digest) {
     if ($processLease.ExitCode -ne 0) { Fail "module publish failed with exit code $($processLease.ExitCode)" 125 }
     [IO.File]::WriteAllText($pinPath, $digest.ToLowerInvariant(), [Text.UTF8Encoding]::new($false))
     $processLease.Dispose()
+}
+function PublicationPhase([string]$pinPath, [string]$digest, [bool]$explicitUpdate) {
+    if (-not (Test-Path -LiteralPath $pinPath)) { return 'provisioning' }
+    if ((Get-Content -LiteralPath $pinPath -Raw).Trim().ToLowerInvariant() -eq $digest.ToLowerInvariant()) { return 'starting' }
+    if (-not $explicitUpdate) { Fail 'module digest differs; explicit upgrade is required' 66 }
+    return 'provisioning'
+}
+function InstallModule([string]$instance, [string]$source, [string]$digest) {
+    if ($digest -notmatch '^[0-9a-f]{64}$' -or -not (Test-Path -LiteralPath $source -PathType Leaf)) { Fail 'invalid module update' }
+    $destination = Join-Path $instance 'continuum_module.wasm'
+    foreach ($path in @($instance,(Join-Path $instance 'data'),(Join-Path $instance 'config'),$destination,$source,(Join-Path $instance 'server.json'),(Join-Path $instance '.continuum-deleted'),(Join-Path $instance 'data/.continuum-native.lock'))) {
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path -Force).Attributes -band [IO.FileAttributes]::ReparsePoint)) { Fail 'refusing redirected module paths' }
+    }
+    $ownerLock = [IO.FileStream]::new((Join-Path $instance 'data/.continuum-native.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    $temporary = "$destination.tmp.$([guid]::NewGuid().ToString('N'))"
+    try {
+        if (Test-Path -LiteralPath (Join-Path $instance 'server.json')) { Fail 'server ownership metadata still exists' 73 }
+        if (Test-Path -LiteralPath (Join-Path $instance '.continuum-deleted')) { Fail 'this managed server was deleted' 66 }
+        Copy-Item -LiteralPath $source -Destination $temporary
+        if ((Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $digest) { Fail 'module checksum mismatch' 65 }
+        Move-Item -LiteralPath $temporary -Destination $destination -Force
+    } finally {
+        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        $ownerLock.Dispose()
+    }
 }
 function RequestMatches($r, $state, [string]$created) { return $r.pid -eq $PID -and $r.started_at -eq $created -and $r.startup_nonce -eq $state.startup_nonce }
 function ProcessRequest($request, $state, $lease, $cliLease, [string]$created) {
@@ -79,7 +108,42 @@ if ($Command -eq 'cleanup') {
     exit 0
 }
 
-if (-not $Runtime -or -not $Cli -or -not $Module -or -not $ConfigDir -or $ListenAddress -ne '127.0.0.1:3001' -or $Database -notmatch '^[A-Za-z0-9_-]+$' -or $ModuleSha256 -notmatch '^[0-9a-fA-F]{64}$' -or $StartupNonce -notmatch '^[A-Za-z0-9._-]+$') { Fail 'invalid native-hosting arguments' }
+if ($Command -eq 'delete') {
+    if (-not (Safe $InstanceDir) -or -not [IO.Path]::IsPathRooted($InstanceDir)) { Fail 'unsafe server directory' }
+    $instance = [IO.Path]::GetFullPath($InstanceDir).TrimEnd('\','/')
+    New-Item -ItemType Directory -Force -Path $instance | Out-Null
+    if ([WindowsNativeProcessControl]::ResolveFinalPath($instance).TrimEnd('\','/') -ne $instance -or [IO.Path]::GetFullPath($Data) -ne (Join-Path $instance 'data') -or [IO.Path]::GetFullPath($Manifest) -ne (Join-Path $instance 'server.json')) { Fail 'refusing redirected server paths' }
+    New-Item -ItemType Directory -Force -Path $Data | Out-Null
+    # Refuse reparse points instead of ever traversing outside this server.
+    function CheckTree([string]$path) {
+        $item = Get-Item -LiteralPath $path -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail 'refusing redirected server paths' }
+        if ($item.PSIsContainer) { foreach ($child in Get-ChildItem -LiteralPath $path -Force) { CheckTree $child.FullName } }
+    }
+    CheckTree $instance
+    $lockPath = Join-Path $Data '.continuum-native.lock'
+    $ownerLock = [IO.FileStream]::new($lockPath, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+    try {
+        if (Test-Path -LiteralPath $Manifest) { Fail 'server ownership metadata still exists' 73 }
+        [IO.File]::WriteAllText((Join-Path $instance '.continuum-deleted'), 'deleted')
+        foreach ($child in Get-ChildItem -LiteralPath $Data -Force) { if ($child.Name -ne '.continuum-native.lock') { Remove-Item -LiteralPath $child.FullName -Recurse -Force } }
+        foreach ($name in @('config','server.log','server.log.cli','server.log.cli.err','continuum_module.wasm')) { $path = Join-Path $instance $name; if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Recurse -Force } }
+    } finally { $ownerLock.Dispose() }
+    exit 0
+}
+
+if ($Command -eq 'install-module') {
+    if (-not (Safe $InstanceDir) -or -not (Safe $Module) -or -not [IO.Path]::IsPathRooted($InstanceDir)) { Fail 'unsafe module update paths' }
+    $instance = [IO.Path]::GetFullPath($InstanceDir).TrimEnd('\','/')
+    New-Item -ItemType Directory -Force -Path $instance | Out-Null
+    if ([WindowsNativeProcessControl]::ResolveFinalPath($instance).TrimEnd('\','/') -ne $instance -or [IO.Path]::GetFullPath($Data) -ne (Join-Path $instance 'data') -or [IO.Path]::GetFullPath($Manifest) -ne (Join-Path $instance 'server.json')) { Fail 'refusing redirected server paths' }
+    New-Item -ItemType Directory -Force -Path $Data | Out-Null
+    if ([WindowsNativeProcessControl]::ResolveFinalPath($Data).TrimEnd('\','/') -ne [IO.Path]::GetFullPath($Data).TrimEnd('\','/')) { Fail 'refusing redirected data path' }
+    InstallModule $instance $Module $ModuleSha256
+    exit 0
+}
+
+if (-not $Runtime -or -not $Cli -or -not $Module -or -not $ConfigDir -or -not (IsLocalListenAddress $ListenAddress) -or $Database -notmatch '^[A-Za-z0-9_-]+$' -or $ModuleSha256 -notmatch '^[0-9a-fA-F]{64}$' -or $StartupNonce -notmatch '^[A-Za-z0-9._-]+$') { Fail 'invalid native-hosting arguments' }
 foreach ($v in @($Runtime,$Cli,$Module,$Data,$ConfigDir,$Lock,$Log,$Manifest)) { if (-not (Safe $v)) { Fail 'unsafe path argument' } }
 foreach ($d in @($Data,$ConfigDir,(Split-Path $Manifest -Parent),(Split-Path $Log -Parent))) { New-Item -ItemType Directory -Force -Path $d | Out-Null }
 $canonicalData = [WindowsNativeProcessControl]::ResolveFinalPath($Data)
@@ -91,6 +155,7 @@ if (-not (Test-Path -LiteralPath $configFile)) { [IO.File]::WriteAllText($config
 if (-not (Test-Path -LiteralPath $configFile -PathType Leaf)) { Fail 'isolated CLI config path is not a file' 66 }
 $actualLock = Join-Path $canonicalData '.continuum-native.lock'
 $ownerLock = [IO.FileStream]::new($actualLock, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+if (Test-Path -LiteralPath (Join-Path (Split-Path $Manifest -Parent) '.continuum-deleted')) { $ownerLock.Dispose(); Fail 'this managed server was deleted' 66 }
 $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 $mutexName = 'Global\Continuum.Native.2.10.0.' + $sid + '.' + ([Convert]::ToBase64String(([Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($canonicalData.ToLowerInvariant())))).TrimEnd('=').Replace('/','_').Replace('+','-'))
 $created = $false; $mutex = New-Object Threading.Mutex($false, $mutexName, [ref]$created)
@@ -104,9 +169,15 @@ try {
     if (-not (Test-Path -LiteralPath $distributionManifest -PathType Leaf)) { Fail 'verified distribution manifest is missing' 66 }
     $distribution = Get-Content -LiteralPath $distributionManifest -Raw | ConvertFrom-Json
     if ($distribution.runtime -ne '2.10.0' -or $distribution.target -ne 'x86_64-pc-windows-msvc' -or $distribution.runtime_sha256.ToLowerInvariant() -ne $runtimeHash -or $distribution.cli_sha256.ToLowerInvariant() -ne $cliHash) { Fail 'runtime or CLI does not match the pinned distribution manifest' 66 }
+    $profileModule = Join-Path (Split-Path $Manifest -Parent) 'continuum_module.wasm'
+    $explicitUpdate = Test-Path -LiteralPath $profileModule -PathType Leaf
+    if ($explicitUpdate) {
+        if ((Get-Item -LiteralPath $profileModule -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { Fail 'refusing redirected module path' }
+        $Module = $profileModule
+        $ModuleSha256 = (Get-FileHash -LiteralPath $Module -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
     if ((Get-FileHash -LiteralPath $Module -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ModuleSha256.ToLowerInvariant()) { Fail 'module checksum mismatch' 65 }
-    $pin = Join-Path $canonicalData '.continuum-module.sha256'; $phase = 'provisioning'
-    if (Test-Path -LiteralPath $pin) { if ((Get-Content -LiteralPath $pin -Raw).Trim().ToLowerInvariant() -ne $ModuleSha256.ToLowerInvariant()) { Fail 'module digest differs; explicit upgrade is required' 66 }; $phase = 'starting' }
+    $pin = Join-Path $canonicalData '.continuum-module.sha256'; $phase = PublicationPhase $pin $ModuleSha256 $explicitUpdate
     [WindowsNativeProcessControl]::PrepareDedicatedConsole()
     $createdAt = [WindowsNativeProcessControl]::CreationTokenForPid([uint32]$PID)
     AtomicJson @{ phase = $phase; stop_ticks = 0; runtime = '2.10.0'; runtime_sha256 = $runtimeHash; cli_sha256 = $cliHash; supervisor_sha256 = $supervisorHash; module_sha256 = $ModuleSha256.ToLowerInvariant(); database = $Database; pid = $PID; started_at = $createdAt; runtime_pid = -1; runtime_started_at = ''; runtime_parent_pid = -1; runtime_binary = $Runtime; supervisor_binary = $PSCommandPath; startup_nonce = $StartupNonce; data_dir = $canonicalData; host = "http://$ListenAddress" }
@@ -117,7 +188,7 @@ try {
     while (-not $healthy -and [DateTime]::UtcNow -lt $deadline) { if (ProcessRequest $request $state $lease $null $createdAt) { Fail 'stop requested during runtime startup' 125 }; try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 -Uri "http://$ListenAddress/v1/ping" | Out-Null; $healthy = $true } catch { if ($lease.Liveness -eq 'Dead') { Fail 'runtime exited before health check' 125 }; if ($lease.Liveness -eq 'Error') { Fail 'runtime liveness is unknown' 125 }; Start-Sleep -Milliseconds 250 } }
     if (-not $healthy) { Fail 'runtime did not become healthy before deadline' 124 }
     if ($phase -eq 'provisioning') {
-        $cliLog = "$Log.cli"; $cliErr = "$Log.cli.err"; $cliLease = [WindowsNativeProcessControl]::Start($Cli, @('--config-path',$configFile,'publish','--server',"http://$ListenAddress",'--yes','-b',$Module,$Database), $canonicalData, $cliLog)
+        $cliLog = "$Log.cli"; $cliErr = "$Log.cli.err"; $cliLease = [WindowsNativeProcessControl]::Start($Cli, @('--config-path',$configFile,'publish','--server',"http://$ListenAddress",'--yes','--delete-data=never','-b',$Module,$Database), $canonicalData, $cliLog)
         while ($cliLease.Liveness -eq 'Alive') { if (ProcessRequest $request $state $lease $cliLease $createdAt) { Fail 'stop requested during module provisioning' 125 }; Start-Sleep -Milliseconds 100 }
         CompletePublish $cliLease $pin $ModuleSha256
         $cliLease = $null

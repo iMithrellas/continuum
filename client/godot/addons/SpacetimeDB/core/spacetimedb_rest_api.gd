@@ -1,7 +1,7 @@
 class_name SpacetimeDBRestAPI extends Node
 
 # Enum to track the type of the currently pending request
-enum RequestType { NONE, TOKEN, REDUCER_CALL } # Add more if needed for other REST calls
+enum RequestType { NONE, TOKEN, REDUCER_CALL, TOKEN_VALIDATION }
 
 var _http_request := HTTPRequest.new()
 var _base_url: String
@@ -9,15 +9,19 @@ var _token: String
 # State variable to track the expected response type
 var _pending_request_type := RequestType.NONE
 var _debug_mode := false
+var _validating_token := ""
 
 signal token_received(token: String)
 signal token_request_failed(error_code: int, response_body: String)
+signal token_validated(token: String)
+signal token_validation_failed(error_code: int, response_body: String)
 signal reducer_call_completed(result: Dictionary) # Or specific resource
 signal reducer_call_failed(error_code: int, response_body: String)
 
 func _init(base_url: String, debug_mode: bool):
 	self._base_url = base_url
 	self._debug_mode = debug_mode
+	_http_request.timeout = 10.0
 	add_child(_http_request)
 	# Connect the signal ONCE
 	if not _http_request.is_connected("request_completed", Callable(self, "_on_request_completed")):
@@ -31,6 +35,37 @@ func set_token(token: String):
 	self._token = token
 
 # --- Token Management ---
+
+## Authenticate the durable token without opening a database connection. The
+## endpoint re-signs the same identity for 60 seconds; discard that short-lived
+## token and retain the original credential after successful verification.
+func validate_token(token: String) -> void:
+	if _pending_request_type != RequestType.NONE:
+		token_validation_failed.emit(ERR_BUSY, "Another authentication request is pending.")
+		return
+	_pending_request_type = RequestType.TOKEN_VALIDATION
+	_validating_token = token
+	var error := _http_request.request(_base_url.path_join("/v1/identity/websocket-token"),
+		["Authorization: Bearer " + token], HTTPClient.METHOD_POST)
+	if error != OK:
+		_pending_request_type = RequestType.NONE
+		_validating_token = ""
+		token_validation_failed.emit(error, "Could not initiate token validation.")
+
+func _handle_token_validation_response(result: int, response_code: int, body: PackedByteArray) -> void:
+	var token := _validating_token
+	_validating_token = ""
+	if result != HTTPRequest.RESULT_SUCCESS:
+		token_validation_failed.emit(result, "Authentication request failed.")
+		return
+	if response_code < 200 or response_code >= 300:
+		token_validation_failed.emit(response_code, "Saved authentication token validation failed.")
+		return
+	var json = JSON.parse_string(body.get_string_from_utf8())
+	if not json is Dictionary or not json.get("token") is String or str(json.token).is_empty():
+		token_validation_failed.emit(ERR_INVALID_DATA, "Invalid authentication response.")
+		return
+	token_validated.emit(token)
 
 func request_new_token():
 	# Prevent concurrent requests if this handler isn't designed for it
@@ -136,6 +171,8 @@ func _on_request_completed(result: int, response_code: int, headers: PackedStrin
 		RequestType.TOKEN:
 			#print("SpacetimeDBRestAPI: Handling completed request as TOKEN") # Debug line
 			_handle_token_response(result, response_code, headers, body)
+		RequestType.TOKEN_VALIDATION:
+			_handle_token_validation_response(result, response_code, body)
 		RequestType.REDUCER_CALL:
 			#print("SpacetimeDBRestAPI: Handling completed request as REDUCER_CALL") # Debug line
 			_handle_reducer_response(result, response_code, headers, body)

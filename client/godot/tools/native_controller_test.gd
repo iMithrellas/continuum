@@ -63,11 +63,21 @@ class ReusableRuntime extends Preparation:
 		_set_state(State.OFFLINE)
 		return true
 
+class StaleStopPreflight extends ReusableRuntime:
+	func status() -> String:
+		status_changed.emit(state())
+		return state()
+	func can_stop() -> bool:
+		return false
+
 func _initialize() -> void:
 	await _cancel_then_retry()
 	await _responsive_shutdown()
 	await _retry_waits_for_cancelled_runtime()
 	await _fresh_ticket_reuses_runtime()
+	await _cancel_rejoin_preserves_existing_runtime()
+	await _shared_preparation_preserves_independent_stop()
+	await _explicit_stop_is_not_silently_dropped()
 	print("NATIVE_CONTROLLER_PASS" if failures == 0 else "NATIVE_CONTROLLER_FAIL")
 	quit(0 if failures == 0 else 1)
 
@@ -159,6 +169,75 @@ func _fresh_ticket_reuses_runtime() -> void:
 	controller.request_shutdown()
 	_check(controller.request_start() == -1, "closed controller rejects new startup tickets")
 	_check(await _wait_for(controller.finish_shutdown), "reusable runtime fixture shuts down")
+	controller.queue_free()
+	await process_frame
+
+func _cancel_rejoin_preserves_existing_runtime() -> void:
+	var fake := ReusableRuntime.new()
+	var controller := ContinuumNativeServerController.new()
+	controller.manager_factory = func(): return fake
+	var joined := [0]
+	controller.server_ready.connect(func(_host, _database, _epoch): joined[0] += 1)
+	root.add_child(controller)
+	controller.request_start()
+	_check(await _wait_for(func(): return joined[0] == 1), "rejoin cancellation fixture has a running server")
+	controller.request_start()
+	controller.cancel_startup()
+	await create_timer(0.15).timeout
+	_check(fake.stops == 0 and fake.starts == 1 and fake.state() == "online", "cancelling a new join ticket never stops an older running server")
+	_check(joined[0] == 1, "cancelled rejoin cannot acquire the session")
+	controller.request_shutdown()
+	_check(await _wait_for(controller.finish_shutdown), "cancelled rejoin worker finishes")
+	controller.queue_free()
+	await process_frame
+
+func _shared_preparation_preserves_independent_stop() -> void:
+	var installing := Preparation.new()
+	var installed := Preparation.new()
+	installed.installed = true
+	var running := ReusableRuntime.new()
+	running._state = ContinuumNativeServerManager.State.ONLINE
+	var first := ContinuumNativeServerController.new()
+	var second := ContinuumNativeServerController.new()
+	var third := ContinuumNativeServerController.new()
+	first.manager_factory = func(): return installing
+	second.manager_factory = func(): return installed
+	third.manager_factory = func(): return running
+	for controller in [first, second, third]: root.add_child(controller)
+	first.request_start()
+	_check(await _wait_for(func(): return installing.entered.try_wait()), "shared preparation fixture enters installation")
+	second.request_start()
+	await create_timer(0.1).timeout
+	_check(installed.prepares == 0 and installed.starts == 0, "another profile cannot race the shared runtime/module preparation")
+	third.request_stop()
+	_check(await _wait_for(func(): return running.stops == 1), "a running server remains independently stoppable during another profile's installation")
+	second.cancel_startup()
+	installing.release.post()
+	_check(await _wait_for(func(): return installing.starts == 1), "first profile completes preparation")
+	await create_timer(0.1).timeout
+	_check(installed.prepares == 0 and installed.starts == 0, "cancelled waiting profile never starts after acquiring the preparation lock")
+	for controller in [first, second, third]: controller.request_shutdown()
+	for controller in [first, second, third]:
+		_check(await _wait_for(controller.finish_shutdown), "multi-profile worker finishes")
+		controller.queue_free()
+	await process_frame
+
+func _explicit_stop_is_not_silently_dropped() -> void:
+	var manager := StaleStopPreflight.new()
+	manager._state = ContinuumNativeServerManager.State.ONLINE
+	var controller := ContinuumNativeServerController.new()
+	controller.manager_factory = func(): return manager
+	root.add_child(controller)
+	_check(await _wait_for(func(): return controller.cached_state() == "online"), "stop preflight fixture becomes manageable")
+	controller.request_stop()
+	_check(await _wait_for(func(): return manager.stops == 1), "explicit stop reaches the authoritative manager despite a stale can_stop preflight")
+	manager._set_state(ContinuumNativeServerManager.State.CONFLICT)
+	_check(await _wait_for(func(): return controller.cached_state() == "conflict"), "ownership conflict becomes visible")
+	controller.request_stop()
+	_check(await _wait_for(func(): return controller.cached_message().contains("no process was signalled")), "a refused stop reports actionable feedback instead of silently disappearing")
+	_check(manager.stops == 1, "a conflicting owner is never stopped")
+	controller.request_shutdown()
+	_check(await _wait_for(controller.finish_shutdown), "explicit-stop worker finishes")
 	controller.queue_free()
 	await process_frame
 

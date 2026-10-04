@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_manifest_validation_and_stale_cleanup()
 	_test_manager_autostart_public_path()
 	_test_status_poll_preserves_shutdown_state()
+	_test_stop_refreshes_cached_process_identity()
 	_test_prepare_copy_failures_are_retryable()
 	if not OS.get_environment("NATIVE_MANAGER_REAL").is_empty():
 		if FileAccess.file_exists("/.dockerenv") and OS.get_environment("CONTINUUM_NATIVE_TEST_SANDBOX") == "private-pid-namespace":
@@ -536,6 +537,22 @@ func _test_status_poll_preserves_shutdown_state() -> void:
 	manager.tick()
 	_assert(manager.status() == "stop_timeout", "status polling preserves STOP_TIMEOUT")
 	_assert(manager._active_binary_hash() == "unavailable", "graceful stop retains the stored supervisor hash")
+	DirAccess.remove_absolute(manager.manifest_file)
+
+func _test_stop_refreshes_cached_process_identity() -> void:
+	var adapter := FakeNativeAdapter.new()
+	var manager = _manager(adapter, "stale-stop-cache")
+	manager.start()
+	manager.tick()
+	manager._pid = 3137
+	manager._started_at = "previous-runtime"
+	manager._shutdown_manifest = {"supervisor_sha256": "previous-helper"}
+	_assert(manager.can_stop(), "current verified ownership, not stale cached PID/hash, determines stoppability")
+	_assert(manager.stop(false), "explicit stop refreshes the process identity from the current manifest")
+	_assert(manager._pid == 4242 and manager._started_at == "fake-start" and adapter.terminate_calls == 1, "graceful stop targets only the current verified supervisor")
+	adapter.owned = false
+	_assert(not manager.can_stop() and not manager.stop(false), "stale-cache recovery never bypasses process identity validation")
+	_assert(adapter.terminate_calls == 1, "an unverified replacement receives no signal")
 	DirAccess.remove_absolute(manager.manifest_file)
 
 func _test_prepare_copy_failures_are_retryable() -> void:

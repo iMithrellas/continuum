@@ -30,7 +30,7 @@ func _connect() -> void:
 	options.debug_mode = false
 	options.one_time_token = false
 	options.save_token = true
-	_client.token_save_path = ContinuumClientProfile.token_path(profile, host, database)
+	ContinuumClientProfile.configure_credentials(_client, profile, host, database)
 	_client.connect_db(host, database, options)
 
 func _on_connected(identity: PackedByteArray, _token: String) -> void:

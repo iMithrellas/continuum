@@ -6,6 +6,12 @@ extends Node
 signal state_changed(state: String, message: String)
 signal server_ready(host: String, database: String, startup_epoch: int)
 signal autostart_changed(enabled: bool, error: String)
+signal deletion_finished(error: String)
+signal module_update_finished(error: String)
+
+## Profiles share the runtime/module installation, but not their lifecycle.
+## Serialize preparation even if requests arrive before the UI receives status.
+static var _preparation_lock := Mutex.new()
 
 var manager: ContinuumNativeServerManager
 var manager_factory: Callable
@@ -17,7 +23,7 @@ var _cached_state := "unknown"
 var _cached_message := "Native server status is being checked..."
 var _last_status_ms := -1000
 var _startup_epoch := 0
-var _cancelled_through_epoch := -1
+var _cancelled_epochs: Dictionary = {}
 var _runtime_epoch := -1
 var _started_by_request := false
 
@@ -41,7 +47,7 @@ func is_startup_current(epoch: int) -> bool:
 
 func cancel_startup() -> void:
 	_mutex.lock()
-	_cancelled_through_epoch = _startup_epoch
+	_cancelled_epochs[_startup_epoch] = true
 	_startup_epoch += 1
 	_operations.erase("start")
 	_mutex.unlock()
@@ -50,7 +56,7 @@ func cancel_startup() -> void:
 func request_shutdown() -> void:
 	_mutex.lock()
 	_running = false
-	_cancelled_through_epoch = _startup_epoch
+	_cancelled_epochs[_startup_epoch] = true
 	_startup_epoch += 1
 	_operations.clear()
 	_mutex.unlock()
@@ -70,14 +76,14 @@ func _may_start(epoch: int) -> bool:
 
 func _was_cancelled(epoch: int) -> bool:
 	_mutex.lock()
-	var cancelled := epoch >= 0 and epoch <= _cancelled_through_epoch
+	var cancelled := _cancelled_epochs.has(epoch)
 	_mutex.unlock()
 	return cancelled
 
 func request_stop(force := false) -> void:
 	if not force:
 		_mutex.lock()
-		_cancelled_through_epoch = _startup_epoch
+		_cancelled_epochs[_startup_epoch] = true
 		_startup_epoch += 1
 		_operations.erase("start")
 		_mutex.unlock()
@@ -91,6 +97,19 @@ func request_autostart_status() -> void:
 
 func request_status() -> void:
 	_queue("status")
+
+func request_delete() -> void:
+	cancel_startup()
+	_queue("delete")
+
+func request_module_update() -> bool:
+	_mutex.lock()
+	if not _running or _operations.size() >= 8 or _operations.has("update_module"):
+		_mutex.unlock()
+		return false
+	_operations.append("update_module")
+	_mutex.unlock()
+	return true
 
 func cached_state() -> String:
 	return _cached_state
@@ -110,6 +129,8 @@ func _worker() -> void:
 	manager.progress.connect(_on_worker_progress, CONNECT_DEFERRED)
 	manager.failed.connect(_on_worker_failure, CONNECT_DEFERRED)
 	manager.ready.connect(_on_worker_ready)
+	if not manager.prepare_control_helper():
+		call_deferred("_on_worker_failure", "Could not prepare the native server control helper.")
 	while _running:
 		if _running and _started_by_request and _was_cancelled(_runtime_epoch) and manager.state() in ["starting", "online"] and manager.can_stop():
 			manager.stop(false)
@@ -132,25 +153,41 @@ func _worker() -> void:
 				elif current == "offline":
 					_runtime_epoch = epoch
 					_started_by_request = false
-					var installed := manager.runtime_installed() or (_may_start(epoch) and manager.install_native())
-					if installed and _may_start(epoch) and manager.prepare_module() and _may_start(epoch):
+					if _prepare_start(epoch) and _may_start(epoch):
 						_started_by_request = manager.start()
-			elif operation == "stop" and manager.state() != "stopping": manager.stop(false)
+			elif operation == "stop":
+				var current := manager.status()
+				if current in ["online", "starting", "unhealthy"]:
+					# stop() revalidates both process identities itself. A cached
+					# can_stop() preflight must not silently swallow an explicit click.
+					manager.stop(false)
+				elif current not in ["offline", "deleted", "stopping", "stop_timeout"]:
+					call_deferred("_on_worker_failure", "Cannot stop this server because its ownership could not be verified. Refresh its status; no process was signalled.")
 			elif operation == "force_stop": manager.stop(true)
 			elif operation.begins_with("autostart:"):
 				var enabled := operation.ends_with("true")
 				var result: Dictionary
+				if enabled: _preparation_lock.lock()
 				if enabled and not manager.runtime_installed() and not manager.install_native():
 					result = {"ok": false, "error": "Install the native runtime before enabling autostart."}
 				elif enabled and not manager.prepare_module():
 					result = {"ok": false, "error": "Prepare the native module before enabling autostart."}
 				else:
 					result = manager.set_autostart(enabled)
+				if enabled: _preparation_lock.unlock()
 				call_deferred("_emit_autostart", enabled, "" if result.get("ok", false) else str(result.get("error", "Autostart update failed.")))
 			elif operation == "autostart_status":
 				var result := manager.get_autostart()
 				call_deferred("_emit_autostart", bool(result.get("enabled", false)), "" if result.get("ok", false) else str(result.get("error", "Autostart state is unavailable.")))
 			elif operation == "status": manager.status()
+			elif operation == "delete":
+				var result := manager.delete_data()
+				call_deferred("_emit_deletion", "" if result.get("ok", false) else str(result.get("error", "Server deletion failed.")))
+			elif operation == "update_module":
+				_preparation_lock.lock()
+				var result := manager.update_module() if _running else {"ok": false, "error": "Module update cancelled before preparation began."}
+				_preparation_lock.unlock()
+				call_deferred("_emit_module_update", "" if result.get("ok", false) else str(result.get("error", "Module update failed.")))
 		var now := Time.get_ticks_msec()
 		if now - _last_status_ms >= 1000 and manager.state() not in ["starting", "stopping", "stop_timeout", "installing", "preparing"]:
 			_last_status_ms = now
@@ -158,6 +195,13 @@ func _worker() -> void:
 		if manager.state() in ["starting", "stopping", "stop_timeout", "installing", "preparing"]:
 			manager.tick()
 		OS.delay_msec(50)
+
+func _prepare_start(epoch: int) -> bool:
+	_preparation_lock.lock()
+	var installed := _may_start(epoch) and (manager.runtime_installed() or manager.install_native())
+	var prepared := installed and _may_start(epoch) and manager.prepare_module()
+	_preparation_lock.unlock()
+	return prepared
 
 func _on_worker_state(value: String) -> void:
 	_cached_state = value
@@ -182,6 +226,13 @@ func _emit_server_ready(value_host: String, value_database: String, epoch: int) 
 
 func _emit_autostart(enabled: bool, error: String) -> void:
 	autostart_changed.emit(enabled, error)
+
+func _emit_deletion(error: String) -> void:
+	deletion_finished.emit(error)
+
+func _emit_module_update(error: String) -> void:
+	_on_worker_progress("Module prepared. Start this server to publish it without deleting colony data." if error.is_empty() else error)
+	module_update_finished.emit(error)
 
 func _exit_tree() -> void:
 	request_shutdown()

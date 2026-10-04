@@ -3,6 +3,8 @@ class_name SpacetimeDBSubscription extends Node
 var query_id: int = -1
 var queries: PackedStringArray
 var error: Error = OK
+## Server rejection details remain available while end handlers run.
+var error_message := ""
 
 signal applied
 signal end

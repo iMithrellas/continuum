@@ -18,8 +18,8 @@ func launch(supervisor: String, runtime: String, cli: String, module: String, ho
 	if supervisor.is_empty() or runtime.is_empty() or cli.is_empty() or not FileAccess.file_exists(supervisor) \
 		or not FileAccess.file_exists(runtime) or not FileAccess.file_exists(cli):
 		return {"ok": false, "error": "The pinned SpacetimeDB runtime is not installed for this platform."}
-	if host != "http://127.0.0.1:3001" or database.is_empty() or module_sha256 == "unavailable":
-		return {"ok": false, "error": "Native hosting requires the fixed localhost endpoint and a pinned module."}
+	if local_listen_address(host).is_empty() or database.is_empty() or module_sha256 == "unavailable":
+		return {"ok": false, "error": "Native hosting requires a localhost port and a pinned module."}
 	var pid := OS.create_process(supervisor, ["start", runtime, cli, module, host.trim_prefix("http://"), database, data_path, config_path, lock_path, log_path, manifest_path, module_sha256, startup_nonce], false)
 	if pid <= 1:
 		return {"ok": false, "error": "Could not launch SpacetimeDB; check the installed v2.10.0 distribution."}
@@ -61,16 +61,27 @@ func terminate(pid: int, force: bool, started_at: String, expected_binary: Strin
 func cleanup_stale(supervisor: String, lock_path: String, manifest_path: String, manifest_sha256: String) -> bool:
 	return OS.execute(supervisor, ["cleanup", lock_path, manifest_path, manifest_sha256], [], true) == 0
 
+func delete_server(supervisor: String, lock_path: String, manifest_path: String, instance_path: String) -> Dictionary:
+	var output: Array = []
+	var code := OS.execute("/bin/bash", [supervisor, "delete", lock_path, manifest_path, instance_path], output, true)
+	return {"ok": code == 0, "error": "Could not delete the server safely. It may be running, locked, or use redirected paths. Refresh and retry. " + (str(output[0]).strip_edges() if not output.is_empty() else "")}
+
+func install_module(supervisor: String, lock_path: String, manifest_path: String, instance_path: String, source: String, digest: String) -> Dictionary:
+	var output: Array = []
+	var code := OS.execute("/bin/bash", [supervisor, "install-module", lock_path, manifest_path, instance_path, source, digest], output, true)
+	return {"ok": code == 0, "error": "Could not install the module update safely. Stop the server, refresh, and retry. " + (str(output[0]).strip_edges() if not output.is_empty() else "")}
+
 func set_autostart(enabled: bool, supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, _startup_nonce: String) -> Dictionary:
 	if OS.get_name() == "Linux":
 		var unit_dir := OS.get_environment("HOME").path_join(".config/systemd/user")
-		var unit_path := unit_dir.path_join("continuum-native.service")
-		if FileAccess.file_exists(unit_path) and not FileAccess.get_file_as_string(unit_path).begins_with("# Managed by Continuum\n"):
-			return {"ok": false, "error": "A manually configured continuum-native.service already exists; it was not changed."}
+		var unit_name := _unit_name(data_path)
+		var unit_path := unit_dir.path_join(unit_name)
+		if FileAccess.file_exists(unit_path) and not _owns_unit(FileAccess.get_file_as_string(unit_path), supervisor, data_path):
+			return {"ok": false, "error": "The autostart service belongs to another configuration; it was not changed."}
 		if not enabled:
 			if not FileAccess.file_exists(unit_path):
 				return {"ok": true}
-			if OS.execute("systemctl", ["--user", "disable", "continuum-native.service"], [], true) != 0:
+			if OS.execute("systemctl", ["--user", "disable", unit_name], [], true) != 0:
 				return {"ok": false, "error": "Could not disable native server autostart."}
 			if DirAccess.remove_absolute(unit_path) != OK:
 				return {"ok": false, "error": "Could not remove the disabled native server unit."}
@@ -87,25 +98,26 @@ func set_autostart(enabled: bool, supervisor: String, runtime: String, cli: Stri
 		unit.close()
 		if OS.execute("systemctl", ["--user", "daemon-reload"], [], true) != 0:
 			return {"ok": false, "error": "The user systemd service manager is unavailable."}
-		var result := OS.execute("systemctl", ["--user", "enable", "continuum-native.service"], [], true)
+		var result := OS.execute("systemctl", ["--user", "enable", unit_name], [], true)
 		var observed := get_autostart(supervisor, data_path)
 		return {"ok": result == 0 and observed.get("ok", false) and observed.get("enabled", false), "error": "Could not register and verify the per-user systemd service."}
 	return {"ok": false, "error": "Managed native hosting is unsupported on Windows until its native supervisor and control path are validated."}
 
-func get_autostart(_supervisor: String, _data_path: String) -> Dictionary:
-	var unit_path := OS.get_environment("HOME").path_join(".config/systemd/user/continuum-native.service")
+func get_autostart(supervisor: String, data_path: String) -> Dictionary:
+	var unit_name := _unit_name(data_path)
+	var unit_path := OS.get_environment("HOME").path_join(".config/systemd/user/" + unit_name)
 	if not FileAccess.file_exists(unit_path):
 		return {"ok": true, "enabled": false}
-	if not FileAccess.get_file_as_string(unit_path).begins_with("# Managed by Continuum\n"):
+	if not _owns_unit(FileAccess.get_file_as_string(unit_path), supervisor, data_path):
 		return {"ok": false, "enabled": false, "error": "Native server autostart is managed outside this application."}
 	var output: Array = []
-	var code := OS.execute("systemctl", ["--user", "is-enabled", "continuum-native.service"], output, true)
+	var code := OS.execute("systemctl", ["--user", "is-enabled", unit_name], output, true)
 	var value := str(output[0]).strip_edges() if not output.is_empty() else ""
 	return {"ok": code == 0 or value == "disabled", "enabled": code == 0 and value == "enabled", "error": "Could not inspect native server autostart."}
 
 func linux_unit_contents(supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, startup_nonce: String) -> String:
-	var normalized_host := host.trim_prefix("http://")
-	if normalized_host != "127.0.0.1:3001" or database.is_empty() or module_sha256 == "unavailable":
+	var normalized_host := local_listen_address(host)
+	if normalized_host.is_empty() or database.is_empty() or module_sha256 == "unavailable":
 		return ""
 	var values := [supervisor, runtime, cli, module, data_path, config_path, lock_path, log_path, manifest_path, database, module_sha256, startup_nonce]
 	for value in values:
@@ -115,6 +127,21 @@ func linux_unit_contents(supervisor: String, runtime: String, cli: String, modul
 		return ""
 	var command := [_systemd_quote(supervisor), "start", _systemd_quote(runtime), _systemd_quote(cli), _systemd_quote(module), normalized_host, _systemd_quote(database), _systemd_quote(data_path), _systemd_quote(config_path), _systemd_quote(lock_path), _systemd_quote(log_path), _systemd_quote(manifest_path), _systemd_quote(module_sha256), _systemd_quote(startup_nonce)]
 	return "# Managed by Continuum\n[Unit]\nDescription=Continuum native SpacetimeDB\n\n[Service]\nExecStart=%s\nRestart=on-failure\nRestartSec=5\nKillSignal=SIGINT\nTimeoutStopSec=15\n\n[Install]\nWantedBy=default.target\n" % " ".join(command)
+
+static func local_listen_address(host: String) -> String:
+	var address := host.trim_prefix("http://")
+	if not address.begins_with("127.0.0.1:"): return ""
+	var port := address.trim_prefix("127.0.0.1:")
+	if not port.is_valid_int() or str(port.to_int()) != port or port.to_int() < 1024 or port.to_int() > 65535: return ""
+	return address
+
+func _unit_name(data_path: String) -> String:
+	# Preserve the original server's existing user service during adoption.
+	if data_path.simplify_path().get_base_dir().get_file() == "2.10.0": return "continuum-native.service"
+	return "continuum-native-%s.service" % data_path.simplify_path().sha256_text().left(16)
+
+func _owns_unit(contents: String, supervisor: String, data_path: String) -> bool:
+	return contents.begins_with("# Managed by Continuum\n") and contents.contains(_systemd_quote(supervisor) + " start ") and contents.contains(_systemd_quote(data_path))
 
 func _systemd_quote(value: String) -> String:
 	return '"%s"' % value.replace("\\", "\\\\").replace('"', '\\"')

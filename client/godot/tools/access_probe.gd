@@ -59,7 +59,7 @@ func _connect() -> void:
 	options.debug_mode = false
 	options.one_time_token = false
 	options.save_token = true
-	client.token_save_path = ContinuumClientProfile.token_path(profile, host, database)
+	ContinuumClientProfile.configure_credentials(client, profile, host, database)
 	client.connect_db(host, database, options)
 
 func _on_access_changed(role_name: String, can_operate: bool, is_admin: bool) -> void:

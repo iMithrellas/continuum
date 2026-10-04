@@ -10,6 +10,11 @@ class_name SpacetimeDBClient extends Node
 @export var token_save_path: String = "user://spacetimedb_token.dat" # Use a more specific name
 @export var one_time_token: bool = false
 @export var save_token: bool = true
+## Opt-in preflight for persisted credentials. Recovery changes identity, so
+## applications must enable it only for targets where that is appropriate.
+var validate_cached_token := false
+var recover_rejected_cached_token := false
+var fallback_token_save_path := ""
 @export var compression: SpacetimeDBConnection.CompressionPreference
 @export var debug_mode: bool = true
 @export var current_subscriptions: Dictionary[int, SpacetimeDBSubscription]
@@ -113,6 +118,8 @@ func initialize_and_connect():
 	_rest_api = SpacetimeDBRestAPI.new(base_url, debug_mode)
 	_rest_api.token_received.connect(_on_token_received)
 	_rest_api.token_request_failed.connect(_on_token_request_failed)
+	_rest_api.token_validated.connect(_on_token_received)
+	_rest_api.token_validation_failed.connect(_on_token_validation_failed)
 	_rest_api.name = "RestAPI"
 	add_child(_rest_api)
 
@@ -139,19 +146,23 @@ func initialize_and_connect():
 func _load_token_or_request():
 	if not _token.is_empty():
 		# If token is already set, use it
-		_on_token_received(_token)
+		_use_cached_token(_token)
 		return
 
 	if one_time_token == false:
-		# Try loading saved token
-		if FileAccess.file_exists(token_save_path):
-			var file := FileAccess.open(token_save_path, FileAccess.READ)
+		# A legacy fallback is never used without server-side validation.
+		var paths := [token_save_path]
+		if validate_cached_token and not fallback_token_save_path.is_empty():
+			paths.append(fallback_token_save_path)
+		for path: String in paths:
+			if not FileAccess.file_exists(path): continue
+			var file := FileAccess.open(path, FileAccess.READ)
 			if file:
 				var saved_token := file.get_as_text().strip_edges()
 				file.close()
 				if not saved_token.is_empty():
 					print_log("SpacetimeDBClient: Using saved token.")
-					_on_token_received(saved_token) # Directly use the saved token
+					_use_cached_token(saved_token)
 					return
 
 	# If no valid saved token, request a new one if auto-request is enabled
@@ -161,6 +172,25 @@ func _load_token_or_request():
 	else:
 		printerr("SpacetimeDBClient: No token available and auto_request_token is false.")
 		emit_signal("connection_error", -1, "Authentication token unavailable")
+
+func _use_cached_token(cached_token: String) -> void:
+	if validate_cached_token:
+		_rest_api.validate_token(cached_token)
+	else:
+		_on_token_received(cached_token)
+
+func _on_token_validation_failed(code: int, _body: String) -> void:
+	if code == 401 and recover_rejected_cached_token and auto_request_token:
+		# Do not truncate either cache: a replacement is saved only after a
+		# successful token request, and the legacy file may belong to a lost server.
+		_token = ""
+		_rest_api.set_token("")
+		_rest_api.request_new_token()
+		return
+	var message := "Could not validate the saved authentication token."
+	if code in [401, 403]:
+		message = "This server rejected the saved authentication token. Use credentials issued by this server; updating its module will not fix authentication."
+	connection_error.emit(code, message)
 
 func _generate_connection_id() -> String:
 	var random_bytes := PackedByteArray()
@@ -333,12 +363,20 @@ func _handle_parsed_message(message_resource: Resource, received_at_usec := -1):
 
 	elif message_resource is SubscriptionErrorMessage:
 		var message : SubscriptionErrorMessage = message_resource
-		var sub : SpacetimeDBSubscription= _pending_subscriptions.get(message.query_id.id)
+		printerr("SpacetimeDBClient: Received SubscriptionErrorMessage: %s" % message.error_message)
+		if not message.has_query_id():
+			return
+		var query_id := message.query_id.id
+		var sub: SpacetimeDBSubscription = _pending_subscriptions.get(query_id, current_subscriptions.get(query_id))
 		if sub:
+			# Clear ownership before emitting: end handlers may discard this handle
+			# or start a replacement subscription synchronously.
+			_pending_subscriptions.erase(query_id)
+			current_subscriptions.erase(query_id)
+			sub.error = ERR_INVALID_DATA
+			sub.error_message = message.error_message
 			sub.end.emit()
-			_pending_subscriptions.erase(sub.query_id)
 			sub.queue_free()
-		printerr("SpacetimeDBClient: Received SubscriptionErrorMessage: %s", message.error_message)
 		return
 
 	elif message_resource is TransactionUpdateMessage:
@@ -429,6 +467,7 @@ func connect_db(host_url: String, database_name: String, options: SpacetimeDBCon
 	self.database_name = database_name.to_lower()
 	self.compression = options.compression
 	self.one_time_token = options.one_time_token
+	self.save_token = options.save_token
 	if not options.token.is_empty():
 		self._token = options.token
 	self.debug_mode = options.debug_mode

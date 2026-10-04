@@ -65,7 +65,7 @@ func launch(supervisor: String, runtime: String, cli: String, module: String, ho
 	configure(supervisor, runtime, cli, data_path, config_path, manifest_path, lock_path)
 	if not supports_native_hosting():
 		return {"ok": false, "error": "Windows native hosting requires Windows x86_64."}
-	if host != "http://127.0.0.1:3001" or database.is_empty() or module_sha256.length() != 64 or not module_sha256.is_valid_hex_number():
+	if _local_address(host).is_empty() or database.is_empty() or module_sha256.length() != 64 or not module_sha256.is_valid_hex_number():
 		return {"ok": false, "error": "Native hosting requires localhost and a pinned module digest."}
 	if supervisor.is_empty() or not FileAccess.file_exists(supervisor) or not FileAccess.file_exists(helperpath(supervisor)) or not FileAccess.file_exists(runtime) or not FileAccess.file_exists(cli):
 		return {"ok": false, "error": "The verified Windows native distribution is not installed."}
@@ -76,10 +76,10 @@ func launch(supervisor: String, runtime: String, cli: String, module: String, ho
 	return {"ok": true, "pid": pid, "started_at": started_at}
 
 func health(host: String) -> bool:
-	if host != "http://127.0.0.1:3001":
+	if _local_address(host).is_empty():
 		return false
 	var output: Array = []
-	return OS.execute(_powershell_path(), ["-NoProfile", "-NonInteractive", "-Command", "try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 -Uri 'http://127.0.0.1:3001/v1/ping' | Out-Null; exit 0 } catch { exit 1 }"], output, true) == 0
+	return OS.execute(_powershell_path(), ["-NoProfile", "-NonInteractive", "-Command", "& { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 1 -Uri $args[0] | Out-Null; exit 0 } catch { exit 1 } }", host + "/v1/ping"], output, true) == 0
 
 func is_process_identity(pid: int, started_at: String, expected_binary: String, expected_sha256: String, expected_parent_pid := -1) -> bool:
 	if not supports_native_hosting() or pid <= 1 or started_at.is_empty() or expected_binary.is_empty():
@@ -116,6 +116,16 @@ func cleanup_stale(supervisor: String, lock_path: String, manifest_path: String,
 	var output: Array = []
 	return OS.execute(_powershell_path(), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisor, "cleanup", "-Data", _configured_data, "-Manifest", manifest_path, "-ManifestSha256", manifest_sha256], output, true) == 0
 
+func delete_server(supervisor: String, _lock_path: String, manifest_path: String, instance_path: String) -> Dictionary:
+	var output: Array = []
+	var code := OS.execute(_powershell_path(), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisor, "delete", "-Data", instance_path.path_join("data"), "-Manifest", manifest_path, "-InstanceDir", instance_path], output, true)
+	return {"ok": code == 0, "error": "Could not delete the server safely. It may be running, locked, or use redirected paths. Refresh and retry."}
+
+func install_module(supervisor: String, _lock_path: String, manifest_path: String, instance_path: String, source: String, digest: String) -> Dictionary:
+	var output: Array = []
+	var code := OS.execute(_powershell_path(), ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisor, "install-module", "-Data", instance_path.path_join("data"), "-Manifest", manifest_path, "-InstanceDir", instance_path, "-Module", source, "-ModuleSha256", digest], output, true)
+	return {"ok": code == 0, "error": "Could not install the module update safely. Stop the server, refresh, and retry."}
+
 func get_autostart(supervisor: String, data_path: String) -> Dictionary:
 	_configure_from(supervisor)
 	var output: Array = []
@@ -127,7 +137,7 @@ func set_autostart(enabled: bool, supervisor: String, runtime: String, cli: Stri
 	configure(supervisor, runtime, cli, data_path, config_path, manifest_path, lock_path)
 	if not supports_native_hosting():
 		return {"ok": false, "error": "Windows native hosting is unavailable on this platform."}
-	var task_path := OS.get_user_data_dir().path_join("Continuum/native/2.10.0/continuum-native-task.xml")
+	var task_path := config_path.path_join("continuum-native-task.xml")
 	if not enabled:
 		var result := _task_operation("disable", task_path, "", data_path, supervisor)
 		if bool(result.ok):
@@ -145,7 +155,7 @@ func set_autostart(enabled: bool, supervisor: String, runtime: String, cli: Stri
 	return _task_operation("enable", task_path, xml, data_path, supervisor)
 
 func windows_task_xml(supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, startup_nonce: String, service_user := "") -> String:
-	if host != "127.0.0.1:3001" or not database.is_valid_identifier() or module_sha256.length() != 64 or not module_sha256.is_valid_hex_number():
+	if _local_address(host).is_empty() or not database.is_valid_identifier() or module_sha256.length() != 64 or not module_sha256.is_valid_hex_number():
 		return ""
 	for value in [supervisor, runtime, cli, module, data_path, config_path, lock_path, log_path, manifest_path, database, module_sha256, startup_nonce]:
 		if str(value).is_empty() or str(value).contains("\n") or str(value).contains("\r") or str(value).contains('"'):
@@ -158,6 +168,13 @@ func windows_task_xml(supervisor: String, runtime: String, cli: String, module: 
 		return ""
 	var ps := _powershell_path()
 	return "<?xml version=\"1.0\"?><Task xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\"><RegistrationInfo><Source>Continuum native</Source><URI>%s</URI></RegistrationInfo><Triggers><LogonTrigger><Enabled>true</Enabled><UserId>%s</UserId></LogonTrigger></Triggers><Principals><Principal id=\"Author\"><UserId>%s</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><ExecutionTimeLimit>PT0S</ExecutionTimeLimit><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries><StopIfGoingOnBatteries>false</StopIfGoingOnBatteries></Settings><Actions Context=\"Author\"><Exec><Command>%s</Command><Arguments>%s</Arguments><WorkingDirectory>%s</WorkingDirectory></Exec></Actions></Task>" % [_xml_escape(_task_uri(data_path)), _xml_escape(user), _xml_escape(user), _xml_escape(ps), _xml_escape(" ".join(encoded)), _xml_escape(data_path)]
+
+func _local_address(host: String) -> String:
+	var address := host.trim_prefix("http://")
+	if not address.begins_with("127.0.0.1:"): return ""
+	var port := address.trim_prefix("127.0.0.1:")
+	if not port.is_valid_int() or str(port.to_int()) != port or port.to_int() < 1024 or port.to_int() > 65535: return ""
+	return address
 
 func _start_args(supervisor: String, runtime: String, cli: String, module: String, host: String, database: String, data_path: String, config_path: String, lock_path: String, log_path: String, manifest_path: String, module_sha256: String, startup_nonce: String) -> Array:
 	return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", supervisor, "start", "-Runtime", runtime, "-Cli", cli, "-Module", module, "-ListenAddress", host.trim_prefix("http://"), "-Database", database, "-Data", data_path, "-ConfigDir", config_path, "-Lock", lock_path, "-Log", log_path, "-Manifest", manifest_path, "-ModuleSha256", module_sha256, "-StartupNonce", startup_nonce]

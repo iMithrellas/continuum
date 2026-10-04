@@ -195,6 +195,8 @@ func _test_rendered_browser() -> void:
 	manager.set_probe_service(probes)
 	manager.set_connection_defaults("http://localhost:3001", "continuum")
 	manager.set_history_store(store)
+	manager.set_managed_servers([{"id": "default", "name": "Original colony", "port": 3001, "state": "online"},
+		{"id": "server-" + "b".repeat(24), "name": "A second independently managed colony", "port": 3002, "state": "offline"}], "default")
 	get_root().add_child(manager)
 	manager.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	for viewport_size: Vector2 in [Vector2(1440, 860), Vector2(360, 480)]:
@@ -206,6 +208,7 @@ func _test_rendered_browser() -> void:
 			_nodes_named(manager, "World: default-world").size() == 31 and
 			_nodes_named(manager, "HTTP RTT unavailable").size() == 31, "rows identify address, database, world and HTTP RTT")
 		_assert(_all_controls_fit(manager, viewport_size.x), "browser controls fit horizontally at %s" % viewport_size)
+		_assert(manager._managed_rows.size() == 2, "both managed servers remain visible in compact and wide layouts")
 		var background: ColorRect = manager.get_node("ServerBackground")
 		_assert(background.color.a == 1.0 and background.get_global_rect() == manager.get_global_rect(), "opaque backdrop covers the entire viewport")
 		_assert(manager.get_global_rect().encloses(manager._content.get_global_rect()), "browser panel stays inside viewport: %s" % manager._content.get_global_rect())
@@ -219,6 +222,13 @@ func _test_rendered_browser() -> void:
 			_assert(scroll.get_global_rect().grow(2).encloses(button.get_global_rect()), "scroll reaches %s at %s: %s in %s" % [button.text, viewport_size, button.get_global_rect(), scroll.get_global_rect()])
 		for label: Label in manager._history_list.find_children("*", "Label", true, false):
 			_assert(label.size.y >= label.get_theme_font_size("font_size") and label.get_theme_font_size("font_size") >= 11, "history labels retain readable logical typography")
+		for message: String in ["The server module does not match this client: no such table: production_policy.", "A detailed connection failure. ".repeat(30)]:
+			manager.set_status(message, true)
+			for _frame in 8: await process_frame
+			_assert(manager._status_tag.get_line_count() == 1 and manager._status_tag.size.x > 40, "Warning tag never wraps one character at a time at %s" % viewport_size)
+			_assert(manager._status_glyph.size.y == 16 and manager._status_tag.size.y <= manager._status.size.y and manager._status_tag.size.y <= manager._status_tag.get_combined_minimum_size().y + 1, "warning glyph and tag stay compact beside wrapped feedback at %s: glyph=%s tag=%s status=%s" % [viewport_size, manager._status_glyph.size, manager._status_tag.size, manager._status.size])
+			_assert(scroll.scroll_vertical == 0 and _all_controls_fit(manager, viewport_size.x), "long warnings reveal their beginning and fit horizontally")
+		manager.set_status("")
 	manager.set_status("A detailed connection failure. ".repeat(30), true)
 	for _frame in 8: await process_frame
 	_assert(manager.get_global_rect().encloses(manager._content.get_global_rect()) and
@@ -257,6 +267,17 @@ func _test_rendered_browser() -> void:
 	manager.apply_metrics(UiMetrics.new(19))
 	_assert(manager._join_host.text == "  http://localhost:3001  " and manager._status.text == "Connection failed", "font changes preserve typed endpoint and feedback")
 	_assert(_nodes_named(manager, "BrowserContent").size() == 1, "font rebuild detaches old content immediately")
+	var managed_actions := [0, 0]
+	manager.local_server_selected.connect(func(_id: String) -> void: managed_actions[0] += 1)
+	manager.local_delete_requested.connect(func() -> void: managed_actions[1] += 1)
+	manager.request_server_selection("unknown")
+	manager.set_local_management_state({"can_delete": false})
+	manager.request_local_delete()
+	_assert(managed_actions == [0, 0], "unknown or running servers cannot acquire deletion capabilities")
+	manager.set_local_management_state({"can_delete": true})
+	manager.request_server_selection("server-" + "b".repeat(24))
+	manager.request_local_delete()
+	_assert(managed_actions == [1, 1], "selection and stopped-server deletion dispatch explicit management signals")
 	manager.set_local_management_state({"can_stop": true})
 	await process_frame
 	var stop_buttons := _nodes_named(manager, "Stop local")

@@ -16,6 +16,8 @@ func _initialize() -> void:
 	_assert(adapter.runtime_path("C:/Program Files/Continuum") == "C:/Program Files/Continuum/spacetimedb-standalone.exe", "runtime path selects the Windows executable")
 	_assert(adapter.windows_task_xml("C:/bad\"path", "runtime", "cli", "module", "127.0.0.1:3001", "continuum", "data", "config", "lock", "log", "manifest", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "nonce") == "", "quoted paths are rejected")
 	_assert(adapter.windows_task_xml("supervisor", "runtime", "cli", "module", "0.0.0.0:3001", "continuum", "data", "config", "lock", "log", "manifest", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "nonce") == "", "non-local endpoints are rejected")
+	_assert(not adapter.windows_task_xml("supervisor", "runtime", "cli", "module", "127.0.0.1:3002", "continuum", "second-data", "config", "lock", "log", "manifest", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", "nonce", "Mithrel").is_empty(), "alternate local server ports produce a task")
+	_assert(adapter._task_name("C:/first/data") != adapter._task_name("C:/second/data"), "different servers have independent Windows logon tasks")
 	print("NATIVE_SERVER_WINDOWS_ADAPTER_PASS")
 	quit(0)
 

@@ -63,6 +63,8 @@ func _run() -> void:
 	main._on_connection_error(2, "fixture token failure")
 	_check(not browser._join_button.disabled and not browser._local_start.disabled, "manual token failure releases connection busy")
 	main.leave_session()
+	await _authentication_failures(main, browser)
+	await _subscription_failures(main, browser)
 	main._native_controller.request_shutdown()
 	_check(await _wait_for(main._native_controller.finish_shutdown), "cold menu worker shuts down without launching or stopping")
 	main._native_controller.queue_free()
@@ -86,6 +88,53 @@ func _run() -> void:
 	await _controller_status()
 	print("NATIVE_CONTROLS_PASS" if failures == 0 else "NATIVE_CONTROLS_FAIL")
 	get_tree().quit(0 if failures == 0 else 1)
+
+func _authentication_failures(main: Node, browser: ContinuumServerManagement) -> void:
+	for direct: bool in [false, true]:
+		main._session_requested = true
+		main._direct_launch = direct
+		main._bind_client(SpacetimeDB.Continuum)
+		main._show_server_management()
+		main._on_connection_error(401, "This server rejected the saved authentication token.")
+		_check(not main._session_requested and main._reconnect_timer == null, "authentication rejection terminates manual and direct joins without a retry loop")
+		_check(browser._status_warning and browser._status.text.contains("Authentication failed") and not browser._join_button.disabled, "authentication rejection explains the failure and unlocks another join")
+		await get_tree().process_frame
+
+func _subscription_failures(main: Node, browser: ContinuumServerManagement) -> void:
+	var client: ContinuumModuleClient = SpacetimeDB.Continuum
+	var history_size: int = main._server_history.entries().size()
+	for direct: bool in [false, true]:
+		main._session_requested = true
+		main._direct_launch = direct
+		main._bind_client(client)
+		main._show_server_management()
+		var handle := SpacetimeDBSubscription.create(client, 71, ["SELECT * FROM production_policy"])
+		client.add_child(handle)
+		client._pending_subscriptions[71] = handle
+		main._subscription = handle
+		handle.end.connect(main._on_bootstrap_ended.bind(handle, main._session_generation))
+		var error := SubscriptionErrorMessage.new()
+		error.query_id = QueryIdData.new(71)
+		error.error_message = 'no such table: `production_policy`, executing: `SELECT * FROM production_policy`'
+		client._handle_parsed_message(error)
+		_check(not main._session_requested and not main._state_ready and main._subscription == null, "server subscription rejection terminates both manual and direct joins")
+		_check(browser.visible and browser._status_warning and browser._status.text.contains(error.error_message) and browser._status.text.contains("Update module"), "Servers immediately displays the actual schema error and safe recovery")
+		_check(not browser._join_button.disabled and not browser._local_start.disabled and main._reconnect_timer == null, "schema failures unlock retry without automatic reconnect loops")
+		_check(main._server_history.entries().size() == history_size and main._resume_context.is_empty(), "rejected subscriptions never create successful history or Resume targets")
+		await get_tree().process_frame
+	main._session_requested = true
+	main._direct_launch = false
+	main._bind_client(client)
+	main._show_server_management()
+	var timeout := SpacetimeDBSubscription.create(client, 72, ["SELECT * FROM colony"])
+	client.add_child(timeout)
+	client._pending_subscriptions[72] = timeout
+	main._subscription = timeout
+	var generation: int = main._session_generation
+	main._on_bootstrap_timeout(weakref(timeout), generation)
+	main._on_subscription_applied(timeout, generation)
+	_check(not main._session_requested and not main._state_ready and browser._status.text.contains("Timed out"), "bootstrap timeout reports failure and late acknowledgement cannot admit play")
+	await get_tree().process_frame
 
 func _controller_status() -> void:
 	var controller := ContinuumNativeServerController.new()
