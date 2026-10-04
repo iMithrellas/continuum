@@ -15,6 +15,7 @@ const REQUIRED_METHODS := [
 	"is_layout_dirty"
 ]
 const MICRO_PANELS := ["status", "session", "performance"]
+const NORMALIZED_RECT_EPSILON := 0.000001
 const LEGACY_PANELS := [
 	"overview",
 	"people",
@@ -71,9 +72,13 @@ func _geometry_contracts(deck: Variant) -> void:
 		"map equals complete overlay area"
 	)
 	var viewport := get_viewport().get_visible_rect()
+	var map_rect: Rect2 = main.map.get_global_rect()
 	check(
-		main.map.get_global_rect().is_equal_approx(viewport),
-		"map fills viewport: no header reservation"
+		(
+			map_rect.position.distance_to(viewport.position) <= 1.0
+			and map_rect.size.distance_to(viewport.size) <= 1.0
+		),
+		"map fills viewport: no header reservation (within one logical pixel of layout rounding)"
 	)
 	check(
 		is_equal_approx(get_window().content_scale_factor, _scale / 100.0), "single viewport scale"
@@ -155,6 +160,22 @@ func _command_contracts(deck: Variant) -> void:
 		"Command card lists workspaces and active diagnostics"
 	)
 	check("13" in copy, "Command card footer reports authorized panel total")
+	for id: String in deck.model.workspaces:
+		var workspace_button := card.find_child("Workspace_" + id, true, false) as Button
+		check(workspace_button != null, "Command exposes workspace navigation: " + id)
+		if workspace_button == null:
+			continue
+		var title: String = deck.model.workspaces[id].name
+		for label: Label in workspace_button.find_children("*", "Label", true, false):
+			if label.text == title:
+				check(
+					label.size.x > 0 and label.size.y > 0,
+					"workspace title has actual rendered geometry: " + id
+				)
+				check(
+					workspace_button.get_global_rect().grow(1).encloses(label.get_global_rect()),
+					"workspace title fits its navigation button: " + id
+				)
 	check(
 		not "developer" in copy and not "admin" in copy, "Command card omits unauthorized entries"
 	)
@@ -163,7 +184,10 @@ func _command_contracts(deck: Variant) -> void:
 		check(button != null, "Command footer exposes " + action)
 		if button != null:
 			check(
-				rect.grow(1).encloses(button.get_global_rect()),
+				(
+					rect.grow(1).encloses(button.get_global_rect())
+					and bounds.grow(1).encloses(button.get_global_rect())
+				),
 				"Command footer route remains bounded and reachable: " + action
 			)
 	check(main._map_input_blocked(rect.get_center()), "Command card hit area blocks map input")
@@ -221,7 +245,10 @@ func _state_contracts(deck: Variant) -> void:
 	check(deck.is_layout_dirty(), "saved baseline stays distinct from autosaved edits after reload")
 	deck.revert_workspace()
 	await settle()
-	check(deck.state("people").rect == before.rect, "revert restores saved rectangle")
+	check(
+		_normalized_rect_equal(deck.state("people").rect, before.rect, "revert/people"),
+		"revert restores saved rectangle"
+	)
 	check(deck.state("people").open == before.open, "revert restores saved open state")
 	check(
 		deck.state("people").get("minimized", false) == before.get("minimized", false),
@@ -244,7 +271,10 @@ func _state_contracts(deck: Variant) -> void:
 		await settle()
 		check(
 			micro.size.is_equal_approx(micro.micro_size().min(deck.area.size)),
-			"micro reopen uses current natural content dimensions, not viewport: " + key
+			(
+				"micro reopen uses current natural content dimensions, not viewport: %s actual=%s expected=%s"
+				% [key, micro.size, micro.micro_size().min(deck.area.size)]
+			)
 		)
 		check(
 			deck.state(key).rect.slice(2) == dimensions_before,
@@ -428,9 +458,52 @@ func _migration_contracts() -> void:
 	var reload := WorkspaceLayout.new()
 	check(reload.load_from(path), "v4 round-trip loads")
 	check(
-		reload.workspaces.custom_legacy == model.workspaces.custom_legacy,
+		_json_layout_equal(
+			reload.workspaces.custom_legacy, model.workspaces.custom_legacy, "v4/custom_legacy"
+		),
 		"v4 round-trip loses no panel preferences"
 	)
+
+
+## JSON may move a normalized coordinate by machine epsilon. A 1e-6 tolerance
+## is under 0.003 physical px at the tested budgets, not a layout-error allowance.
+func _normalized_rect_equal(actual: Array, expected: Array, context: String) -> bool:
+	if actual.size() != expected.size():
+		return false
+	var equal := true
+	for axis in actual.size():
+		var delta := absf(float(actual[axis]) - float(expected[axis]))
+		if delta > 0:
+			print(
+				(
+					"ATLAS_JSON_RECT_DELTA %s axis=%d actual=%.17f expected=%.17f delta=%.17f tolerance=%.7f"
+					% [
+						context,
+						axis,
+						float(actual[axis]),
+						float(expected[axis]),
+						delta,
+						NORMALIZED_RECT_EPSILON
+					]
+				)
+			)
+		equal = equal and delta <= NORMALIZED_RECT_EPSILON
+	return equal
+
+
+func _json_layout_equal(actual: Variant, expected: Variant, context: String) -> bool:
+	if actual is Dictionary and expected is Dictionary:
+		if actual.size() != expected.size():
+			return false
+		var equal := true
+		for key: String in expected:
+			if not actual.has(key):
+				return false
+			equal = _json_layout_equal(actual[key], expected[key], context + "/" + key) and equal
+		return equal
+	if actual is Array and expected is Array and context.ends_with("/rect"):
+		return _normalized_rect_equal(actual, expected, context)
+	return actual == expected
 
 
 func _settings_contracts(deck: Variant) -> void:
@@ -452,6 +525,20 @@ func _settings_contracts(deck: Variant) -> void:
 
 
 func _diagnostics_shortcut_contracts(deck: Variant) -> void:
+	var now := Time.get_ticks_usec()
+	main._diagnostics_stats.reset()
+	main._diagnostics_stats.observe_tick(now)
+	main._diagnostics_stats.observe_tick(now + 16000)
+	check(
+		main._diagnostics_stats.refresh(now + 16000, true).count == 1,
+		"actual main diagnostics retain monotonic frame samples"
+	)
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	check(
+		main._diagnostics_stats.refresh(now + 16000, true).count == 0,
+		"actual main focus loss resets diagnostic samples"
+	)
+	main._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
 	main.configure_diagnostics(false, false, false)
 	deck.close_command()
 	await _key(KEY_F8)

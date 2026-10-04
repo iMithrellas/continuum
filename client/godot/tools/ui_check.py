@@ -14,7 +14,7 @@ GODOT = os.environ.get("GODOT", "godot")
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--review-only", action="store_true", help="focused F1/F2 production regressions and actual PCK, not unchanged full gates")
+    parser.add_argument("--review-only", action="store_true", help="focused Atlas production contracts and actual PCK, skipping unchanged full map/data gates")
     parser.add_argument("--legacy-ui", action="store_true", help="also run historical two-strip composition expectations")
     options = parser.parse_args()
     review_only = options.review_only
