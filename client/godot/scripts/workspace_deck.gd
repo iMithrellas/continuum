@@ -51,6 +51,11 @@ var command_card: CommandCard
 var _command_keyboard := false
 var _edge_elapsed := 0.0
 var _close_elapsed := 0.0
+var _edge_armed := false
+var _edge_suppressed := false
+var _pointer_down := false
+var _command_key_event_id := 0
+var _command_key_frame := -1
 
 
 func setup(
@@ -147,6 +152,7 @@ func setup(
 	map_control.reparent(area)
 	map_control.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	area.resized.connect(_apply_layout)
+	area.resized.connect(_fit_command)
 	area.resized.connect(_fit_navigation)
 	resized.connect(_fit_header)
 	_fit_header.call_deferred()
@@ -193,8 +199,10 @@ func _resize_diagnostics_host() -> void:
 	var collapsed: bool = (
 		_ready_layout and windows.has("performance") and state("performance").minimized
 	)
-	diagnostics_host.custom_minimum_size = Vector2(
-		100 if collapsed else (360 if _diagnostics_graph else 224), 0
+	diagnostics_host.custom_minimum_size = (
+		Vector2(80 if collapsed else (400 if _diagnostics_graph else 320), 22)
+		if diagnostics_host.visible
+		else Vector2.ZERO
 	)
 
 
@@ -500,8 +508,31 @@ func focus_panel(key: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var point: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
+		var at_edge: bool = point.x >= 0 and point.x <= 6 and point.y >= 0 and point.y <= size.y
+		if not at_edge:
+			_edge_suppressed = false
+			_edge_elapsed = 0
+		_edge_armed = (
+			at_edge
+			and not _edge_suppressed
+			and not _pointer_down
+			and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+		)
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		_pointer_down = event.pressed
+		_edge_armed = false
+		_edge_elapsed = 0
 	if _ready_layout and event is InputEventKey and event.pressed and not event.echo:
 		if event.ctrl_pressed and event.keycode in [KEY_K, KEY_P]:
+			if (
+				_command_key_event_id == event.get_instance_id()
+				and _command_key_frame == Engine.get_process_frames()
+			):
+				return
+			_command_key_event_id = event.get_instance_id()
+			_command_key_frame = Engine.get_process_frames()
 			if is_command_open():
 				close_command()
 			else:
@@ -637,35 +668,60 @@ func _apply_layout() -> void:
 		_cancel_gestures()
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
+	var expanded_standard := false
+	for key: String in order:
+		if (
+			key not in ["status", "session", "performance"]
+			and authorized[key]
+			and state(key).open
+			and not state(key).minimized
+		):
+			expanded_standard = true
 	if (
 		compact
 		and (
 			_compact_panel.is_empty()
 			or not authorized.get(_compact_panel, false)
 			or not state(_compact_panel).open
+			or _compact_panel in ["status", "session", "performance"]
+			or (state(_compact_panel).minimized and expanded_standard)
 		)
 	):
 		_compact_panel = ""
 		for key: String in order:
-			if authorized[key] and state(key).open and not state(key).minimized:
+			if (
+				key not in ["status", "session", "performance"]
+				and authorized[key]
+				and state(key).open
+				and not state(key).minimized
+			):
 				_compact_panel = key
 		if _compact_panel.is_empty():
 			for key: String in order:
-				if authorized[key] and state(key).open:
+				if (
+					key not in ["status", "session", "performance"]
+					and authorized[key]
+					and state(key).open
+				):
 					_compact_panel = key
 	for key: String in order:
 		var window: WorkspaceWindow = windows[key]
 		var saved := state(key)
+		var micro := key in ["status", "session", "performance"]
 		window.visible = (
 			authorized[key]
 			and saved.open
 			and not map_only
-			and (not compact or key == _compact_panel)
+			and (not compact or micro or key == _compact_panel)
 		)
-		window.apply_state(saved.pinned, compact)
+		window.apply_state(saved.pinned, compact and not micro)
 		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
-		var rect := Rect2(Vector2.ZERO, area.size) if compact else _floating_rect(key)
+		var rect := (
+			Rect2(Vector2.ZERO, area.size)
+			if compact and not micro and not saved.minimized
+			else _floating_rect(key)
+		)
 		if not compact:
 			rect.position = rect.position.round()
 			rect.size = rect.size.round()
@@ -674,6 +730,10 @@ func _apply_layout() -> void:
 		if window.get_parent() == area:
 			area.move_child(window, -1)
 		window.set_focused(key == _compact_panel)
+	if compact:
+		for key: String in ["status", "session", "performance"]:
+			if windows.has(key) and windows[key].get_parent() == area:
+				area.move_child(windows[key], -1)
 	_map.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_map.queue_redraw()
 	_queue_body_focus_reveal()
@@ -766,8 +826,11 @@ func _fit_command() -> void:
 		return
 	command_card.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
 	command_card.position = Vector2(8, 8)
-	command_card.custom_minimum_size.x = minf(272, maxf(1, size.x - 16))
-	command_card.size = Vector2(minf(272, maxf(1, size.x - 16)), maxf(1, size.y - 16))
+	var width := minf(272, maxf(1, area.size.x - 16))
+	if command_card.has_method("fit_width"):
+		command_card.call("fit_width", width)
+	command_card.custom_minimum_size.x = width
+	command_card.size = Vector2(width, maxf(1, area.size.y - 16))
 
 
 func is_command_open() -> bool:
@@ -796,6 +859,8 @@ func close_command() -> void:
 	_command_keyboard = false
 	_edge_elapsed = 0
 	_close_elapsed = 0
+	_edge_armed = false
+	_edge_suppressed = true
 
 
 func _process(delta: float) -> void:
@@ -809,7 +874,11 @@ func _process(delta: float) -> void:
 	if not is_command_open():
 		_edge_elapsed = (
 			_edge_elapsed + delta
-			if point.x >= 0 and point.x <= 6 and point.y >= 0 and point.y <= size.y
+			if (
+				_edge_armed
+				and not _pointer_down
+				and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)
+			)
 			else 0.0
 		)
 		if _edge_elapsed >= 0.12:
@@ -1127,6 +1196,11 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if not _ready_layout:
+		return
+	if (
+		_command_key_event_id == event.get_instance_id()
+		and _command_key_frame == Engine.get_process_frames()
+	):
 		return
 	if event.keycode == KEY_ESCAPE and is_command_open():
 		close_command()

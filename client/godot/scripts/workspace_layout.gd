@@ -308,7 +308,10 @@ func save_to(path := SAVE_PATH) -> Error:
 						"show_panel_headers": show_panel_headers,
 						"workspaces": workspaces,
 						"saved_workspaces": saved_workspaces,
-					}
+					},
+					"",
+					false,
+					true
 				)
 			)
 		)
@@ -398,8 +401,24 @@ func _read_workspaces(entries: Dictionary, migrate := false) -> Dictionary:
 				[
 					clampf(saved.rect[0], 0, 1),
 					clampf(saved.rect[1], 0, 1),
-					clampf(saved.rect[2], 0.05, 1),
-					clampf(saved.rect[3], 0.05, 1)
+					clampf(
+						saved.rect[2],
+						(
+							0.001
+							if not migrate or key in ["status", "session", "performance"]
+							else 0.05
+						),
+						1
+					),
+					clampf(
+						saved.rect[3],
+						(
+							0.001
+							if not migrate or key in ["status", "session", "performance"]
+							else 0.05
+						),
+						1
+					)
 				]
 			)
 			for flag: String in ["open", "minimized", "pinned"]:
