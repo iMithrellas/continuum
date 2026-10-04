@@ -13,6 +13,8 @@ const SIDEBAR_WIDTH := 240.0
 const SUBTLE := Color("8b929a")
 const DIVIDER := Color("262a2f")
 const MEDIUM_FONT = preload("res://ui/theme/fonts/IBMPlexSans-Medium.woff2")
+const PRIMARY_UI_SCALES := [100, 125, 150, 175]
+const EXTRA_UI_SCALES := [75, 200]
 
 var main: Control
 var settings := ClientSettings.new()
@@ -40,6 +42,12 @@ var _error_row: HBoxContainer
 var _live_hint: Label
 var _resume_hint: Label
 var _close_button: TextureButton
+var _scale_row: BoxContainer
+var _scale_controls: BoxContainer
+var _scale_segments: GridContainer
+var _scale_buttons: Dictionary = {}
+var _scale_more: MenuButton
+var _scale_settings_value := -1
 
 # Legacy metrics stay in the public API, but viewport scaling owns all dimensions.
 # gdlint: disable=unused-argument
@@ -245,48 +253,7 @@ func _build_settings() -> void:
 	section.add_theme_color_override("font_color", SUBTLE)
 	_settings_panel.add_child(section)
 	_space(_settings_panel, 2)
-	var scale_row := HBoxContainer.new()
-	scale_row.add_theme_constant_override("separation", 16)
-	_settings_row().add_child(scale_row)
-	var scale_caption := VBoxContainer.new()
-	scale_caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scale_caption.add_theme_constant_override("separation", 2)
-	scale_row.add_child(scale_caption)
-	var scale_title := _label("UI scale")
-	scale_title.add_theme_color_override("font_color", ThemeTokens.color("ink"))
-	scale_caption.add_child(scale_title)
-	scale_caption.add_child(_description("Panels, menus and text"))
-	_ui_scale = OptionButton.new()
-	_ui_scale.name = "UiScale"
-	_ui_scale.custom_minimum_size = Vector2(88, 28)
-	_ui_scale.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	_ui_scale.add_theme_font_override("font", ThemeTokens.font("log"))
-	_ui_scale.add_theme_font_size_override("font_size", 12)
-	_ui_scale.tooltip_text = "Scale panels, menus and text."
-	for state: String in ["normal", "hover", "pressed"]:
-		var style := _box(
-			ThemeTokens.color("bg-000" if state == "normal" else "bg-200"),
-			ThemeTokens.color("line-100"),
-			4
-		)
-		style.content_margin_left = 9
-		style.content_margin_right = 9
-		style.content_margin_top = 2
-		style.content_margin_bottom = 2
-		_ui_scale.add_theme_stylebox_override(state, style)
-	for value: int in ClientSettings.UI_SCALES:
-		_ui_scale.add_item("%d%%" % value, value)
-	_ui_scale.select(
-		ClientSettings.UI_SCALES.find(ClientSettings.normalize_ui_scale(settings.ui_scale_percent))
-	)
-	_ui_scale.item_selected.connect(
-		func(index: int) -> void:
-			_ui_scale.select(index)
-			settings.ui_scale_percent = _ui_scale.get_item_id(index)
-			settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
-			_apply_settings()
-	)
-	scale_row.add_child(_ui_scale)
+	_build_scale_control()
 	_reduced_motion = CheckButton.new()
 	_reduced_motion.name = "ReducedMotion"
 	_reduced_motion.text = "Reduce motion"
@@ -334,9 +301,147 @@ func _layout_modal() -> void:
 	_sidebar_style.corner_radius_bottom_left = 0 if stacked else 5
 	for edge: String in ["left", "right"]:
 		_content.add_theme_constant_override("margin_" + edge, 16 if stacked else 20)
+	_layout_scale_control(stacked)
 	var height := minf(available.y, maxf(420, _columns.get_combined_minimum_size().y + 2))
 	_modal.size = Vector2(width, height)
 	_modal.position = ((size - _modal.size) * 0.5).floor()
+
+
+func _build_scale_control() -> void:
+	_scale_row = BoxContainer.new()
+	_scale_row.name = "UiScaleRow"
+	_scale_row.add_theme_constant_override("separation", 16)
+	_settings_row().add_child(_scale_row)
+	var caption := VBoxContainer.new()
+	caption.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	caption.add_theme_constant_override("separation", 2)
+	_scale_row.add_child(caption)
+	var title := _label("UI scale")
+	title.add_theme_color_override("font_color", ThemeTokens.color("ink"))
+	caption.add_child(title)
+	caption.add_child(_description("Panels, menus and text"))
+	_scale_controls = BoxContainer.new()
+	_scale_controls.name = "UiScaleControls"
+	_scale_controls.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_scale_controls.add_theme_constant_override("separation", 4)
+	_scale_row.add_child(_scale_controls)
+	var well := PanelContainer.new()
+	well.name = "UiScaleWell"
+	var well_style := _box(ThemeTokens.color("bg-000"), ThemeTokens.color("line-100"), 4)
+	well_style.set_content_margin_all(3)  # 1px border plus the prototype's 2px padding.
+	well.add_theme_stylebox_override("panel", well_style)
+	_scale_controls.add_child(well)
+	_scale_segments = GridContainer.new()
+	_scale_segments.name = "UiScaleSegments"
+	_scale_segments.columns = 4
+	_scale_segments.add_theme_constant_override("h_separation", 2)
+	_scale_segments.add_theme_constant_override("v_separation", 2)
+	well.add_child(_scale_segments)
+	for value: int in PRIMARY_UI_SCALES:
+		var button := Button.new()
+		button.name = "UiScale%d" % value
+		button.text = "%d%%" % value
+		button.toggle_mode = true
+		button.custom_minimum_size.y = 24
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.tooltip_text = "Scale panels, menus and text to %d%%." % value
+		button.add_theme_font_override("font", ThemeTokens.font("log"))
+		button.add_theme_font_size_override("font_size", 12)
+		button.add_theme_color_override("font_color", DeckTheme.MUTED)
+		for state: String in ["font_hover_color", "font_pressed_color", "font_focus_color"]:
+			button.add_theme_color_override(state, ThemeTokens.color("ink"))
+		_style_scale_segment(button, 9)
+		button.pressed.connect(_pick_ui_scale.bind(value))
+		_scale_buttons[value] = button
+		_scale_segments.add_child(button)
+	_scale_more = MenuButton.new()
+	_scale_more.name = "UiScaleMore"
+	_scale_more.text = "More…"
+	_scale_more.custom_minimum_size.y = 24
+	_scale_more.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_scale_more.tooltip_text = "Additional UI scales: 75% and 200%."
+	_scale_more.add_theme_font_override("font", ThemeTokens.font("log"))
+	_scale_more.add_theme_font_size_override("font_size", 12)
+	_scale_more.add_theme_color_override("font_color", DeckTheme.MUTED)
+	_style_scale_segment(_scale_more, 6)
+	_scale_controls.add_child(_scale_more)
+	# Preserve the OptionButton data/signals without an invisible keyboard stop.
+	_ui_scale = OptionButton.new()
+	_ui_scale.name = "UiScale"
+	_ui_scale.focus_mode = Control.FOCUS_NONE
+	_ui_scale.visible = false
+	_scale_controls.add_child(_ui_scale)
+	var values: Array = ClientSettings.UI_SCALES.duplicate()
+	for value: int in PRIMARY_UI_SCALES + EXTRA_UI_SCALES:
+		if not values.has(value):
+			values.append(value)
+	for value: int in values:
+		_ui_scale.add_item("%d%%" % value, value)
+		if not PRIMARY_UI_SCALES.has(value):
+			_scale_more.get_popup().add_radio_check_item("%d%%" % value, value)
+	_ui_scale.item_selected.connect(
+		func(index: int) -> void:
+			if index >= 0 and index < _ui_scale.item_count:
+				_pick_ui_scale(_ui_scale.get_item_id(index))
+	)
+	_scale_more.get_popup().id_pressed.connect(_pick_ui_scale)
+	_sync_ui_scale_controls()
+
+
+func _style_scale_segment(button: Button, padding: int) -> void:
+	for state: String in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var active := state in ["pressed", "hover_pressed"]
+		var style := _box(Color("3a4047") if active else Color.TRANSPARENT, Color.TRANSPARENT, 3)
+		style.set_border_width_all(0)
+		style.content_margin_left = padding
+		style.content_margin_right = padding
+		button.add_theme_stylebox_override(state, style)
+	var focus := _box(Color.TRANSPARENT, ThemeTokens.color("accent"), 3)
+	focus.draw_center = false
+	button.add_theme_stylebox_override("focus", focus)
+
+
+func _layout_scale_control(stacked: bool) -> void:
+	if _scale_row == null:
+		return
+	if _scale_row.vertical == stacked and _scale_segments.columns == (2 if stacked else 4):
+		return
+	_scale_row.vertical = stacked
+	_scale_row.add_theme_constant_override("separation", 8 if stacked else 16)
+	_scale_controls.vertical = stacked
+	_scale_segments.columns = 2 if stacked else 4
+	for button: Button in _scale_buttons.values():
+		_style_scale_segment(button, 4 if stacked else 9)
+
+
+func _pick_ui_scale(value: int) -> void:
+	settings.ui_scale_percent = value
+	settings.font_size = ClientSettings.DEFAULT_FONT_SIZE
+	_apply_settings()
+
+
+func _sync_ui_scale_controls(prefer_settings := false) -> void:
+	if _ui_scale == null:
+		return
+	var value := settings.ui_scale_percent
+	if prefer_settings or value != _scale_settings_value:
+		for index in _ui_scale.item_count:
+			if _ui_scale.get_item_id(index) == value:
+				_ui_scale.select(index)
+				break
+		_scale_settings_value = value
+	elif _ui_scale.selected >= 0:
+		# OptionButton.select() is a silent visual update, just as before the redesign.
+		value = _ui_scale.get_selected_id()
+	for scale: int in _scale_buttons:
+		var button: Button = _scale_buttons[scale]
+		button.set_pressed_no_signal(scale == value)
+		button.disabled = _ui_scale.disabled
+	var popup := _scale_more.get_popup()
+	for index in popup.item_count:
+		popup.set_item_checked(index, popup.get_item_id(index) == value)
+	_scale_more.text = "More…" if PRIMARY_UI_SCALES.has(value) else "%d%%…" % value
+	_scale_more.disabled = _ui_scale.disabled
 
 
 func _settings_row() -> PanelContainer:
@@ -394,6 +499,7 @@ func set_busy(busy: bool) -> void:
 func _process(_delta: float) -> void:
 	if visible:
 		_refresh_last_button()
+		_sync_ui_scale_controls()
 		_error_row.visible = not _error.text.is_empty()
 		_error_glyph.visible = _error_row.visible
 
@@ -470,6 +576,7 @@ func _graph_changed(value: bool) -> void:
 func _apply_settings() -> void:
 	if main != null and main.has_method("apply_settings"):
 		main.apply_settings(settings)
+	_sync_ui_scale_controls(true)
 	settings_changed.emit(settings)
 
 
@@ -477,6 +584,7 @@ func _apply_settings() -> void:
 func apply_metrics(next_metrics: UiMetrics) -> void:
 	metrics = UiMetrics.new()
 	theme = DeckTheme.create(metrics)
+	_sync_ui_scale_controls(true)
 	_layout_modal.call_deferred()
 
 
