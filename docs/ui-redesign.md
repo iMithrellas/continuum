@@ -1,5 +1,12 @@
 # UI redesign
 
+> **Superseded composition:** the user-provided D1 Atlas command-card prototype
+> replaces the two-global-strip header requirements below. The current visual
+> and interaction acceptance targets are in [Atlas command card and floating
+> panels](atlas-ui.md). Shared no-docking/map-space, live-renderer, honest-data,
+> and permission invariants remain applicable; do not treat the old two-strip
+> composition as current acceptance criteria.
+
 **Status:** integrated candidate; combined independent review required before main fast-forward
 **Design source:** supplied UI design package; `tokens.json` is authoritative over prose and HTML previews.
 **Implementation base:** `a39e9bcd72d953c178e6c4c9dce0bb2ac67359e3`  

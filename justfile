@@ -1,6 +1,18 @@
 set shell := ["bash", "-cu"]
 set positional-arguments
 
+# Scoped Atlas UI GDScript checks; gdformatrc excludes addons/generated bindings.
+atlas_ui_gd := "client/godot/scripts/workspace_deck.gd client/godot/scripts/workspace_layout.gd client/godot/scripts/command_card.gd client/godot/scripts/main.gd client/godot/scripts/main_menu.gd client/godot/scripts/diagnostics_overlay.gd client/godot/ui/components/roster_row.gd client/godot/ui/components/resource_readout.gd client/godot/ui/components/activity_feed.gd client/godot/ui/components/log_entry.gd client/godot/scripts/history_chart.gd client/godot/tools/atlas_ui*.gd"
+
+lint-gd:
+    gdlint {{ atlas_ui_gd }}
+
+fmt-gd-check:
+    gdformat --check {{ atlas_ui_gd }}
+
+test-atlas-ui:
+    GODOT={{ quote(godot) }} python3 client/godot/tools/atlas_ui_checks.py
+
 # Isolated backend-free UI contracts, typed composition and exported-pack widgets.
 test-ui:
     GODOT={{ quote(godot) }} python3 client/godot/tools/ui_check.py
