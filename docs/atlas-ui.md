@@ -100,13 +100,46 @@ addons and generated SpacetimeDB bindings. `client/godot/gdlintrc` is the lint
 configuration; do not broaden the new recipes to addons/bindings or unrelated
 legacy files. `lint-gd` and `fmt-gd-check` first `cd client/godot` so both tools
 discover their project config. Their scoped list covers the Atlas workspace,
-window, command, diagnostics, menu, chart, shared readout/feed/roster components,
-and `tools/atlas*.gd`, including forthcoming fixture scripts. `test-atlas-ui`
-invokes the backend-free
-`client/godot/tools/atlas_ui_checks.py` runner with `GODOT` support. That runner
-is being added separately; this recipe does not claim it already exists or
-passes. A render mode should be added only when that runner defines its CLI and
-private-display behavior.
+window, command, diagnostics, menu, chart, UI data, icons, shared
+readout/feed/roster components, the `tools/atlas*.gd` family, and retained map,
+planning, role, workspace, menu, and diagnostics tests. `test-atlas-ui` runs the
+backend-free `client/godot/tools/atlas_ui_checks.py` runner with `GODOT`
+support. It imports the project, tests the actual Main composition against a
+generated typed local database including a 64×64 world, and makes reducer calls
+fail locally before SDK transport; it does not connect to a live server. The
+fixture is production UI with deterministic demonstration rows, not live colony
+state.
+
+Run contracts with `just test-atlas-ui`. A render run requires private Xvfb;
+provide its executable without hard-coding a machine-specific path in the repo:
+
+```sh
+XVFB=/path/to/Xvfb python3 client/godot/tools/atlas_ui_checks.py --render
+```
+
+The standard render matrix captures diagnostics with Command open, daily, and
+settings scenarios. For a narrow, single screenshot (paths are written under
+the runner's reported `/tmp/opencode` evidence directory), run:
+
+```sh
+XVFB=/path/to/Xvfb python3 client/godot/tools/atlas_ui_checks.py \
+  --render --screen=360x480 --scale=150 --workspace=diagnostics --command
+```
+
+To capture fixtures only, without running contracts, add `--fixture-only`. The
+single-capture options include `--workspace=diagnostics`, `--command`, and
+`--settings`. `--keep-open` requires `--render --screen=...`; it leaves the
+fixture interactive on the runner's private Xvfb display until closed. This is
+not the human desktop and must not be treated as a live-server session. All
+home/XDG state is isolated.
+
+Reference CSS dimensions are at 100% logical scale; the prototype's `uiScale`
+value of 125% is presentational state and does not actually scale its HTML. The
+Godot implementation applies real 125% UI scaling, so apparent pixel geometry
+differences at that setting are intentional. Private screenshots use software
+llvmpipe: rendered Performance/FPS values are not hardware performance
+measurements or representative live-server telemetry. Screenshot/test
+execution is evidence only; it does not by itself certify acceptance.
 
 The older `docs/ui-redesign.md` remains useful for shared simulation, map,
 honest-data, floating-only, and permission invariants. Its two-strip header

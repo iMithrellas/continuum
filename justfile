@@ -2,7 +2,7 @@ set shell := ["bash", "-cu"]
 set positional-arguments
 
 # Run from the Godot project root so gdlintrc/gdformatrc are discovered.
-atlas_ui_gd := "scripts/workspace_deck.gd scripts/workspace_layout.gd scripts/workspace_window.gd scripts/command_card.gd scripts/main.gd scripts/main_menu.gd scripts/diagnostics_overlay.gd scripts/diagnostics_bar.gd scripts/history_chart.gd ui/components/roster_row.gd ui/components/resource_readout.gd ui/components/activity_feed.gd ui/components/log_entry.gd tools/atlas*.gd"
+atlas_ui_gd := "scripts/workspace_deck.gd scripts/workspace_layout.gd scripts/workspace_window.gd scripts/command_card.gd scripts/main.gd scripts/main_menu.gd scripts/diagnostics_overlay.gd scripts/diagnostics_bar.gd scripts/history_chart.gd scripts/ui_data.gd ui/theme/icons.gd ui/components/roster_row.gd ui/components/resource_readout.gd ui/components/activity_feed.gd ui/components/log_entry.gd tools/atlas*.gd tools/map_ui_test.gd tools/planning_test.gd tools/role_panels_test.gd tools/workspace_test.gd tools/main_menu_test.gd tools/diagnostics_integration_test.gd"
 
 lint-gd:
     cd client/godot && gdlint {{ atlas_ui_gd }}
