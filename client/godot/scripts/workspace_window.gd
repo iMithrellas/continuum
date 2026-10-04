@@ -40,6 +40,7 @@ var _start_pointer := Vector2.ZERO
 var _start_rect := Rect2()
 var drag_strip: HBoxContainer
 var _focused := false
+var _scroll_padding: MarginContainer
 
 
 func setup(title: String) -> void:
@@ -109,11 +110,18 @@ func setup(title: String) -> void:
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
+	_scroll_padding = MarginContainer.new()
+	_scroll_padding.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_scroll_padding.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	for side: String in ["left", "top", "right", "bottom"]:
+		_scroll_padding.add_theme_constant_override("margin_" + side, 0)
+	scroll.add_child(_scroll_padding)
 	content = VBoxContainer.new()
 	content.add_theme_constant_override("separation", 12)
 	content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.add_child(content)
+	_scroll_padding.add_child(content)
+	scroll.get_v_scroll_bar().visibility_changed.connect(_refresh_scroll_padding)
 	for key: String in RESIZE_DIRECTIONS:
 		var edges: Vector2i = RESIZE_DIRECTIONS[key]
 		var handle := Control.new()
@@ -203,6 +211,7 @@ func refresh_metrics() -> void:
 	scroll.offset_right = -scroll.offset_left
 	scroll.offset_top = chrome_height + 16
 	scroll.offset_bottom = -16
+	_refresh_scroll_padding()
 	for child: Node in titlebar.get_children():
 		if child is Button:
 			child.custom_minimum_size = Vector2(ThemeTokens.number("control-sm"), ThemeTokens.number("control-sm"))
@@ -220,6 +229,13 @@ func refresh_metrics() -> void:
 			handle.set_anchor(axis + 2, trailing)
 			handle.set_offset(axis, corner if edges[axis] == 0 else (-extent if edges[axis] > 0 else 0.0))
 			handle.set_offset(axis + 2, -corner if edges[axis] == 0 else (extent if edges[axis] < 0 else 0.0))
+
+func _refresh_scroll_padding() -> void:
+	# ScrollContainer already reserves the bar's themed width, but no inner gap.
+	# Keep that gap inside its content so hidden bars retain the full body width.
+	var gutter := int(ThemeTokens.number("space-2")) if scroll.get_v_scroll_bar().visible else 0
+	if _scroll_padding.get_theme_constant("margin_right") != gutter:
+		_scroll_padding.add_theme_constant_override("margin_right", gutter)
 
 func chrome_height() -> float:
 	return ThemeTokens.number("panel-header") + 8 if header_visible else ThemeTokens.number("control-sm") + 4

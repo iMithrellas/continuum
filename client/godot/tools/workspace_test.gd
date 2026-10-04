@@ -89,6 +89,9 @@ func _ready() -> void:
 	await _test_geometry(model)
 	if failed:
 		return
+	await _test_scrollbar_padding()
+	if failed:
+		return
 	await _test_manager()
 	if failed:
 		return
@@ -127,6 +130,75 @@ func _test_geometry(_model: WorkspaceLayout) -> void:
 	var maximum := WorkspaceLayout.clamp_resize_rect(Rect2(-900, -900, 1400, 1300), area, Vector2i(-1, -1))
 	_assert(maximum.position == Vector2.ZERO and maximum.end == Vector2(500, 400),
 		"top-left resize cannot escape the workspace")
+
+func _test_scrollbar_padding() -> void:
+	var host := get_tree().root
+	var old_size := host.size
+	var old_scale := host.content_scale_factor
+	host.size = Vector2i(1440, 900)
+	var window := WorkspaceWindow.new()
+	window.theme = DeckTheme.create()
+	window.position = Vector2(40, 40)
+	window.size = Vector2(280, 260)
+	host.add_child.call_deferred(window)
+	await get_tree().process_frame
+	window.setup("Scrollbar padding")
+	var probe := Control.new()
+	window.content.add_child(probe)
+	var bar := window.scroll.get_v_scroll_bar()
+	for scale: float in [1.0, 1.25, 1.5]:
+		host.content_scale_factor = scale
+		for compact_mode: bool in [false, true]:
+			window.apply_state(false, compact_mode)
+			window.refresh_metrics()
+			probe.custom_minimum_size.y = 80
+			await _settle_layout()
+			_assert_panel_padding(window, false, "short content at %s / compact %s" % [scale, compact_mode])
+			probe.custom_minimum_size.y = 600
+			await _settle_layout()
+			_assert_panel_padding(window, true, "overflow at %s / compact %s" % [scale, compact_mode])
+			window.scroll.scroll_vertical = 40
+			await _settle_layout()
+			_assert_panel_padding(window, true, "scrolled content")
+			_assert(window.scroll.scroll_vertical == 40, "padding changes never reset the scroll position")
+			window.set_collapsed(true)
+			window.set_collapsed(false)
+			await _settle_layout()
+			_assert_panel_padding(window, true, "restored panel")
+			window.size.y = 760
+			await _settle_layout()
+			_assert_panel_padding(window, false, "enlarged panel")
+			window.size.y = 260
+			await _settle_layout()
+			_assert_panel_padding(window, true, "shrunk panel")
+			var wide_track: StyleBox = bar.get_theme_stylebox("scroll").duplicate()
+			wide_track.content_margin_left = 32
+			wide_track.content_margin_right = 0
+			bar.add_theme_stylebox_override("scroll", wide_track)
+			await _settle_layout()
+			_assert(bar.size.x >= 32, "fixture exercises a wider themed scrollbar")
+			_assert_panel_padding(window, true, "wider themed scrollbar")
+			bar.remove_theme_stylebox_override("scroll")
+			probe.custom_minimum_size.y = 80
+			await _settle_layout()
+			_assert_panel_padding(window, false, "removed overflow")
+	window.free()
+	host.content_scale_factor = old_scale
+	host.size = old_size
+	print("WORKSPACE_SCROLLBAR_PADDING_PASS auto-visibility resize content-change collapse compact scale-100-125-150 themed-width")
+
+func _assert_panel_padding(window: WorkspaceWindow, overflowing: bool, context: String) -> void:
+	var viewport := window.scroll.get_global_rect()
+	var body := window.content.get_global_rect()
+	var bar := window.scroll.get_v_scroll_bar()
+	var gap := ThemeTokens.number("space-2") if overflowing else 0.0
+	var right := bar.global_position.x if overflowing else viewport.end.x
+	_assert(bar.visible == overflowing, "%s: scrollbar follows the content height" % context)
+	_assert(is_equal_approx(body.position.x, viewport.position.x), "%s: left content padding is unchanged" % context)
+	_assert(is_equal_approx(right - body.end.x, gap), "%s: content keeps exactly %spx clear of the scrollbar, without hidden-bar whitespace (body %s / scroll %s / bar %s)" % [context, gap, body, viewport, bar.get_global_rect()])
+	_assert(is_equal_approx(body.size.x, viewport.size.x - (bar.size.x if overflowing else 0.0) - gap), "%s: available width accounts for actual scrollbar thickness plus its gutter" % context)
+	_assert(is_equal_approx(window.get_global_rect().end.x - viewport.end.x, 12.0 if window.compact else 16.0), "%s: outer panel padding remains unchanged" % context)
+	_assert(not window.scroll.get_h_scroll_bar().visible, "%s: narrow panels never gain a horizontal scrollbar" % context)
 
 func _test_manager() -> void:
 	# Headless defaults to a tiny native Window; dialogs need a real host budget.

@@ -93,6 +93,7 @@ func _ready() -> void:
 	if _layout_qa:
 		await _check_header_contracts()
 		await _check_floating_input()
+		_check_panel_scrollbar_padding()
 		await _check_roster_layout_and_input()
 		await _check_tick_focus()
 		_check_day_readouts(main._feed)
@@ -440,16 +441,29 @@ func _check_typography(node: Node) -> void:
 		_check_typography(child)
 
 
+func _check_panel_scrollbar_padding() -> void:
+	for window: WorkspaceWindow in main.workspace.windows.values():
+		if not window.is_visible_in_tree() or window.collapsed:
+			continue
+		var bar := window.scroll.get_v_scroll_bar()
+		var gap := ThemeTokens.number("space-2") if bar.visible else 0.0
+		var right := bar.global_position.x if bar.visible else window.scroll.get_global_rect().end.x
+		check(absf(right - window.content.get_global_rect().end.x - gap) <= 1, "actual %s panel reserves a gutter only for a visible scrollbar" % window.name)
+
 func _check_roster_layout_and_input() -> void:
 	var window: WorkspaceWindow = main.workspace.windows.people
 	if not window.visible:
 		return
+	_check_roster_body_width(window)
+	if not main.workspace.compact:
+		var original_width := window.size.x
+		window.size.x = WorkspaceLayout.MIN_SIZE.x
+		for frame in 4: await get_tree().process_frame
+		_check_panel_scrollbar_padding()
+		_check_roster_body_width(window)
+		window.size.x = original_width
+		for frame in 4: await get_tree().process_frame
 	var viewport := window.scroll.get_global_rect()
-	for row: RosterRow in main._colonist_cards.values():
-		var rect := row.get_global_rect()
-		check(rect.position.x >= viewport.position.x and rect.end.x <= viewport.end.x + 1, "roster fits actual panel viewport without horizontal clipping: %s row=%s viewport=%s" % [row.model.name, rect, viewport])
-	var expanded: Rect2 = main._selected_card.get_global_rect()
-	check(expanded.end.x <= viewport.end.x + 1, "expanded needs and actions fit panel viewport at 280 logical pixel minimum")
 	var other: RosterRow = main._colonist_cards[1]
 	var point := other.get_global_rect().get_center()
 	if viewport.has_point(point):
@@ -462,6 +476,14 @@ func _check_roster_layout_and_input() -> void:
 		await get_tree().process_frame
 		check(main._selected_colonist == 1, "actual GUI pick reaches roster selection through decorative descendants")
 		main._select_colonist(0)
+
+func _check_roster_body_width(window: WorkspaceWindow) -> void:
+	var body := window.content.get_global_rect()
+	for row: RosterRow in main._colonist_cards.values():
+		var rect := row.get_global_rect()
+		check(rect.position.x >= body.position.x and rect.end.x <= body.end.x + 1, "roster fits scrollbar-aware panel body without horizontal clipping: %s row=%s body=%s" % [row.model.name, rect, body])
+	var expanded: Rect2 = main._selected_card.get_global_rect()
+	check(expanded.end.x <= body.end.x + 1, "expanded needs and actions fit scrollbar-aware body at %s logical pixels" % window.size.x)
 
 
 func _check_tick_focus() -> void:
