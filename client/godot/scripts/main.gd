@@ -169,6 +169,7 @@ var _session_diagnostics: SessionDiagnostics
 var _session_ping: SessionPingTransport
 var _diagnostics_overlay: DiagnosticsOverlay
 var _diagnostics_focus_paused := false
+var _diagnostics_configuring := false
 var _diagnostics_last_tick := -1
 var _diagnostics_last_refresh := -1
 var _server_history: ContinuumConnectionHistory
@@ -376,6 +377,7 @@ func _ready() -> void:
 	)
 	_create_diagnostics_overlay()
 	_configure_diagnostics_overlay()
+	workspace.layout_changed.connect(_sync_performance_diagnostics)
 	_setup_native_controller()
 	_large_world = LargeWorldSession.new()
 	_large_world.attach(map)
@@ -557,6 +559,8 @@ func _all_native_controllers() -> Array[ContinuumNativeServerController]:
 
 ## Menu-facing runtime API. Rebuilds theme metrics without changing server state.
 func apply_settings(settings: ClientSettings, persist := true) -> Error:
+	var was_configuring := _diagnostics_configuring
+	_diagnostics_configuring = true
 	_settings.font_size = clampi(
 		settings.font_size, ClientSettings.MIN_FONT_SIZE, ClientSettings.MAX_FONT_SIZE
 	)
@@ -584,6 +588,7 @@ func apply_settings(settings: ClientSettings, persist := true) -> Error:
 		_server_management.apply_metrics(_metrics)
 	map.queue_redraw()
 	_history_chart.queue_redraw()
+	_diagnostics_configuring = was_configuring
 	if persist:
 		return _settings.save_to()
 	return OK
@@ -1857,6 +1862,8 @@ func _resize_diagnostics_overlay() -> void:
 func _configure_diagnostics_overlay() -> void:
 	if _diagnostics_overlay == null:
 		return
+	var was_configuring := _diagnostics_configuring
+	_diagnostics_configuring = true
 	_diagnostics_overlay.apply_metrics(_metrics)
 	_diagnostics_overlay.configure(
 		_settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
@@ -1867,6 +1874,24 @@ func _configure_diagnostics_overlay() -> void:
 	_resize_diagnostics_overlay()
 	if not _settings.diagnostics_enabled:
 		_reset_diagnostics_samples()
+	if is_instance_valid(_menu):
+		_menu._diagnostics_toggle.set_pressed_no_signal(_settings.diagnostics_enabled)
+		_menu._graph_toggle.set_pressed_no_signal(_settings.diagnostics_graph_enabled)
+		_menu._graph_toggle.disabled = not _settings.diagnostics_enabled
+	_refresh_developer_summary()
+	_diagnostics_configuring = was_configuring
+
+
+## Panel state is authoritative for Command actions, not transient map-only visibility.
+## Settings/F8 drive the deck under the same guard, so layout feedback cannot recurse.
+func _sync_performance_diagnostics() -> void:
+	if _diagnostics_configuring or not is_instance_valid(_diagnostics_overlay):
+		return
+	var enabled: bool = workspace.state("performance").open
+	if enabled == _settings.diagnostics_enabled:
+		return
+	_settings.diagnostics_enabled = enabled
+	_configure_diagnostics_overlay()
 
 
 func _reset_diagnostics_samples() -> void:
@@ -2092,12 +2117,23 @@ func _reveal_planning_map(key: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if _system_modal_visible():
+		return
 	if event is InputEventKey and event.pressed and not event.echo:
 		if event.keycode == KEY_ESCAPE and workspace.is_command_open():
 			workspace.close_command()
 			get_viewport().set_input_as_handled()
 			return
-		if event.keycode == KEY_F8 and not event.ctrl_pressed and not event.alt_pressed:
+		var key_focus := get_viewport().gui_get_focus_owner()
+		if (
+			event.keycode == KEY_F8
+			and not event.ctrl_pressed
+			and not event.alt_pressed
+			and not event.shift_pressed
+			and not event.meta_pressed
+			and not key_focus is LineEdit
+			and not key_focus is TextEdit
+		):
 			configure_diagnostics(
 				not _settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
 			)
@@ -2137,18 +2173,26 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		or not is_instance_valid(_menu)
 	):
 		return
-	if workspace.is_command_open():
-		workspace.close_command()
-	elif is_instance_valid(_digest_overlay) and _digest_overlay.visible:
+	if is_instance_valid(_digest_overlay) and _digest_overlay.visible:
 		_hide_away_digest()
 	elif _server_management.visible:
 		_hide_server_management()
 	elif _menu.visible:
 		if _can_resume_colony():
 			_menu.visible = false
+	elif workspace.is_command_open():
+		workspace.close_command()
 	else:
 		_menu.show_menu()
 	get_viewport().set_input_as_handled()
+
+
+func _system_modal_visible() -> bool:
+	return (
+		(is_instance_valid(_menu) and _menu.visible)
+		or (is_instance_valid(_server_management) and _server_management.visible)
+		or (is_instance_valid(_digest_overlay) and _digest_overlay.visible)
+	)
 
 
 func _choose_zone(kind: int) -> void:
@@ -3295,7 +3339,13 @@ func _build_telemetry() -> void:
 		)
 		card.set_model(
 			{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()},
-			{"atlas": true, "compact": true, "narrow": true, "show_rate": true}
+			{
+				"atlas": true,
+				"compact": true,
+				"narrow": true,
+				"show_rate": true,
+				"separator": not _resource_labels.is_empty()
+			}
 		)
 		_resource_group.add_child(card)
 		_resource_labels[kind] = card
@@ -3683,7 +3733,7 @@ func _render_connection_role() -> void:
 	_identity_label.text = (
 		role_caption
 		+ (
-			" · " + _authenticated_identity.left(8)
+			" · Identity: " + _authenticated_identity.left(8)
 			if not _authenticated_identity.is_empty()
 			else ""
 		)
@@ -3959,7 +4009,13 @@ func _refresh_status() -> void:
 		for kind: int in _resource_labels:
 			_resource_labels[kind].set_model(
 				{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()},
-				{"atlas": true, "compact": true, "narrow": true, "show_rate": true}
+				{
+					"atlas": true,
+					"compact": true,
+					"narrow": true,
+					"show_rate": true,
+					"separator": _resource_labels.keys().find(kind) > 0
+				}
 			)
 		if is_instance_valid(_status_label):
 			_status_label.text = "Waiting for authoritative colony state…"
@@ -3999,6 +4055,7 @@ func _refresh_status() -> void:
 			warming += 1
 		var base_config := {
 			"atlas": true,
+			"separator": _resource_labels.keys().find(kind) > 0,
 			"compact": true,
 			"show_rate": true,
 			"narrow": true,
