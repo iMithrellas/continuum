@@ -1,0 +1,478 @@
+## Backend-free contracts against actual main, not a substitute mock UI.
+## Missing redesign APIs are failures. Run after integrating deck/card/main workers.
+extends "res://tools/atlas_ui_fixture.gd"
+
+const REQUIRED_METHODS := [
+	"is_command_open",
+	"open_command",
+	"close_command",
+	"set_panel_state",
+	"reveal_panel",
+	"duplicate_workspace",
+	"delete_workspace",
+	"save_workspace",
+	"revert_workspace",
+	"is_layout_dirty"
+]
+const MICRO_PANELS := ["status", "session", "performance"]
+const LEGACY_PANELS := [
+	"overview",
+	"people",
+	"inspector",
+	"operations",
+	"policies",
+	"alerts",
+	"activity",
+	"trends",
+	"admin",
+	"developer",
+	"construction"
+]
+
+
+func pass_marker() -> String:
+	return "ATLAS_UI_TEST_PASS"
+
+
+func run_contracts() -> void:
+	var deck: Variant = main.workspace
+	var ready := true
+	for method: String in REQUIRED_METHODS:
+		check(deck.has_method(method), "required Atlas deck API: " + method)
+		ready = ready and deck.has_method(method)
+	for key: String in ["resources", "status", "session", "performance"]:
+		check(WorkspaceLayout.PANEL_NAMES.has(key), "panel registry includes " + key)
+		ready = ready and WorkspaceLayout.PANEL_NAMES.has(key)
+	if not ready:
+		return
+	await _geometry_contracts(deck)
+	await _command_contracts(deck)
+	await _state_contracts(deck)
+	await _keyboard_contracts(deck)
+	await _workspace_contracts(deck)
+	await _settings_contracts(deck)
+	_migration_contracts()
+	# Restore the requested composition so captures show no test side effects.
+	deck.switch_workspace(_workspace)
+	deck.revert_workspace()
+	deck.close_command()
+	if _command:
+		deck.open_command(false)
+	await settle()
+
+
+func _geometry_contracts(deck: Variant) -> void:
+	check(
+		main.map.get_global_rect() == deck.area.get_global_rect(),
+		"map equals complete overlay area"
+	)
+	var viewport := get_viewport().get_visible_rect()
+	check(
+		main.map.get_global_rect().is_equal_approx(viewport),
+		"map fills viewport: no header reservation"
+	)
+	check(
+		is_equal_approx(get_window().content_scale_factor, _scale / 100.0), "single viewport scale"
+	)
+	deck.switch_workspace("diagnostics")
+	await settle()
+	var bounds: Rect2 = deck.area.get_global_rect()
+	for key: String in deck.windows:
+		var window: Variant = deck.windows[key]
+		if window.is_visible_in_tree():
+			check(
+				bounds.grow(1).encloses(window.get_global_rect()),
+				"bounded overlay at current scale: " + key
+			)
+	for key: String in MICRO_PANELS:
+		check(deck.windows.has(key), "actual-main micro window: " + key)
+		if not deck.windows.has(key):
+			continue
+		deck.reveal_panel(key)
+		await settle()
+		var window: Variant = deck.windows[key]
+		check(window.position.y <= 40, "diagnostics micro panel uses top position: " + key)
+		check(window.size.y < 180, "micro window retains natural height: " + key)
+	deck.reveal_panel("people")
+	await settle()
+	var regular: Variant = deck.windows.people
+	check(is_equal_approx(regular.chrome_height(), 26), "regular title tab is 26 logical pixels")
+	check(regular.size.y > regular.chrome_height(), "regular open panel retains body")
+	var allowed := 0
+	for key: String in WorkspaceLayout.PANEL_NAMES:
+		if deck.authorized.get(key, false):
+			allowed += 1
+	check(allowed == 13, "operator has 13 authorized panels (15 minus admin/developer)")
+	check(not deck.authorized.get("admin", true), "operator cannot see Admin")
+	check(not deck.authorized.get("developer", true), "operator cannot see Developer")
+
+
+func _command_contracts(deck: Variant) -> void:
+	deck.open_command(true)
+	await settle()
+	var card: Variant = deck.get("command_card")
+	check(card != null and card is Control, "actual CommandCard is a control")
+	if card == null or not card is Control:
+		return
+	var rect: Rect2 = card.get_global_rect()
+	var bounds: Rect2 = deck.area.get_global_rect()
+	check(bounds.grow(1).encloses(rect), "Command card stays inside narrow/scaled map")
+	check(
+		absf(rect.size.x - minf(272, bounds.size.x - 16)) <= 1,
+		"Command card width is 272 or bounded"
+	)
+	check(
+		rect.position.distance_to(bounds.position + Vector2(8, 8)) <= 1, "Command card inset is 8"
+	)
+	var search := _line_edit(card)
+	check(search != null, "Command card exposes actual search field")
+	if search != null:
+		check(get_viewport().gui_get_focus_owner() == search, "keyboard opening focuses search")
+		search.text = "colonist"
+		search.text_changed.emit(search.text)
+		await settle()
+		var filtered := _visible_copy(card).to_lower()
+		check("colonist" in filtered, "panel filter retains matching roster")
+		check(not "tile inspector" in filtered, "panel filter removes nonmatching inspector")
+		search.text = ""
+		search.text_changed.emit("")
+		await settle()
+	var copy := _visible_copy(card).to_lower()
+	check(
+		"workspace" in copy and "diagnostics" in copy,
+		"Command card lists workspaces and active diagnostics"
+	)
+	check("13" in copy, "Command card footer reports authorized panel total")
+	check(
+		not "developer" in copy and not "admin" in copy, "Command card omits unauthorized entries"
+	)
+	check(main._map_input_blocked(rect.get_center()), "Command card hit area blocks map input")
+	var selections := [0]
+	var selected := func(_rect: Rect2i) -> void: selections[0] += 1
+	main.map.rectangle_selected.connect(selected)
+	await _click(rect.position + Vector2(20, 12))
+	check(
+		selections[0] == 0 and not main.map._dragging, "native Command click does not leak to map"
+	)
+	main.map.rectangle_selected.disconnect(selected)
+	deck.close_command()
+	await settle()
+	check(not deck.is_command_open(), "Command close hides card")
+
+
+func _state_contracts(deck: Variant) -> void:
+	deck.switch_workspace("daily")
+	deck.save_workspace()
+	check(not deck.is_layout_dirty(), "explicit save establishes clean baseline")
+	var before: Dictionary = deck.state("people").duplicate(true)
+	deck.set_panel_state("people", "closed")
+	await settle()
+	check(not deck.windows.people.visible, "closed state removes window")
+	deck.set_panel_state("people", "collapsed")
+	await settle()
+	check(
+		deck.windows.people.visible and deck.windows.people.collapsed,
+		"collapsed state keeps title tab"
+	)
+	var dimensions: Array = deck.state("people").rect.slice(2)
+	var window: Variant = deck.windows.people
+	deck.state("people").pinned = false
+	deck._apply_layout()
+	await settle()
+	var origin: Vector2 = window.position
+	await _drag(window.titlebar.global_position + Vector2(50, 12), Vector2(20, 30))
+	check(window.position.distance_to(origin) > 1, "collapsed header really drags")
+	check(
+		deck.state("people").rect.slice(2) == dimensions,
+		"collapsed drag preserves expanded dimensions"
+	)
+	deck.state("people").pinned = true
+	deck._apply_layout()
+	await settle()
+	origin = window.position
+	await _drag(window.titlebar.global_position + Vector2(50, 12), Vector2(20, 20))
+	check(window.position == origin and not window.grip.visible, "pin locks dragging and resizing")
+	deck._changed()
+	check(deck.is_layout_dirty(), "rect/state/pin edits are dirty")
+	check(deck.model.load_from(deck._save_path), "autosaved current workspace reloads")
+	deck._apply_layout()
+	await settle()
+	check(deck.is_layout_dirty(), "saved baseline stays distinct from autosaved edits after reload")
+	deck.revert_workspace()
+	await settle()
+	check(deck.state("people").rect == before.rect, "revert restores saved rectangle")
+	check(deck.state("people").open == before.open, "revert restores saved open state")
+	check(
+		deck.state("people").get("minimized", false) == before.get("minimized", false),
+		"revert restores saved collapsed state"
+	)
+	check(deck.state("people").pinned == before.pinned, "revert restores saved pin")
+	check(not deck.is_layout_dirty(), "revert clears layout dirty state")
+	deck.reveal_panel("people")
+	deck.save_workspace()
+	deck.focus_panel("people")
+	deck.windows.people.move_to_front()
+	check(not deck.is_layout_dirty(), "focus and transient z-order are not layout edits")
+	for key: String in MICRO_PANELS:
+		deck.reveal_panel(key)
+		await settle()
+		var micro: Variant = deck.windows[key]
+		var natural: Vector2 = micro.size
+		deck.set_panel_state(key, "collapsed")
+		deck.set_panel_state(key, "open")
+		await settle()
+		check(
+			micro.size.is_equal_approx(natural), "micro reopen preserves natural dimensions: " + key
+		)
+	deck.revert_workspace()
+
+
+func _keyboard_contracts(deck: Variant) -> void:
+	deck.close_command()
+	await _key(KEY_K, true)
+	check(deck.is_command_open(), "Ctrl+K opens Command card")
+	var card: Variant = deck.get("command_card")
+	var search: LineEdit = _line_edit(card) if card != null else null
+	if search != null:
+		search.grab_focus()
+		var mode: StringName = main.map.interaction_mode
+		await _key(KEY_B)
+		await _key(KEY_E)
+		check(main.map.interaction_mode == mode, "letter map shortcuts are ignored while typing")
+	main._set_mode(&"excavate")
+	await _key(KEY_ESCAPE)
+	check(not deck.is_command_open(), "Esc dismisses Command before map/menu actions")
+	check(not main._menu.visible, "Command Escape does not simultaneously open menu")
+	check(
+		main.map.interaction_mode == &"excavate", "first Escape leaves underlying map intent intact"
+	)
+	await _key(KEY_ESCAPE)
+	check(main.map.interaction_mode == &"select", "next Escape cancels map intent")
+	for index in 4:
+		await _key(KEY_1 + index, false, true)
+		check(
+			deck.model.active == ["daily", "build", "welfare", "diagnostics"][index],
+			"Alt+%d selects preset" % (index + 1)
+		)
+	main._set_permissions("admin", true, true)
+	deck.set_panel_state("admin", "closed")
+	deck.set_panel_state("developer", "closed")
+	await _key(KEY_F9)
+	check(
+		deck.windows.admin.visible and not deck.windows.developer.visible,
+		"legacy F9 targets Admin, not new panels"
+	)
+	await _key(KEY_F10)
+	check(deck.windows.developer.visible, "legacy F10 targets Developer")
+	main._set_permissions("operator", true, false)
+	await _key(KEY_F9)
+	await _key(KEY_F10)
+	check(
+		not deck.windows.admin.visible and not deck.windows.developer.visible,
+		"legacy shortcuts respect authorization"
+	)
+
+
+func _workspace_contracts(deck: Variant) -> void:
+	var backup := "user://atlas_fixture_before_workspace_tests.json"
+	deck.model.save_to(backup)
+	deck.switch_workspace("daily")
+	deck.edit_workspace(false)
+	await settle()
+	var dialog: Variant = deck.get("_dialog")
+	var editor: LineEdit = _line_edit(dialog) if dialog != null else null
+	check(editor != null and editor.editable, "built-in workspace Rename has editable name")
+	if editor != null and editor.editable:
+		editor.text = "Renamed fixture daily"
+		dialog.confirmed.emit()
+		await settle()
+		check(
+			deck.model.workspaces.daily.name == "Renamed fixture daily",
+			"actual Rename updates built-in workspace"
+		)
+	if dialog != null:
+		dialog.hide()
+	var count: int = deck.model.workspaces.size()
+	deck.duplicate_workspace()
+	await settle()
+	check(deck.model.workspaces.size() == count + 1, "Duplicate creates a workspace")
+	deck.switch_workspace("daily")
+	deck.delete_workspace()
+	await settle()
+	var confirmation: Variant = deck.get("_confirmation")
+	if is_instance_valid(confirmation) and confirmation.visible:
+		confirmation.confirmed.emit()
+		await settle()
+	check(not deck.model.workspaces.has("daily"), "Delete permits removal of a built-in preset")
+	var deleted_path := "user://atlas_fixture_deleted_preset.json"
+	deck.model.save_to(deleted_path)
+	var reload := WorkspaceLayout.new()
+	check(reload.load_from(deleted_path), "v4 layout with deleted preset reloads")
+	check(
+		not reload.workspaces.has("daily"),
+		"deleted built-in preset does not resurrect on v4 reload"
+	)
+	# Exercise the last-workspace guard on the isolated model, then the real card.
+	for id: String in reload.workspaces.keys():
+		if reload.workspaces.size() > 1:
+			check(
+				reload.remove_workspace(id),
+				"model permits removing any preset while another survives"
+			)
+	var last: String = reload.workspaces.keys()[0]
+	check(not reload.remove_workspace(last), "model rejects deleting the last workspace")
+	deck.model.workspaces = reload.workspaces.duplicate(true)
+	deck.model.active = last
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	deck.open_command(false)
+	await settle()
+	var card: Variant = deck.get("command_card")
+	card.refresh()
+	var delete := find_button(card, "Delete")
+	check(delete != null and delete.disabled, "Command Delete is disabled for the last workspace")
+	deck.delete_workspace()
+	await settle()
+	check(deck.model.workspaces.size() == 1, "deck refuses last-workspace deletion")
+	deck.close_command()
+	deck.model.load_from(backup)
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	await settle()
+
+
+func _migration_contracts() -> void:
+	var path := "user://atlas_fixture_v3.json"
+	var legacy := {}
+	for key: String in LEGACY_PANELS:
+		legacy[key] = {
+			"rect": [0.12, 0.23, 0.34, 0.45],
+			"open": true,
+			"minimized": true,
+			"pinned": true,
+			"z": 7
+		}
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(
+		JSON.stringify(
+			{
+				"version": 3,
+				"active": "custom_legacy",
+				"show_panel_headers": false,
+				"workspaces": {"custom_legacy": {"name": "Legacy custom", "panels": legacy}}
+			}
+		)
+	)
+	file.close()
+	var model := WorkspaceLayout.new()
+	check(model.load_from(path), "v3 layout migration succeeds")
+	check(
+		model.active == "custom_legacy" and model.workspaces.has("custom_legacy"),
+		"v3 custom workspace survives"
+	)
+	if not model.workspaces.has("custom_legacy"):
+		return
+	for key: String in LEGACY_PANELS:
+		var state: Dictionary = model.workspaces.custom_legacy.panels[key]
+		check(
+			state.rect == legacy[key].rect and state.open and state.pinned,
+			"v3 preserves rect/open/pin: " + key
+		)
+		check(
+			state.get("collapsed", state.get("minimized", false)),
+			"v3 preserves collapsed state: " + key
+		)
+	for key: String in ["resources", "status", "session", "performance"]:
+		check(model.workspaces.custom_legacy.panels.has(key), "v3 adds new panel default: " + key)
+	check(not model.show_panel_headers, "v3 retains personal header preference")
+	check(model.save_to(path) == OK, "migrated layout saves")
+	var saved: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	check(saved is Dictionary and saved.get("version") == 4, "migrated layout writes v4")
+	var reload := WorkspaceLayout.new()
+	check(reload.load_from(path), "v4 round-trip loads")
+	check(
+		reload.workspaces.custom_legacy == model.workspaces.custom_legacy,
+		"v4 round-trip loses no panel preferences"
+	)
+
+
+func _settings_contracts(deck: Variant) -> void:
+	await show_settings()
+	var copy := _visible_copy(main).to_lower()
+	check("ui scale" in copy, "Settings opens actual preference controls")
+	var center: Vector2 = main.map.get_global_rect().get_center()
+	check(main._map_input_blocked(center), "Settings modal blocks background map input")
+	var mode: StringName = main.map.interaction_mode
+	await _key(KEY_B)
+	check(main.map.interaction_mode == mode, "Settings keyboard input cannot trigger map letters")
+	await _key(KEY_ESCAPE)
+	check(
+		not "ui scale" in _visible_copy(main).to_lower(),
+		"Escape dismisses Settings before background actions"
+	)
+	deck.close_command()
+	await settle()
+
+
+func _line_edit(node: Node) -> LineEdit:
+	if node is LineEdit:
+		return node
+	for child: Node in node.get_children():
+		var found := _line_edit(child)
+		if found != null:
+			return found
+	return null
+
+
+func _visible_copy(node: Node) -> String:
+	if node is Control and not node.is_visible_in_tree():
+		return ""
+	var result := ""
+	if node is Label or node is Button:
+		result = node.text + "\n"
+	for child: Node in node.get_children():
+		result += _visible_copy(child)
+	return result
+
+
+func _key(code: int, ctrl := false, alt := false) -> void:
+	for pressed: bool in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.physical_keycode = code
+		event.pressed = pressed
+		event.ctrl_pressed = ctrl
+		event.alt_pressed = alt
+		Input.parse_input_event(event)
+		await get_tree().process_frame
+	await settle()
+
+
+func _click(point: Vector2) -> void:
+	await _pointer(true, point)
+	await _pointer(false, point)
+
+
+func _drag(point: Vector2, delta: Vector2) -> void:
+	await _pointer(true, point)
+	var motion := InputEventMouseMotion.new()
+	motion.position = get_viewport().get_final_transform() * (point + delta)
+	motion.global_position = motion.position
+	motion.relative = get_viewport().get_final_transform().basis_xform(delta)
+	motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	motion.alt_pressed = true
+	Input.parse_input_event(motion)
+	await get_tree().process_frame
+	await _pointer(false, point + delta)
+	await settle()
+
+
+func _pointer(pressed: bool, point: Vector2) -> void:
+	var event := InputEventMouseButton.new()
+	event.button_index = MOUSE_BUTTON_LEFT
+	event.pressed = pressed
+	event.position = get_viewport().get_final_transform() * point
+	event.global_position = event.position
+	Input.parse_input_event(event)
+	await get_tree().process_frame
+	await get_tree().process_frame
