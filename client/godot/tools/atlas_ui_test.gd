@@ -166,16 +166,22 @@ func _command_contracts(deck: Variant) -> void:
 		if workspace_button == null:
 			continue
 		var title: String = deck.model.workspaces[id].name
+		var title_found := false
 		for label: Label in workspace_button.find_children("*", "Label", true, false):
 			if label.text == title:
+				title_found = true
 				check(
-					label.size.x > 0 and label.size.y > 0,
-					"workspace title has actual rendered geometry: " + id
+					label.size.x >= 16 and label.get_visible_line_count() > 0,
+					(
+						"workspace title has readable rendered geometry: %s size=%s visible_lines=%d"
+						% [id, label.size, label.get_visible_line_count()]
+					)
 				)
 				check(
 					workspace_button.get_global_rect().grow(1).encloses(label.get_global_rect()),
 					"workspace title fits its navigation button: " + id
 				)
+		check(title_found, "workspace navigation contains its actual title: " + id)
 	check(
 		not "developer" in copy and not "admin" in copy, "Command card omits unauthorized entries"
 	)

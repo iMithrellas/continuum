@@ -81,9 +81,15 @@ def main():
         return True
     for name in (["ui_components_regression_test"] if review_only else ["ui_components_test", "ui_components_controls_test", "ui_components_regression_test"]):
         run(name, copy, "--script", f"res://tools/{name}.gd")
-    # Test-only preset includes actual widgets + fixture; production preset stays untouched.
+    # Test-only scene/dependency export includes the actual Atlas composition and
+    # autoloads, not every unrelated native-hosting test script. Full map/data
+    # gates above stay intact; the production all-resource preset is untouched.
     preset = copy / "export_presets.cfg"
-    preset.write_text(preset.read_text().replace('exclude_filter="tools/*"', 'exclude_filter=""'))
+    preset.write_text(
+        preset.read_text()
+        .replace('export_filter="all_resources"', 'export_filter="scenes"\nexport_files=PackedStringArray("res://tools/atlas_ui_test.tscn")')
+        .replace('exclude_filter="tools/*"', 'exclude_filter=""')
+    )
     pack = state / "ui.pck"
     if run("export-pack", copy, "--export-pack", "Linux", str(pack)):
         # No loose project sources: resolve scripts, fonts, glyphs and embedded SVG
