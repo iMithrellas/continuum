@@ -8,6 +8,8 @@ var processing_enabled := false
 var frame_snapshot: Dictionary = {}
 var rtt_snapshot: Dictionary = {}
 var safe_rect_override: Variant = null
+var micro_mode := false
+var micro_collapsed := false
 
 
 ## Snapshots follow SessionDiagnostics: acknowledged session echoes, not TCP or HTTP.
@@ -76,6 +78,12 @@ func apply_metrics(next_metrics: UiMetrics) -> void:
 	queue_redraw()
 
 
+func set_micro_mode(enabled := true) -> void:
+	micro_mode = enabled
+	clip_contents = enabled
+	queue_redraw()
+
+
 func set_snapshots(frame: Dictionary, rtt: Dictionary) -> void:
 	frame_snapshot = frame
 	rtt_snapshot = rtt
@@ -89,6 +97,8 @@ func set_safe_rect(rect: Rect2) -> void:
 
 
 func panel_rect() -> Rect2:
+	if micro_mode:
+		return Rect2(Vector2.ZERO, size)
 	var safe := _safe_rect()
 	var inset := metrics.px(8.0)
 	var graph := _graph_fits(safe)
@@ -100,6 +110,10 @@ func panel_rect() -> Rect2:
 
 
 func graph_lane_rects() -> Array[Rect2]:
+	if micro_mode:
+		if micro_collapsed or not show_graph or size.x < 360 or size.y < 18:
+			return []
+		return [Rect2(size.x - 52, 2, 48, 7), Rect2(size.x - 52, size.y - 9, 48, 7)]
 	var panel := panel_rect()
 	if not _graph_fits(_safe_rect()):
 		return []
@@ -146,6 +160,9 @@ func _draw_text(
 
 func _draw() -> void:
 	if not show_diagnostics:
+		return
+	if micro_mode:
+		_draw_micro()
 		return
 	var rect := panel_rect()
 	draw_rect(rect, ThemeTokens.color("bg-100"), true)
@@ -208,6 +225,88 @@ func _draw() -> void:
 		_draw_series(
 			lanes[1], session_rtt_graph(), ThemeTokens.color("meter-fill"), "session RTT ms"
 		)
+
+
+func _draw_micro() -> void:
+	var font := ThemeTokens.font("readout")
+	var font_size := ThemeTokens.font_size("log")
+	var fps := "--"
+	if frame_snapshot.get("ready", false):
+		fps = "%.0f" % float(frame_snapshot.mean_fps)
+	var copy := fps + " fps"
+	if not micro_collapsed:
+		copy += (
+			"  ·  p95 %.1f ms" % float(frame_snapshot.p95_frame_ms)
+			if frame_snapshot.get("ready", false)
+			else "  ·  frame N/A"
+		)
+		copy += "  ·  " + session_rtt_text(true)
+	var lanes := graph_lane_rects()
+	var available := maxf(0, size.x - (58 if not lanes.is_empty() else 0))
+	if font.get_string_size(copy, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > available:
+		copy = fps + " fps"
+	var baseline := (size.y - font.get_height(font_size)) / 2 + font.get_ascent(font_size)
+	draw_string(
+		font,
+		Vector2(0, baseline),
+		copy,
+		HORIZONTAL_ALIGNMENT_LEFT,
+		available,
+		font_size,
+		ThemeTokens.color("ink")
+	)
+	tooltip_text = (
+		"Frame samples: %d/%d\n%s\n%s"
+		% [
+			frame_snapshot.get("count", 0),
+			frame_snapshot.get("minimum", 0),
+			session_rtt_text(),
+			probe_timeout_text(rtt_snapshot)
+		]
+	)
+	if not lanes.is_empty():
+		_draw_micro_series(
+			lanes[0], frame_snapshot.get("frame_graph", []), ThemeTokens.color("ink-muted")
+		)
+		_draw_micro_series(lanes[1], session_rtt_graph(), ThemeTokens.color("meter-fill"))
+
+
+func _draw_micro_series(rect: Rect2, values: Array, color: Color) -> void:
+	var maximum := 1.0
+	for value in values:
+		var scalar: Variant = value.get("value") if value is Dictionary else value
+		if scalar != null:
+			maximum = maxf(maximum, float(scalar))
+	var previous: Variant = null
+	var first_tick := (
+		int(values[0].tick) if not values.is_empty() and values[0] is Dictionary else 0
+	)
+	var last_tick := (
+		int(values.back().tick)
+		if not values.is_empty() and values.back() is Dictionary
+		else maxi(1, values.size() - 1)
+	)
+	for index in values.size():
+		var scalar: Variant = (
+			values[index].get("value") if values[index] is Dictionary else values[index]
+		)
+		if scalar == null:
+			previous = null
+			continue
+		var tick := int(values[index].tick) if values[index] is Dictionary else index
+		var point := Vector2(
+			(
+				rect.position.x
+				+ (
+					rect.size.x
+					* clampf(float(tick - first_tick) / maxi(1, last_tick - first_tick), 0, 1)
+				)
+			),
+			rect.end.y - clampf(float(scalar) / maximum, 0, 1) * rect.size.y
+		)
+		if previous != null:
+			draw_line(previous, point, color, 1)
+		previous = point
 
 
 func _draw_series(rect: Rect2, values: Array, color: Color, _label: String) -> void:

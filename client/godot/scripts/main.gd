@@ -194,6 +194,7 @@ var _cell_label: Label
 var _excavation_list: VBoxContainer
 var _dimension_inputs: Dictionary = {}
 var _map_toolbar: PanelContainer
+var _map_intent: PanelContainer
 var _map_layer_label: Label
 var _map_zoom_label: Label
 var _map_layer_buttons: Dictionary = {}
@@ -207,6 +208,7 @@ var _selected_colonist := -1
 var _selected_card: ColonistCard
 var _alert_waiting: Label
 var _identity_label: Label
+var _session_latency: Label
 var _connection_glyph: TextureRect
 var _authenticated_identity := ""
 var _session_observations := SessionSamples.new()
@@ -225,9 +227,10 @@ var _action_error: Label
 var _action_dismiss: Button
 var _session_menu: MenuButton
 var _rates_status: Label
+var _resource_warning: Label
 var _resource_group: GridContainer
-var _clock_group: PanelContainer
-var _session_group: PanelContainer
+var _clock_group: HBoxContainer
+var _session_group: HBoxContainer
 var _status_balance_pending := false
 var _status_resource_inputs: Dictionary = {}
 var _status_resource_configs: Dictionary = {}
@@ -787,7 +790,12 @@ func _native_update_module() -> void:
 	var source_id := _native_controller.get_instance_id()
 	var id := _native_server_id
 	_native_update_dialog.dialog_text = (
-		'Prepare the current module for "%s"?\n\nYour colony data is kept. Publication refuses any schema change that requires deleting data. Other servers keep their existing modules.\n\nThe server stays stopped until you choose Start local server to publish the update.'
+		(
+			'Prepare the current module for "%s"?\n\nYour colony data is kept. '
+			+ "Publication refuses any schema change that requires deleting data. "
+			+ "Other servers keep their existing modules.\n\n"
+			+ "The server stays stopped until you choose Start local server to publish the update."
+		)
 		% entry.name
 	)
 	_native_update_dialog.confirmed.connect(
@@ -1213,6 +1221,9 @@ func leave_session() -> void:
 	_state_ready = false
 	map.visible = true
 	workspace.visible = true
+	_set_connection_text(
+		"Offline · the colony keeps running without us", ThemeTokens.color("ink-muted")
+	)
 	_menu.set_status("Offline · the colony keeps running without us")
 	_menu.show_menu()
 	_server_management.set_busy(false)
@@ -1568,7 +1579,12 @@ func _on_bootstrap_ended(subscription: SpacetimeDBSubscription, generation: int)
 		var message := "Server rejected the colony subscription: %s" % subscription.error_message
 		if subscription.error_message.contains("no such table"):
 			message = (
-				"The server module does not match this client: %s\n\nFor a managed local server, stop it, choose Update module…, then start it again. Updates never delete colony data. For a remote server, ask its owner to publish the matching module."
+				(
+					"The server module does not match this client: %s\n\n"
+					+ "For a managed local server, stop it, choose Update module…, then start it again. "
+					+ "Updates never delete colony data. "
+					+ "For a remote server, ask its owner to publish the matching module."
+				)
 				% subscription.error_message
 			)
 		_set_connection_text(message, ThemeTokens.color("critical"))
@@ -1694,6 +1710,7 @@ func _on_disconnected() -> void:
 
 
 func _on_connection_error(code: int, reason: String) -> void:
+	_state_ready = false
 	_session_diagnostics.set_connected(false)
 	_reset_diagnostics_samples()
 	_release_main_subscription()
@@ -1817,17 +1834,23 @@ func _retry_connection(timer: SceneTreeTimer) -> void:
 
 
 func _create_diagnostics_overlay() -> void:
+	var performance: WorkspaceWindow = workspace.windows["performance"]
+	performance.micro_content.add_child(_micro_icon("performance"))
+	workspace.diagnostics_host.reparent(performance.micro_content)
 	_diagnostics_overlay = preload("res://scripts/diagnostics_bar.gd").new()
+	_diagnostics_overlay.set_micro_mode(true)
 	_diagnostics_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	workspace.diagnostics_host.add_child(_diagnostics_overlay)
 	_diagnostics_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	workspace.diagnostics_host.resized.connect(_resize_diagnostics_overlay)
+	workspace.layout_changed.connect(_resize_diagnostics_overlay)
 	get_viewport().size_changed.connect(_resize_diagnostics_overlay)
 	_resize_diagnostics_overlay()
 
 
 func _resize_diagnostics_overlay() -> void:
 	if _diagnostics_overlay != null:
+		_diagnostics_overlay.micro_collapsed = workspace.windows["performance"].collapsed
 		_diagnostics_overlay.queue_redraw()
 
 
@@ -1841,6 +1864,7 @@ func _configure_diagnostics_overlay() -> void:
 	workspace.set_diagnostics_visible(
 		_settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
 	)
+	_resize_diagnostics_overlay()
 	if not _settings.diagnostics_enabled:
 		_reset_diagnostics_samples()
 
@@ -1854,6 +1878,7 @@ func _reset_diagnostics_samples() -> void:
 	_diagnostics_last_refresh = -1
 	if _diagnostics_overlay != null:
 		_diagnostics_overlay.set_snapshots({}, {})
+	_render_connection_role()
 
 
 func _reset_diagnostics_epoch() -> void:
@@ -1882,6 +1907,7 @@ func _process_diagnostics() -> void:
 	_diagnostics_overlay.set_snapshots(
 		_diagnostics_stats.refresh(now_usec), _session_diagnostics.snapshot(now_usec)
 	)
+	_render_connection_role()
 
 
 func _on_table_changed(table_name: String, row: Variant = null) -> void:
@@ -2066,6 +2092,17 @@ func _reveal_planning_map(key: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if event is InputEventKey and event.pressed and not event.echo:
+		if event.keycode == KEY_ESCAPE and workspace.is_command_open():
+			workspace.close_command()
+			get_viewport().set_input_as_handled()
+			return
+		if event.keycode == KEY_F8 and not event.ctrl_pressed and not event.alt_pressed:
+			configure_diagnostics(
+				not _settings.diagnostics_enabled, _settings.diagnostics_graph_enabled
+			)
+			get_viewport().set_input_as_handled()
+			return
 	if (
 		_planning_system == &""
 		or not is_instance_valid(_menu)
@@ -2088,6 +2125,29 @@ func _input(event: InputEvent) -> void:
 	if focus is LineEdit or focus is TextEdit:
 		return
 	_set_mode(&"select")
+	get_viewport().set_input_as_handled()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if (
+		not event is InputEventKey
+		or not event.pressed
+		or event.echo
+		or event.keycode != KEY_ESCAPE
+		or not is_instance_valid(_menu)
+	):
+		return
+	if workspace.is_command_open():
+		workspace.close_command()
+	elif is_instance_valid(_digest_overlay) and _digest_overlay.visible:
+		_hide_away_digest()
+	elif _server_management.visible:
+		_hide_server_management()
+	elif _menu.visible:
+		if _can_resume_colony():
+			_menu.visible = false
+	else:
+		_menu.show_menu()
 	get_viewport().set_input_as_handled()
 
 
@@ -2366,7 +2426,7 @@ func _on_excavation_requested(rect: Rect2i, bottom: int, height: int) -> void:
 	)
 
 
-func _on_facility_requested(cell: Vector3i) -> void:
+func _on_facility_requested(_cell: Vector3i) -> void:
 	_set_feedback(
 		_intent_feedback,
 		"Choose a planning tool",
@@ -2767,6 +2827,8 @@ func _build_action_feedback() -> void:
 func _build_panels() -> void:
 	for key: String in WorkspaceLayout.PANEL_NAMES:
 		_sections[key] = workspace.add_panel(key)
+		if key in ["status", "session", "performance"]:
+			workspace.windows[key].set_micro_mode(true)
 	_build_telemetry()
 	_build_map_toolbar()
 	_build_action_feedback()
@@ -2831,19 +2893,12 @@ func _build_panels() -> void:
 	_status_label.add_theme_font_override("normal_font", ThemeTokens.font("readout"))
 	_status_label.add_theme_font_size_override("normal_font_size", ThemeTokens.font_size("readout"))
 	side.add_child(_status_label)
-	var rate_note := Label.new()
-	rate_note.text = "Rates since connection · observed stocks per game hour. Estimates are not server alerts."
-	rate_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	ThemeTokens.apply_label(rate_note, "small")
-	rate_note.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
-	side.add_child(rate_note)
 
 	section = _sections["trends"]
 	side = section
 	var history_note := Label.new()
-	history_note.text = "Smoothed mood / output\nLocally observed since connection; not saved with the colony."
-	history_note.tooltip_text = "This session / since connection. Not saved on the server."
-	history_note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	history_note.text = "Stocks · since connection"
+	history_note.tooltip_text = "Food, wood and stone stocks sampled from replicated colony state. Local observations only; not saved on the server. Mood and output samples remain available."
 	ThemeTokens.apply_label(history_note, "small")
 	history_note.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
 	side.add_child(history_note)
@@ -2851,6 +2906,7 @@ func _build_panels() -> void:
 	_history_chart.metrics = _metrics
 	_history_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_history_chart)
+	_history_chart.set_compact(true)
 
 	side = _sections["admin"]
 	side.add_child(_heading("Simulation speed"))
@@ -2986,24 +3042,35 @@ func _build_panels() -> void:
 	side.add_child(_order_summary)
 	_orders_help = Label.new()
 	_orders_help.text = "Orders: priority + distance"
-	_orders_help.tooltip_text = "Orders rank sites within fixed professions: priority, then distance (server decides ties). Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
+	_orders_help.tooltip_text = (
+		"Orders rank sites within fixed professions: priority, then distance (server decides ties). "
+		+ "Missing/paused orders stop production, not hauling old goods. Create starts enabled / Normal."
+	)
 	_orders_help.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	side.add_child(_orders_help)
 	_intent_feedback = Label.new()
-	_intent_feedback.custom_minimum_size.x = _metrics.px(160)
-	_intent_feedback.custom_minimum_size.y = 28
+	_intent_feedback.custom_minimum_size.x = 1
+	_intent_feedback.custom_minimum_size.y = 24
 	_intent_feedback.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_intent_feedback.clip_text = true
+	_intent_feedback.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	ThemeTokens.apply_label(_intent_feedback, "small")
+	_map_intent = PanelContainer.new()
+	_map_intent.name = "MapIntent"
+	_map_intent.add_theme_stylebox_override(
+		"panel", DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 4)
+	)
+	workspace.area.add_child(_map_intent)
 	var intent_row := HBoxContainer.new()
-	workspace.status_content.add_child(intent_row)
+	_map_intent.add_child(intent_row)
 	intent_row.add_child(_intent_feedback)
 	var cancel := Button.new()
 	cancel.text = "Cancel · Esc"
 	cancel.theme_type_variation = "ButtonQuiet"
 	cancel.pressed.connect(func() -> void: _set_mode(&"select"))
 	intent_row.add_child(cancel)
-	intent_row.hide()
+	_map_intent.resized.connect(_layout_map_overlays)
+	_map_intent.hide()
 	_intent_feedback.hide()
 	_set_mode(&"select")
 
@@ -3016,9 +3083,10 @@ func _build_panels() -> void:
 
 	section = _sections["people"]
 	side = section
-	side.add_child(_heading("Needs / assignments / cargo"))
+	side.add_theme_constant_override("separation", 0)
 	_colonist_box = VBoxContainer.new()
-	_colonist_box.add_theme_constant_override("separation", _metrics.px(8))
+	_colonist_box.tooltip_text = "Replicated colonist needs, assignments and cargo. Select a row for details."
+	_colonist_box.add_theme_constant_override("separation", 0)
 	side.add_child(_colonist_box)
 	_selected_card = ColonistControl.new()
 	_selected_card.visible = false
@@ -3041,8 +3109,9 @@ func _build_panels() -> void:
 
 	section = _sections["activity"]
 	side = section
-	side.add_child(_heading("Server events / latest 40"))
+	side.add_theme_constant_override("separation", 0)
 	_feed = ActivityControl.new()
+	_feed.tooltip_text = "Latest 40 replicated server events. Times are in-game."
 	_feed.custom_minimum_size = _metrics.min_size(0, 70)
 	_feed.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_feed)
@@ -3189,27 +3258,29 @@ func _developer_toggle_graph(enabled: bool) -> void:
 
 
 func _build_telemetry() -> void:
-	_clock_group = _status_surface("ColonyTime")
-	workspace.telemetry.add_child(_clock_group)
-	var clock_content := VBoxContainer.new()
-	clock_content.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	clock_content.add_theme_constant_override("separation", 0)
-	_clock_group.add_child(clock_content)
+	_clock_group = workspace.windows["status"].micro_content
+	_clock_group.add_theme_constant_override("separation", 8)
+	_clock_group.add_child(_micro_icon("clock"))
 	_clock = Label.new()
 	_clock.text = "Day --  --:--"
 	ThemeTokens.apply_label(_clock, "readout")
-	clock_content.add_child(_clock)
+	_clock_group.add_child(_clock)
+	_clock_group.add_child(_micro_divider())
 	_population = Label.new()
 	_population.text = "Crew --"
-	ThemeTokens.apply_label(_population, "small")
-	clock_content.add_child(_population)
+	_population.set_meta("expanded_only", true)
+	ThemeTokens.apply_label(_population, "readout")
+	_population.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	_clock_group.add_child(_population)
+	var resources: VBoxContainer = _sections["resources"]
+	resources.add_theme_constant_override("separation", 6)
 	_resource_group = GridContainer.new()
 	_resource_group.name = "StoredResources"
 	_resource_group.columns = 4
-	_resource_group.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	_resource_group.add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
-	_resource_group.add_theme_constant_override("v_separation", 4)
-	workspace.telemetry.add_child(_resource_group)
+	_resource_group.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_resource_group.add_theme_constant_override("h_separation", 0)
+	_resource_group.add_theme_constant_override("v_separation", 0)
+	resources.add_child(_resource_group)
 	for kind: int in [
 		ContinuumResourceKind.Options.food,
 		ContinuumResourceKind.Options.wood,
@@ -3217,39 +3288,47 @@ func _build_telemetry() -> void:
 		ContinuumResourceKind.Options.meat
 	]:
 		var card := ResourceControl.new()
+		card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		card.tooltip_text = (
 			"Stored %s. Ground stacks and carried cargo are separate."
 			% ContinuumResourceKind.parse_enum_name(kind)
 		)
 		card.set_model(
-			{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()}, {"compact": true}
+			{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()},
+			{"atlas": true, "compact": true, "narrow": true, "show_rate": true}
 		)
 		_resource_group.add_child(card)
 		_resource_labels[kind] = card
 	_rates_status = Label.new()
+	_rates_status.text = "Rates unavailable"
+	_rates_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	ThemeTokens.apply_label(_rates_status, "small")
-	_rates_status.hide()
-	workspace.telemetry.add_child(_rates_status)
-	_session_group = _status_surface("SessionStatus")
-	workspace.telemetry.add_child(_session_group)
-	var session_content := VBoxContainer.new()
-	session_content.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	session_content.add_theme_constant_override("separation", 0)
-	_session_group.add_child(session_content)
-	var connection_row := HBoxContainer.new()
-	connection_row.add_theme_constant_override("separation", 6)
-	session_content.add_child(connection_row)
-	_connection_glyph = TextureRect.new()
-	_connection_glyph.custom_minimum_size = Vector2(16, 16)
-	_connection_glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	_connection_glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	connection_row.add_child(_connection_glyph)
+	_rates_status.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	resources.add_child(_rates_status)
+	_resource_warning = Label.new()
+	_resource_warning.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ThemeTokens.apply_label(_resource_warning, "small")
+	_resource_warning.add_theme_color_override("font_color", ThemeTokens.color("warn"))
+	_resource_warning.hide()
+	resources.add_child(_resource_warning)
+	_session_group = workspace.windows["session"].micro_content
+	_session_group.add_theme_constant_override("separation", 8)
+	_connection_glyph = _micro_icon("connection")
+	_session_group.add_child(_connection_glyph)
 	_connection_label = Label.new()
 	ThemeTokens.apply_label(_connection_label, "small")
-	connection_row.add_child(_connection_label)
+	_session_group.add_child(_connection_label)
+	_session_latency = Label.new()
+	_session_latency.set_meta("expanded_only", true)
+	ThemeTokens.apply_label(_session_latency, "log")
+	_session_latency.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	_session_group.add_child(_session_latency)
+	_session_group.add_child(_micro_divider())
 	_identity_label = Label.new()
+	_identity_label.set_meta("expanded_only", true)
 	ThemeTokens.apply_label(_identity_label, "small")
-	session_content.add_child(_identity_label)
+	_identity_label.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
+	_session_group.add_child(_identity_label)
 	_session_menu = MenuButton.new()
 	_session_menu.focus_mode = Control.FOCUS_ALL
 	_session_menu.text = "Menu"
@@ -3269,21 +3348,64 @@ func _build_telemetry() -> void:
 		popup.set_item_disabled(popup.item_count - 1, true)
 	popup.id_pressed.connect(_session_menu_action)
 	workspace.utility_row.add_child(_session_menu)
-	workspace.area.resized.connect(func() -> void: _refresh_status.call_deferred())
-	workspace.diagnostics_host.resized.connect(func() -> void: _refresh_status.call_deferred())
-	workspace.header_layout_changed.connect(func() -> void: _refresh_status.call_deferred())
+	_session_menu.hide()
+	workspace.command_action_requested.connect(_command_action)
+	resources.resized.connect(_queue_status_balance)
+	workspace.layout_changed.connect(_queue_status_balance)
+	workspace.header_layout_changed.connect(_queue_status_balance)
+	_render_connection_role()
 
 
-func _status_surface(node_name: String) -> PanelContainer:
-	var panel := PanelContainer.new()
-	panel.name = node_name
-	panel.custom_minimum_size.y = 44
-	panel.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
-	var surface := DeckTheme.box(ThemeTokens.color("bg-100"), ThemeTokens.color("line-100"), 8)
-	surface.content_margin_top = 4
-	surface.content_margin_bottom = 4
-	panel.add_theme_stylebox_override("panel", surface)
-	return panel
+func _micro_icon(kind: String) -> TextureRect:
+	var geometry: String = {
+		"clock": '<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
+		"connection": '<path d="M3 13v-2M6.3 13V9M9.6 13V6.5M13 13V4"/>',
+		"performance": '<path d="M2.5 11a5.5 5.5 0 1 1 11 0M8 11l2.5-3.5"/>'
+	}[kind]
+	var image := Image.new()
+	(
+		image
+		. load_svg_from_string(
+			(
+				'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'
+				+ geometry
+				+ "</svg>"
+			)
+		)
+	)
+	var icon := TextureRect.new()
+	icon.texture = ImageTexture.create_from_image(image)
+	icon.modulate = ThemeTokens.color("ink-muted")
+	icon.custom_minimum_size = Vector2(14, 14)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return icon
+
+
+func _micro_divider() -> ColorRect:
+	var divider := ColorRect.new()
+	divider.color = ThemeTokens.color("line-100")
+	divider.custom_minimum_size = Vector2(1, 14)
+	divider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	divider.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	divider.set_meta("expanded_only", true)
+	return divider
+
+
+func _command_action(action: String) -> void:
+	workspace.close_command()
+	match action:
+		"digest":
+			_show_away_digest()
+		"settings":
+			_menu.show_menu()
+			_menu._settings_panel.show()
+		"servers":
+			_show_server_management()
+		"disconnect":
+			leave_session()
 
 
 func _session_menu_action(id: int) -> void:
@@ -3302,7 +3424,10 @@ func _build_map_toolbar() -> void:
 	_map_toolbar.name = "MapToolbar"
 	_map_toolbar.tooltip_text = "Wheel: zoom at cursor. Middle-drag: pan. PgUp/PgDn: half-metre layers."
 	workspace.area.add_child(_map_toolbar)
-	_map_toolbar.position = Vector2(16, 16)
+	workspace.area.resized.connect(_layout_map_overlays)
+	_map_toolbar.resized.connect(_layout_map_overlays)
+	workspace.layout_changed.connect(_layout_map_overlays)
+	_map_toolbar.position = Vector2(12, 12)
 	var flow := HFlowContainer.new()
 	flow.add_theme_constant_override("h_separation", int(ThemeTokens.number("space-2")))
 	_map_toolbar.add_child(flow)
@@ -3352,16 +3477,28 @@ func _build_map_toolbar() -> void:
 	_sync_map_toolbar()
 
 
+func _layout_map_overlays() -> void:
+	if not is_instance_valid(_map_toolbar):
+		return
+	var available := maxf(1, workspace.area.size.x - 24)
+	_map_toolbar.size = Vector2(
+		minf(available, _map_toolbar.get_combined_minimum_size().x),
+		_map_toolbar.get_combined_minimum_size().y
+	)
+	_map_toolbar.position = Vector2(12, maxf(0, workspace.area.size.y - _map_toolbar.size.y - 12))
+	if is_instance_valid(_map_intent):
+		_map_intent.size = Vector2(minf(380, available), _map_intent.get_combined_minimum_size().y)
+		_map_intent.position = Vector2(
+			12, maxf(0, _map_toolbar.position.y - _map_intent.size.y - 6)
+		)
+
+
 func _map_input_blocked(point: Vector2) -> bool:
 	if is_instance_valid(_session_menu) and _session_menu.get_popup().visible:
 		return true
 	if workspace.blocks_map_input(point):
 		return true
-	for overlay: Control in [
-		_map_toolbar,
-		_action_feedback,
-		_intent_feedback.get_parent() if is_instance_valid(_intent_feedback) else null
-	]:
+	for overlay: Control in [_map_toolbar, _action_feedback, _map_intent]:
 		if (
 			is_instance_valid(overlay)
 			and overlay.is_visible_in_tree()
@@ -3485,6 +3622,7 @@ func _set_connection_text(text: String, colour: Color) -> void:
 		_connection_message += " | settings %s; defaults" % _settings_warning
 	_connection_colour = colour
 	_render_connection_role()
+	_refresh_status()
 
 
 func _set_feedback(label: Label, compact: String, details: String) -> void:
@@ -3501,6 +3639,9 @@ func _set_feedback(label: Label, compact: String, details: String) -> void:
 		label.visible = _planning_system != &""
 		if label.get_parent() is HBoxContainer:
 			label.get_parent().visible = label.visible
+		if is_instance_valid(_map_intent):
+			_map_intent.visible = label.visible
+			_layout_map_overlays.call_deferred()
 	label.text = compact
 	label.tooltip_text = details
 
@@ -3508,11 +3649,7 @@ func _set_feedback(label: Label, compact: String, details: String) -> void:
 func _render_connection_role() -> void:
 	if _connection_label == null:
 		return
-	_connection_label.text = (
-		"Live"
-		if _state_ready
-		else (_connection_message if _connection_message.length() <= 18 else "Connection problem")
-	)
+	_connection_label.text = _connection_state_copy()
 	_connection_label.tooltip_text = "%s\nRole: %s" % [_connection_message, _role_name]
 	var token := (
 		"ink-muted"
@@ -3524,10 +3661,17 @@ func _render_connection_role() -> void:
 		)
 	)
 	_connection_label.add_theme_color_override("font_color", ThemeTokens.color(token))
-	_connection_glyph.texture = ThemeTokens.glyph(
-		token if token in ["warn", "critical"] else "notice"
+	_connection_glyph.modulate = ThemeTokens.color(token)
+	var rtt: Dictionary = (
+		_session_diagnostics.snapshot(Time.get_ticks_usec())
+		if _settings.diagnostics_enabled and _session_diagnostics != null and _state_ready
+		else {}
 	)
-	var role_caption := "Read-only" if _role_name == "Viewer" else _role_name
+	_session_latency.text = (
+		"%.0f ms" % float(rtt.rtt_ms) if DiagnosticsOverlayControl.has_session_rtt(rtt) else ""
+	)
+	_session_latency.tooltip_text = "Acknowledged session echo round-trip time; not TCP ping."
+	var role_caption := _role_name
 	var role_help := "Colony controls stay disabled until the server confirms your access."
 	match _role_name:
 		"Viewer":
@@ -3537,7 +3681,13 @@ func _render_connection_role() -> void:
 		"Admin":
 			role_help = "Colony management and server administration access. F9 opens administration."
 	_identity_label.text = (
-		role_caption + (" · dev" if _profile == ContinuumClientProfile.DEVELOPER else "")
+		role_caption
+		+ (
+			" · " + _authenticated_identity.left(8)
+			if not _authenticated_identity.is_empty()
+			else ""
+		)
+		+ (" · dev" if _profile == ContinuumClientProfile.DEVELOPER else "")
 	)
 	_identity_label.tooltip_text = (
 		"%s\nVerified server role: %s\nLocal profile: %s\nAuthenticated identity: %s"
@@ -3550,11 +3700,24 @@ func _render_connection_role() -> void:
 		_session_menu.get_popup().set_item_disabled(1, _authenticated_identity.is_empty())
 
 
+func _connection_state_copy() -> String:
+	if _state_ready:
+		return "Live"
+	for state_name: String in ["Connecting", "Reconnecting", "Offline"]:
+		if _connection_message.begins_with(state_name):
+			return state_name
+	if _connection_message.begins_with("Connected"):
+		return "Syncing"
+	return "Connection error" if not _connection_message.is_empty() else "Offline"
+
+
 func _refresh() -> void:
 	if SpacetimeDB.Continuum.db == null:
 		map.bind_world_source(null)
 		_session_observations.reset()
 		_state_ready = false
+		_refresh_status()
+		_render_connection_role()
 		_refresh_guidance()
 		_refresh_alerts()
 		_full_ui_refresh = true
@@ -3780,12 +3943,28 @@ func _navigate_guidance(panel: String, tile_id: int, colonist_id: int) -> void:
 
 
 func _refresh_status() -> void:
-	if SpacetimeDB.Continuum.db == null or not is_instance_valid(_rates_status):
+	if not is_instance_valid(_rates_status):
 		return
-	var config: ContinuumConfig = SpacetimeDB.Continuum.db.config.id.find(0)
-	var colony: ContinuumColony = SpacetimeDB.Continuum.db.colony.id.find(0)
+	var db := SpacetimeDB.Continuum.db
+	var config: ContinuumConfig = db.config.id.find(0) if db != null else null
+	var colony: ContinuumColony = db.colony.id.find(0) if db != null else null
 	if config == null or colony == null:
-		_status_label.text = "Waiting for authoritative colony state…"
+		_clock.text = "Day --  --:--"
+		_population.text = "Crew --"
+		_rates_status.text = "Rates unavailable · waiting for colony state"
+		_resource_warning.hide()
+		_status_resource_inputs.clear()
+		_status_resource_configs.clear()
+		_status_effective_configs.clear()
+		for kind: int in _resource_labels:
+			_resource_labels[kind].set_model(
+				{"name": ContinuumResourceKind.parse_enum_name(kind).capitalize()},
+				{"atlas": true, "compact": true, "narrow": true, "show_rate": true}
+			)
+		if is_instance_valid(_status_label):
+			_status_label.text = "Waiting for authoritative colony state…"
+		workspace.set_panel_live_count("people", -1)
+		_queue_status_balance()
 		return
 
 	var day: int = int(config.game_seconds / 86400.0) + 1
@@ -3797,8 +3976,8 @@ func _refresh_status() -> void:
 	)
 	var warming := 0
 	var usable := 0
-	var budget := workspace.status_width()
-	var wide := budget >= 850
+	var warnings: Array[String] = []
+	var budget := _resource_panel_width()
 	for kind: int in _resource_labels:
 		var resource := ContinuumResourceKind.parse_enum_name(kind)
 		var observed := (
@@ -3819,10 +3998,11 @@ func _refresh_status() -> void:
 		else:
 			warming += 1
 		var base_config := {
+			"atlas": true,
 			"compact": true,
-			"show_rate": wide,
-			"narrow": budget < 800,
-			"stack_warning": budget < 350
+			"show_rate": true,
+			"narrow": true,
+			"stack_warning": budget < 260
 		}
 		var effective: Dictionary = (
 			_status_effective_configs.get(kind, base_config)
@@ -3833,6 +4013,17 @@ func _refresh_status() -> void:
 			else base_config
 		)
 		_resource_labels[kind].set_model(data, effective)
+		if _resource_labels[kind].model.get("level") in ["warn", "critical"]:
+			warnings.append(
+				(
+					"%s %s/game h · estimate %.1f game h · as observed"
+					% [
+						resource.capitalize(),
+						PresentationModels.signed(data.rate_per_game_hour),
+						data.eta_game_hours
+					]
+				)
+			)
 		_status_effective_configs[kind] = effective
 		_resource_labels[kind].show()
 		_status_resource_inputs[kind] = data
@@ -3846,18 +4037,27 @@ func _refresh_status() -> void:
 			% [resource.capitalize(), str(data.value), _resource_labels[kind].model.rate_copy]
 		)
 	_rates_status.text = (
-		"Rates warming"
+		"Rates warming · observed per game h"
 		if usable == 0 and _state_ready and config.time_scale > 0
-		else ("Rates unavailable" if usable == 0 else ("Rates partial" if warming > 0 else ""))
+		else (
+			"Rates unavailable · paused or stale"
+			if usable == 0
+			else (
+				"Rates partial · observed per game h"
+				if warming > 0
+				else "Observed per game h · since connection"
+			)
+		)
 	)
 	_rates_status.tooltip_text = (
 		"Observed rates require a usable game hour since connection. %d of 4 rates available; paused clocks have no rate or ETA."
 		% usable
 	)
-	_rates_status.hide()
+	_rates_status.show()
+	_resource_warning.text = "\n".join(warnings)
+	_resource_warning.visible = not warnings.is_empty()
+	_resource_warning.tooltip_text = "Local stock observations, not a server alert or guaranteed exhaustion time."
 	_clock.tooltip_text = _rates_status.tooltip_text
-	_population.show()
-	_identity_label.show()
 	_population.text = "Crew %02d" % colony.population
 	workspace.set_panel_live_count("people", colony.population)
 	_status_label.text = (
@@ -3879,61 +4079,31 @@ func _balance_status() -> void:
 	_status_balance_pending = false
 	if not is_inside_tree() or not is_instance_valid(_resource_group):
 		return
-	var budget := workspace.status_width()
-	var signature := JSON.stringify(
-		[
-			_status_resource_inputs,
-			_status_resource_configs,
-			budget,
-			_connection_label.text,
-			_identity_label.text,
-			_clock.get_combined_minimum_size().x
-		]
-	)
+	_fit_status_budget()
+
+
+func _resource_panel_width() -> float:
+	return maxf(1, _sections["resources"].size.x)
+
+
+## Stocks reflow only inside Resources; micro panels never migrate into a header.
+func _fit_status_budget() -> void:
+	var budget := _resource_panel_width()
+	var signature := JSON.stringify([_status_resource_inputs, _status_resource_configs, budget])
 	if signature == _status_balance_signature:
 		return
 	_status_balance_signature = signature
-	_clock.show()
-	_population.show()
-	_identity_label.show()
-	_rates_status.hide()
-	var spacing := float(workspace.telemetry.get_theme_constant("separation"))
-	_resource_group.add_theme_constant_override("h_separation", 4 if budget < 550 else 8)
-	var stocks_width := float(_resource_group.get_theme_constant("h_separation")) * 3
-	for card: ResourceReadout in _resource_labels.values():
-		stocks_width += card.get_combined_minimum_size().x
-	var metadata := (
-		_clock_group.get_combined_minimum_size().x + _session_group.get_combined_minimum_size().x
-	)
-	var split_metadata := metadata + spacing > budget
-	var session_parent: Container = (
-		workspace.status_content if split_metadata else workspace.telemetry
-	)
-	if _session_group.get_parent() != session_parent:
-		_session_group.reparent(session_parent)
-	if split_metadata:
-		workspace.status_content.move_child(_session_group, 1)
-	var reflow := stocks_width + metadata + spacing * 2 > budget
-	if reflow:
-		for kind: int in _resource_labels:
-			var compact_config: Dictionary = _status_resource_configs[kind].duplicate()
-			compact_config.show_rate = false
-			compact_config.narrow = true
-			compact_config.abbreviate_stock = true
-			_resource_labels[kind].set_model(_status_resource_inputs[kind], compact_config)
-			_status_effective_configs[kind] = compact_config
-		if _resource_group.get_parent() != workspace.status_content:
-			_resource_group.reparent(workspace.status_content)
-		_resource_group.columns = 4
-		while (
-			_resource_group.columns > 1 and _resource_group.get_combined_minimum_size().x > budget
-		):
-			_resource_group.columns = maxi(1, _resource_group.columns / 2)
-	else:
-		if _resource_group.get_parent() != workspace.telemetry:
-			_resource_group.reparent(workspace.telemetry)
-		workspace.telemetry.move_child(_resource_group, 1)
-		_resource_group.columns = 4
+	for kind: int in _status_resource_inputs:
+		var config: Dictionary = _status_resource_configs[kind].duplicate()
+		config.show_rate = true
+		config.narrow = true
+		config.stack_warning = budget < 260
+		config.abbreviate_stock = budget < 280
+		_resource_labels[kind].set_model(_status_resource_inputs[kind], config)
+		_status_effective_configs[kind] = config
+	_resource_group.columns = 4 if budget >= 300 else 2
+	while _resource_group.columns > 1 and _resource_group.get_combined_minimum_size().x > budget:
+		_resource_group.columns = maxi(1, _resource_group.columns / 2)
 
 
 func _sample_history() -> void:
@@ -3950,6 +4120,9 @@ func _sample_history() -> void:
 			{
 				"mood": colony.smoothed_mood,
 				"productivity": colony.smoothed_productivity,
+				"food": colony.food,
+				"wood": colony.wood,
+				"stone": colony.stone,
 			},
 			config.generation
 		)
@@ -4241,7 +4414,7 @@ func _refresh_colonists() -> void:
 		)
 		if card.get_meta("live_input", {}) != data:
 			card.set_meta("live_input", data.duplicate(true))
-			card.set_model(data)
+			card.set_model(data, {"atlas": true})
 	_selected_card.visible = _selected_colonist >= 0
 	if _selected_card.visible:
 		var data := UiData.colonist(

@@ -45,6 +45,8 @@ func frame_text(compact_text := false) -> String:
 
 
 func graph_lane_rects() -> Array[Rect2]:
+	if micro_mode:
+		return super.graph_lane_rects()
 	if not show_graph or size.x < metrics.px(340) or size.y < metrics.px(30):
 		return []
 	var width := metrics.px(65)
@@ -57,6 +59,9 @@ func graph_lane_rects() -> Array[Rect2]:
 
 func _draw() -> void:
 	if not show_diagnostics or size.x <= 0 or size.y <= 0:
+		return
+	if micro_mode:
+		_draw_micro()
 		return
 	var font := ThemeTokens.font("readout")
 	var font_size := ThemeTokens.font_size("readout")

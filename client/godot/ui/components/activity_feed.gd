@@ -26,8 +26,11 @@ func set_show_routine(enabled: bool) -> void:
 func _render() -> void:
 	model = Models.activity(_rows, show_routine)
 	UI.clear(self)
+	add_theme_constant_override("separation", 0)
 	for group in model.groups:
 		var day_heading = UI.row()
+		day_heading.custom_minimum_size.y = 24
+		day_heading.add_theme_constant_override("separation", 6)
 		day_heading.add_child(UI.label("Day", "section", "ink-subtle"))
 		day_heading.add_child(
 			UI.label(
@@ -41,11 +44,26 @@ func _render() -> void:
 			add_child(entry)
 	if model.hidden_count > 0:
 		var hidden = UI.row()
+		hidden.custom_minimum_size.y = 24
 		hidden.add_child(UI.label(str(model.hidden_count), "readout", "ink-subtle"))
-		hidden.add_child(UI.button("Routine events hidden · show", _toggle))
+		hidden.add_child(_routine_button("Routine events hidden · show"))
 		add_child(hidden)
 	elif show_routine:
-		add_child(UI.button("Hide routine events", _toggle))
+		add_child(_routine_button("Hide routine events"))
+
+
+func _routine_button(copy: String) -> Button:
+	var button := UI.button(copy, _toggle)
+	button.custom_minimum_size.y = 24
+	for state: String in ["normal", "hover", "pressed", "focus", "disabled"]:
+		var surface := StyleBoxFlat.new()
+		surface.bg_color = ThemeTokens.color(
+			"bg-200" if state in ["hover", "pressed"] else "bg-100"
+		)
+		surface.content_margin_left = 6
+		surface.content_margin_right = 6
+		button.add_theme_stylebox_override(state, surface)
+	return button
 
 
 func _toggle() -> void:
