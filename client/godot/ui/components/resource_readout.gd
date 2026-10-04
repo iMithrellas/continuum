@@ -18,6 +18,9 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	model = Models.resource(data, config)
 	UI.clear(self)
 	queue_redraw()
+	if config.get("atlas", false):
+		_build_atlas(data, config)
+		return
 	if config.get("compact", false):
 		_build_compact(data, config)
 		return
@@ -69,6 +72,99 @@ func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	content.add_child(observation)
 	tooltip_text = model.rate_copy
 	add_child(content)
+
+
+## Equal-share Atlas column. The parent strip should use zero separation.
+## Set separator=false on the first column. Declining stock always keeps its
+## horizon/availability visible in a wrapping footer, including narrow columns.
+func _build_atlas(data: Dictionary, config: Dictionary) -> void:
+	var surface = UI.surface("bg-100", "line-100")
+	surface.set_corner_radius_all(0)
+	surface.set_border_width_all(0)
+	surface.set_content_margin_all(0)
+	add_theme_stylebox_override("panel", surface)
+	custom_minimum_size = Vector2(72, 0)
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	size_flags_vertical = Control.SIZE_FILL
+	var content = UI.column()
+	content.add_theme_constant_override("separation", 0)
+	var stock = PanelContainer.new()
+	stock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var stock_box = surface.duplicate() as StyleBoxFlat
+	stock_box.border_width_left = 1 if config.get("separator", true) else 0
+	stock_box.border_color = Color("262a2f")
+	stock_box.content_margin_left = 10
+	stock_box.content_margin_right = 10
+	stock_box.content_margin_top = 8
+	stock_box.content_margin_bottom = 9
+	stock.add_theme_stylebox_override("panel", stock_box)
+	var column = UI.column()
+	column.add_theme_constant_override("separation", 0)
+	var title = _atlas_label(model.name.capitalize(), 11, false, "ink-muted")
+	title.name = "ResourceName"
+	column.add_child(title)
+	var value = _atlas_label(_stock_copy(model.value, false).trim_suffix(".0"), 17, true, "ink")
+	value.name = "ResourceValue"
+	value.add_theme_font_override("font", ThemeTokens.font("readout-lg"))
+	value.custom_minimum_size.y = 22
+	column.add_child(value)
+	var rate = Models.measurement(data, "rate_per_game_hour")
+	var horizon = Models.measurement(data, "eta_game_hours")
+	var rate_copy: String = Models.signed(rate) if rate != null else "No rate"
+	if rate == null and Models.text(data, "availability") == "warming":
+		rate_copy = "Warming"
+	var observation = _atlas_label(rate_copy, 11, true, UI.status_color(model.level))
+	observation.name = "ResourceRate"
+	column.add_child(observation)
+	stock.add_child(column)
+	content.add_child(stock)
+	if rate != null and rate < 0:
+		var warning = PanelContainer.new()
+		warning.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		var warning_box = stock_box.duplicate() as StyleBoxFlat
+		warning_box.border_width_left = 0
+		warning_box.border_width_top = 1
+		warning_box.content_margin_top = 6
+		warning_box.content_margin_bottom = 6
+		warning.add_theme_stylebox_override("panel", warning_box)
+		var row = UI.row()
+		row.add_theme_constant_override("separation", 6)
+		var glyph = UI.glyph(model.level if model.level in ["warn", "critical"] else "notice")
+		glyph.custom_minimum_size = Vector2(10, 10)
+		glyph.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+		row.add_child(glyph)
+		var copy := (
+			"Estimate %s left" % _horizon_copy(horizon)
+			if horizon != null and horizon >= 0
+			else "Declining · horizon unavailable"
+		)
+		if model.level in ["warn", "critical"]:
+			copy = UI.status_word(model.level) + " · " + copy
+		var label = _atlas_label(copy, 11, false, UI.status_color(model.level))
+		label.name = "ResourceWarning"
+		label.clip_text = false
+		label.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		row.add_child(label)
+		warning.add_child(row)
+		content.add_child(warning)
+	tooltip_text = (
+		"%s stored: %s\n%s"
+		% [model.name, str(model.value) if model.value != null else "Unavailable", model.rate_copy]
+	)
+	add_child(content)
+
+
+func _atlas_label(copy: String, font_size: int, mono: bool, ink: String) -> Label:
+	var label = UI.label(copy, "small", ink)
+	label.add_theme_font_override("font", ThemeTokens.font("log" if mono else "body"))
+	label.add_theme_font_size_override("font_size", font_size)
+	label.add_theme_constant_override("line_spacing", 0)
+	label.custom_minimum_size.y = 15
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.clip_text = true
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	return label
 
 
 ## Optional status-strip presentation; default panel rendering remains unchanged.
@@ -149,7 +245,11 @@ func _build_compact(data: Dictionary, config: Dictionary) -> void:
 
 
 func _draw() -> void:
-	if _config.get("compact", false) and model.get("level") in ["warn", "critical"]:
+	if (
+		_config.get("compact", false)
+		and not _config.get("atlas", false)
+		and model.get("level") in ["warn", "critical"]
+	):
 		draw_line(
 			Vector2(0, size.y - 1), Vector2(size.x, size.y - 1), ThemeTokens.color(model.level), 2
 		)
