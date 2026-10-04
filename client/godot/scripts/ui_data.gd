@@ -18,11 +18,17 @@ static func colonist(
 		if row.haul_role.value == ContinuumHaulRole.Options.both
 		else ContinuumHaulRole.parse_enum_name(row.haul_role.value).capitalize()
 	)
+	var activity := ContinuumActivity.parse_enum_name(row.activity.value).capitalize()
+	var work := ContinuumWorkType.parse_enum_name(row.work.value).capitalize()
+	var atlas_job := activity
+	if row.work.value != ContinuumWorkType.Options.none:
+		atlas_job += " · " + work
 	var data := {
 		"id": row.id,
 		"name": row.name,
-		"state": ContinuumActivity.parse_enum_name(row.activity.value).capitalize(),
-		"job": "%s · %s" % [ContinuumWorkType.parse_enum_name(row.work.value).capitalize(), role],
+		"state": activity,
+		"job": "%s · %s" % [work, role],
+		"atlas_job": atlas_job,
 		"cargo": "Empty hands",
 		"selected": selected,
 		"target": {"colonist_id": row.id},

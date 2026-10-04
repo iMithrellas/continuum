@@ -80,6 +80,10 @@ var _hovered := false
 var _focus_within := false
 var _size_notification_queued := false
 var _reported_chrome_size := Vector2.ZERO
+var _body_padding_top := -1.0
+var _body_padding_bottom := -1.0
+var _title_subtitle: Label
+var _subtitle_copy := ""
 
 
 func setup(title: String) -> void:
@@ -127,7 +131,8 @@ func _build_surfaces() -> void:
 	controls_style.border_width_bottom = 0
 	_control_ground = _ground(controls_style)
 	_shadow_style = _surface()
-	_shadow_style.draw_center = false
+	# A filled mask lets the offset shadow continue beneath the bottom edge.
+	_shadow_style.draw_center = true
 	_shadow_style.set_border_width_all(0)
 	_shadow_style.shadow_color = Color(0, 0, 0, 0.42)
 	_shadow_style.shadow_size = 14
@@ -180,6 +185,14 @@ func _build_title(title: String) -> void:
 	live_count.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	live_count.visible = false
 	titlebar.add_child(live_count)
+	_title_subtitle = Label.new()
+	_title_subtitle.add_theme_font_override("font", ThemeTokens.font("body"))
+	_title_subtitle.add_theme_font_size_override("font_size", 11)
+	_title_subtitle.add_theme_color_override("font_color", Color("8b929a"))
+	_title_subtitle.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_title_subtitle.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	titlebar.add_child(_title_subtitle)
+	set_title_subtitle(_subtitle_copy)
 	_pin_mark = _icon("pin")
 	add_child(_pin_mark)
 	micro_content = _drag_row(9)
@@ -244,6 +257,8 @@ func _build_body() -> void:
 	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	add_child(scroll)
+	_style_scrollbar(scroll.get_v_scroll_bar(), true)
+	_style_scrollbar(scroll.get_h_scroll_bar(), false)
 	_scroll_padding = MarginContainer.new()
 	_scroll_padding.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_scroll_padding.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -256,6 +271,29 @@ func _build_body() -> void:
 	content.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_scroll_padding.add_child(content)
 	scroll.get_v_scroll_bar().visibility_changed.connect(_refresh_scroll_padding)
+
+
+func _style_scrollbar(bar: ScrollBar, vertical: bool) -> void:
+	var track := StyleBoxEmpty.new()
+	var thumb := StyleBoxFlat.new()
+	thumb.bg_color = Color("30353b")
+	thumb.set_corner_radius_all(4)
+	if vertical:
+		bar.custom_minimum_size.x = 8
+		track.content_margin_left = 4
+		track.content_margin_right = 4
+		thumb.content_margin_left = 4
+		thumb.content_margin_right = 4
+	else:
+		bar.custom_minimum_size.y = 8
+		track.content_margin_top = 4
+		track.content_margin_bottom = 4
+		thumb.content_margin_top = 4
+		thumb.content_margin_bottom = 4
+	bar.add_theme_stylebox_override("scroll", track)
+	bar.add_theme_stylebox_override("scroll_focus", track)
+	for state: String in ["grabber", "grabber_highlight", "grabber_pressed"]:
+		bar.add_theme_stylebox_override(state, thumb)
 
 
 func _build_resize_handles() -> void:
@@ -334,6 +372,25 @@ func set_focused(value: bool) -> void:
 func set_live_count(count: int = -1) -> void:
 	live_count.visible = count >= 0
 	live_count.text = str(maxi(0, count))
+	refresh_metrics()
+
+
+## Logical pixels inside the body border. Defaults remain 10 on every side.
+## Tables own their row insets; charts can use (0, 2, 6) without double padding.
+func set_body_padding(horizontal: float, top: float, bottom: float) -> void:
+	body_padding = maxf(0, horizontal)
+	_body_padding_top = maxf(0, top)
+	_body_padding_bottom = maxf(0, bottom)
+	refresh_metrics()
+
+
+## Quiet context belongs beside the tab title rather than above body content.
+func set_title_subtitle(copy: String) -> void:
+	_subtitle_copy = copy
+	if not is_instance_valid(_title_subtitle):
+		return
+	_title_subtitle.text = copy
+	_title_subtitle.visible = not copy.is_empty()
 	refresh_metrics()
 
 
@@ -434,8 +491,12 @@ func refresh_metrics() -> void:
 	_body_ground.size = Vector2(size.x, maxf(0, size.y - BODY_TOP))
 	scroll.offset_left = body_padding + 1
 	scroll.offset_right = -scroll.offset_left
-	scroll.offset_top = BODY_TOP + body_padding + 1
-	scroll.offset_bottom = -body_padding - 1
+	scroll.offset_top = (
+		BODY_TOP + (_body_padding_top if _body_padding_top >= 0 else body_padding) + 1
+	)
+	scroll.offset_bottom = (
+		-(_body_padding_bottom if _body_padding_bottom >= 0 else body_padding) - 1
+	)
 	_refresh_scroll_padding()
 	_layout_resize_handles()
 	_tab_style.bg_color = ThemeTokens.color("bg-200" if _hovered else "bg-100")
@@ -491,11 +552,9 @@ func _notify_chrome_size() -> void:
 
 
 func _refresh_scroll_padding() -> void:
-	# ScrollContainer already reserves the bar's themed width, but no inner gap.
-	# Keep that gap inside its content so hidden bars retain the full body width.
-	var gutter := int(ThemeTokens.number("space-2")) if scroll.get_v_scroll_bar().visible else 0
-	if _scroll_padding.get_theme_constant("margin_right") != gutter:
-		_scroll_padding.add_theme_constant_override("margin_right", gutter)
+	# ScrollContainer already reserves the actual bar width; rows own their insets.
+	if _scroll_padding.get_theme_constant("margin_right") != 0:
+		_scroll_padding.add_theme_constant_override("margin_right", 0)
 
 
 func chrome_height() -> float:

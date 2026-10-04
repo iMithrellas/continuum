@@ -9,6 +9,8 @@ var model: Dictionary = {}
 var _hovered := false
 var _surface: StyleBoxFlat
 var _atlas := false
+var _atlas_job_copy := ""
+var _atlas_row: Control
 
 
 func _init() -> void:
@@ -20,6 +22,7 @@ func _init() -> void:
 func set_model(data: Dictionary, config: Dictionary = {}) -> void:
 	model = Models.colonist(data, config)
 	_atlas = config.get("atlas", false) == true
+	_atlas_job_copy = Models.text(data, "atlas_job")
 	mouse_default_cursor_shape = (
 		Control.CURSOR_POINTING_HAND if model.id_available else Control.CURSOR_ARROW
 	)
@@ -115,19 +118,25 @@ func _render_atlas() -> void:
 	_surface.content_margin_bottom = 0
 	add_theme_stylebox_override("panel", _surface)
 	_refresh_surface()
-	var row = UI.row()
+	var row := Control.new()
+	_atlas_row = row
 	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.custom_minimum_size.y = 16
 	row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.resized.connect(_layout_atlas_row)
 	var colonist_name = _atlas_label(model.name, "accent" if model.selected else "ink")
 	colonist_name.name = "ColonistName"
 	colonist_name.add_theme_font_override("font", ATLAS_NAME_FONT)
-	colonist_name.custom_minimum_size.x = 104
+	colonist_name.custom_minimum_size.x = 28
 	colonist_name.clip_text = true
 	colonist_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	colonist_name.tooltip_text = model.name
 	row.add_child(colonist_name)
 	var detail: String = model.job if model.job == model.state else model.state + " · " + model.job
-	var job = _atlas_label(detail, UI.status_color(model.state_level))
+	var job = _atlas_label(
+		detail if _atlas_job_copy.is_empty() else _atlas_job_copy,
+		UI.status_color(model.state_level)
+	)
 	job.name = "StateTag"
 	job.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	job.clip_text = true
@@ -172,8 +181,28 @@ func _render_atlas() -> void:
 		row.add_child(value)
 	if _missing_needs():
 		tooltip_text += "\nSome needs unavailable"
+	row.custom_minimum_size.x = 28 + 16 + row.get_child(-1).get_combined_minimum_size().x
+	row.get_child(-1).minimum_size_changed.connect(_layout_atlas_row)
 	add_child(row)
+	_layout_atlas_row()
 	queue_redraw()
+
+
+## Keep severity intact while the name shrinks from 104 to a 28px minimum.
+## A plain Control avoids a preferred name width inflating the table's minimum.
+func _layout_atlas_row() -> void:
+	if not _atlas or not is_instance_valid(_atlas_row) or _atlas_row.get_child_count() < 3:
+		return
+	var colonist_name: Label = _atlas_row.get_child(0)
+	var job: Label = _atlas_row.get_child(1)
+	var tail: Control = _atlas_row.get_child(2)
+	tail.size = tail.get_combined_minimum_size()
+	_atlas_row.custom_minimum_size.x = 28 + 16 + tail.size.x
+	tail.position = Vector2(maxf(0, _atlas_row.size.x - tail.size.x), 0)
+	var name_width := clampf(tail.position.x - 16 - 48, 28, 104)
+	colonist_name.size = Vector2(name_width, _atlas_row.size.y)
+	job.position = Vector2(name_width + 8, 0)
+	job.size = Vector2(maxf(0, tail.position.x - 8 - job.position.x), _atlas_row.size.y)
 
 
 func _atlas_label(copy: String, ink: String) -> Label:
