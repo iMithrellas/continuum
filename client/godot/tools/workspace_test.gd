@@ -330,7 +330,8 @@ func _assert_panel_padding(window: WorkspaceWindow, overflowing: bool, context: 
 	var viewport := window.scroll.get_global_rect()
 	var body := window.content.get_global_rect()
 	var bar := window.scroll.get_v_scroll_bar()
-	var gap := ThemeTokens.number("space-2") if overflowing else 0.0
+	# Atlas rows own their insets; ScrollContainer reserves only the real track.
+	var gap := 0.0
 	var right := bar.global_position.x if overflowing else viewport.end.x
 	_assert(bar.visible == overflowing, "%s: scrollbar follows the content height" % context)
 	_assert(

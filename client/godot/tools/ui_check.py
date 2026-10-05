@@ -40,7 +40,6 @@ def main():
             return False
         (state / (name + ".log")).write_text(result.stdout)
         errors = [line for line in result.stdout.splitlines() if "SCRIPT ERROR:" in line or line.startswith("ERROR:")]
-        errors = [line for line in errors if not (name == "ui_scale_test" and "ConfigFile parse error" in line)]
         passed = result.returncode == 0 and not errors and "_FAIL" not in result.stdout
         print(("PASS " if passed else "FAIL ") + name + ("" if passed else f" (exit {result.returncode})"), flush=True)
         if not passed:
@@ -81,14 +80,23 @@ def main():
         return True
     for name in (["ui_components_regression_test"] if review_only else ["ui_components_test", "ui_components_controls_test", "ui_components_regression_test"]):
         run(name, copy, "--script", f"res://tools/{name}.gd")
-    # Test-only scene/dependency export includes the actual Atlas composition and
-    # autoloads, not every unrelated native-hosting test script. Full map/data
-    # gates above stay intact; the production all-resource preset is untouched.
+    # Export all production assets/scripts plus only this fixture's test helpers.
+    # Scene-only export misses inherited/dynamically loaded script dependencies.
+    # Full map/data gates above stay intact; production presets stay untouched.
     preset = copy / "export_presets.cfg"
+    fixture_stems = {
+        "atlas_ui_test", "atlas_ui_fixture", "atlas_fixture_main",
+        "ui_main_fixture", "terrain_fixture", "map_client_profile",
+        "world_art_fixture",
+    }
+    excluded_tools = ",".join(
+        str(path.relative_to(copy))
+        for path in sorted((copy / "tools").rglob("*"))
+        if path.is_file() and path.stem not in fixture_stems
+    )
     preset.write_text(
         preset.read_text()
-        .replace('export_filter="all_resources"', 'export_filter="scenes"\nexport_files=PackedStringArray("res://tools/atlas_ui_test.tscn")')
-        .replace('exclude_filter="tools/*"', 'exclude_filter=""')
+        .replace('exclude_filter="tools/*"', f'exclude_filter="{excluded_tools}"')
     )
     pack = state / "ui.pck"
     if run("export-pack", copy, "--export-pack", "Linux", str(pack)):
