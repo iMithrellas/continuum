@@ -8,6 +8,12 @@ const Models = preload("models.gd")
 const UI = preload("presentation.gd")
 const Entry = preload("log_entry.gd")
 var model: Dictionary = {}
+var _actions: BoxContainer
+var _delta_cells: Array[PanelContainer] = []
+
+
+func _init() -> void:
+	resized.connect(_adapt_layout)
 
 
 ## span/coverage copy; deltas [{name,baseline,current,level}]; provided event groups.
@@ -26,8 +32,10 @@ func set_model(data: Dictionary) -> void:
 			scroll_value = get_parent().scroll_vertical
 	model = next
 	UI.clear(self)
+	_delta_cells.clear()
 	theme_type_variation = "PanelFloating"
-	custom_minimum_size.x = ThemeTokens.number("panel-min")
+	# The owning modal controls width, including sub-280px logical viewports.
+	custom_minimum_size.x = 0
 	var content = UI.column()
 	content.add_theme_constant_override("separation", int(ThemeTokens.number("space-6")))
 	content.add_child(UI.label("Since you left", "display", "ink"))
@@ -39,6 +47,8 @@ func set_model(data: Dictionary) -> void:
 		var deltas = UI.flow()
 		for delta in model.deltas:
 			var cell = PanelContainer.new()
+			cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			_delta_cells.append(cell)
 			cell.add_theme_stylebox_override("panel", UI.surface("bg-200"))
 			var values = UI.column()
 			if delta.level in ["warn", "critical"]:
@@ -119,7 +129,9 @@ func set_model(data: Dictionary) -> void:
 			if item.get("count") is int and item.count >= 0:
 				group.add_child(UI.label(str(item.count) + " events", "readout"))
 		content.add_child(group)
-	var actions = UI.flow()
+	var actions := BoxContainer.new()
+	_actions = actions
+	actions.add_theme_constant_override("separation", int(ThemeTokens.number("space-2")))
 	if not ids.is_empty():
 		var review = UI.button(
 			"Review available alerts" if ids.size() < model.needs_you.size() else "Review alerts",
@@ -139,9 +151,40 @@ func set_model(data: Dictionary) -> void:
 	back.set_meta("digest_focus_key", "back")
 	actions.add_child(back)
 	content.add_child(actions)
+	_wrap_content(content)
 	add_child(content)
+	_adapt_layout()
 	if is_inside_tree():
 		_restore_view.call_deferred(focus_key, scroll_value)
+
+
+func _wrap_content(node: Node) -> void:
+	# Includes embedded event timestamps, section headings, counts, and localized
+	# commands. SMART wrapping breaks oversized tokens rather than widening chrome.
+	if node is Label:
+		node.custom_minimum_size.x = 0
+		node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		node.clip_text = false
+		node.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+		node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	elif node is Button:
+		node.custom_minimum_size.x = 0
+		node.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		node.clip_text = false
+		node.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+		node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for child in node.get_children():
+		_wrap_content(child)
+
+
+func _adapt_layout() -> void:
+	if not is_instance_valid(_actions):
+		return
+	var body_width := size.x - get_theme_stylebox("panel").get_minimum_size().x
+	_actions.vertical = body_width < 384
+	for cell in _delta_cells:
+		# Prefer readable cards, but never impose that width on the owning modal.
+		cell.custom_minimum_size.x = minf(96, maxf(0, body_width))
 
 
 func _find_focus(key: String, node: Node) -> Control:
