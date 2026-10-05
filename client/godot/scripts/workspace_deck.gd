@@ -393,7 +393,7 @@ func _floating_rect(key: String) -> Rect2:
 		if saved.has("design"):
 			rect = WorkspaceLayout.design_rect(saved.design, area.size, minimum)
 		rect = WorkspaceLayout.clamp_rect(rect, area.size, metrics, minimum)
-	if key == "performance" and saved.has("design") and area.size.x < 480:
+	if key == "performance" and saved.has("design"):
 		rect = _responsive_performance_rect(rect)
 	return rect
 
@@ -402,15 +402,20 @@ func _floating_rect(key: String) -> Rect2:
 func _responsive_performance_rect(rect: Rect2) -> Rect2:
 	var result := rect
 	var anchor: Dictionary = state("performance").design
-	if anchor.y == "top" and _designed_micro_open("status"):
-		var status_rect := _floating_rect("status")
-		if state("status").design.y == "top" and result.intersects(status_rect):
-			result.position.y = status_rect.end.y + 10
-			if _designed_micro_open("session") and state("session").design.y == "top":
-				result.position.y = maxf(result.position.y, _floating_rect("session").end.y + 10)
+	if anchor.y == "top":
+		var stack := compact
+		var bottom := result.position.y
+		for key: String in ["status", "session"]:
+			if not _designed_micro_open(key) or state(key).design.y != "top":
+				continue
+			var other := _floating_rect(key)
+			stack = stack or result.intersects(other)
+			bottom = maxf(bottom, other.end.y + 10)
+		if stack:
+			result.position.y = bottom
 	elif anchor.y == "bottom" and _designed_micro_open("session"):
 		var session_rect := _floating_rect("session")
-		if state("session").design.y == "bottom" and result.intersects(session_rect):
+		if state("session").design.y == "bottom" and (compact or result.intersects(session_rect)):
 			result.position.y = session_rect.position.y - result.size.y - 10
 	return WorkspaceLayout.clamp_rect(result, area.size, metrics, result.size)
 
@@ -709,7 +714,7 @@ func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
 	var was_compact := compact
-	compact = area.size.x < 640 or area.size.y < 400
+	compact = area.size.x < 720 or area.size.y < 400
 	if compact != was_compact:
 		_cancel_gestures()
 	var order: Array = windows.keys()
@@ -763,11 +768,17 @@ func _apply_layout() -> void:
 		window.apply_state(saved.pinned, compact and not micro)
 		window.set_collapsed(saved.minimized)
 		window.set_header_visible(model.show_panel_headers or saved.minimized)
-		var rect := (
-			Rect2(Vector2.ZERO, area.size)
-			if compact and not micro and not saved.minimized
-			else _floating_rect(key)
-		)
+	# Measure telemetry only after every window has applied its current presentation.
+	var standard_rect := _compact_standard_rect() if compact else Rect2()
+	for key: String in order:
+		var window: WorkspaceWindow = windows[key]
+		var saved := state(key)
+		var micro := key in ["status", "session", "performance"]
+		var rect := _floating_rect(key)
+		if compact and not micro:
+			rect = standard_rect
+			if saved.minimized:
+				rect.size = Vector2(minf(window.tab_width(), rect.size.x), window.chrome_height())
 		if not compact:
 			rect.position = rect.position.round()
 			rect.size = rect.size.round()
@@ -785,6 +796,42 @@ func _apply_layout() -> void:
 	_queue_body_focus_reveal()
 	_resize_diagnostics_host()
 	layout_changed.emit()
+
+
+## Only the selected body uses this free band. The map still fills the entire deck.
+## Reserve telemetry's painted vertical spans, not a permanent global header.
+func _compact_standard_rect() -> Rect2:
+	var inset := minf(8, minf(area.size.x, area.size.y) / 2)
+	var spans: Array[Vector2] = []
+	for key: String in ["status", "session", "performance"]:
+		if (
+			not windows.has(key)
+			or not authorized.get(key, false)
+			or not state(key).open
+			or map_only
+		):
+			continue
+		var painted := _floating_rect(key).intersection(Rect2(Vector2.ZERO, area.size))
+		if painted.has_area():
+			spans.append(
+				Vector2(
+					maxf(inset, painted.position.y - 8),
+					minf(area.size.y - inset, painted.end.y + 8)
+				)
+			)
+	spans.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x < b.x)
+	var cursor := inset
+	var best := Vector2(inset, inset)
+	for span: Vector2 in spans:
+		if span.x - cursor > best.y - best.x:
+			best = Vector2(cursor, span.x)
+		cursor = maxf(cursor, span.y)
+	if area.size.y - inset - cursor > best.y - best.x:
+		best = Vector2(cursor, area.size.y - inset)
+	# Extremely short viewports cannot fit all telemetry plus a tab; keep the tab usable.
+	var height := maxf(best.y - best.x, minf(26, area.size.y - inset * 2))
+	var top := clampf(best.x, inset, maxf(inset, area.size.y - inset - height))
+	return Rect2(Vector2(inset, top), Vector2(maxf(1, area.size.x - inset * 2), height))
 
 
 func _queue_body_focus_reveal() -> void:
