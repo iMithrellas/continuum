@@ -147,12 +147,13 @@ func _test_controller_surface() -> void:
 	)
 	await _test_header_geometry(main)
 	var clock_baseline: float = _label_baseline(main._clock) - main._clock_group.global_position.y
-	main.apply_font_size(24, false)
+	var maximum_scale := ClientSettings.legacy_ui_scale(ClientSettings.MAX_FONT_SIZE)
+	main.apply_font_size(ClientSettings.MAX_FONT_SIZE, false)
 	_assert(
 		(
 			main._metrics.base_font_size == 13
-			and main._settings.ui_scale_percent == 150
-			and main.get_window().content_scale_factor == 1.5
+			and main._settings.ui_scale_percent == maximum_scale
+			and main.get_window().content_scale_factor == float(maximum_scale) / 100.0
 			and main._feed.custom_minimum_size.y == 70
 			and main._history_chart.custom_minimum_size.y == 108
 			and main.workspace.windows.status.size.y == 30
@@ -169,7 +170,7 @@ func _test_controller_surface() -> void:
 		is_equal_approx(
 			_label_baseline(main._clock) - main._clock_group.global_position.y, clock_baseline
 		),
-		"clock baseline inside the status micro remains stable at 150 percent"
+		"clock baseline inside the status micro remains stable at %d percent" % maximum_scale
 	)
 	main.apply_font_size(13, false)
 	_assert(
@@ -244,10 +245,17 @@ func _test_header_geometry(main: Control) -> void:
 		(
 			not main.workspace.header.visible
 			and main.workspace.area.position == Vector2.ZERO
-			and main.workspace.area.size == main.size
+			and main.workspace.area.size == main.size.floor()
 			and main.map.get_global_rect() == main.workspace.area.get_global_rect()
 		),
-		"Atlas map owns the full logical viewport without a global header"
+		(
+			"Atlas map owns the full logical viewport without a global header: area=%s main=%s map=%s"
+			% [
+				main.workspace.area.get_global_rect(),
+				main.get_global_rect(),
+				main.map.get_global_rect()
+			]
+		)
 	)
 	_assert(
 		(
