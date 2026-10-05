@@ -223,6 +223,14 @@ func _sample_series() -> void:
 
 
 func _park_pointer(prefer_status := false) -> void:
+	# The root Viewport caches its tooltip delay before this fixture's _ready.
+	# Clear only the parked Status surface's tooltip copy for automated captures;
+	# interactive keep-open fixtures retain the production hints unchanged.
+	if not _keep_open:
+		var status: Control = main.workspace.windows.status
+		status.tooltip_text = ""
+		for control: Control in status.find_children("*", "Control", true, false):
+			control.tooltip_text = ""
 	var point: Vector2 = main.workspace.windows.status.get_global_rect().get_center()
 	if not prefer_status and main.workspace.is_command_open():
 		point = main.workspace.command_card.get_global_rect().position + Vector2(20, 20)
