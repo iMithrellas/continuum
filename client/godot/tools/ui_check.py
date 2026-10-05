@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import argparse
+import re
 
 PROJECT = Path(__file__).resolve().parents[1]
 ROOT = PROJECT.parents[1]
@@ -40,6 +41,11 @@ def main():
             return False
         (state / (name + ".log")).write_text(result.stdout)
         errors = [line for line in result.stdout.splitlines() if "SCRIPT ERROR:" in line or line.startswith("ERROR:")]
+        expected_corrupt_config = re.compile(r"^ERROR: ConfigFile parse error at user://ui_scale_test_[0-9]+\.cfg\.bad:0: Unexpected EOF while parsing simple tag\.$")
+        if name == "ui_scale_test" and "UI_SCALE_PASS persisted bounds reference metrics minima" in result.stdout:
+            expected = [line for line in errors if expected_corrupt_config.fullmatch(line)]
+            if len(expected) == 1:
+                errors.remove(expected[0])
         passed = result.returncode == 0 and not errors and "_FAIL" not in result.stdout
         print(("PASS " if passed else "FAIL ") + name + ("" if passed else f" (exit {result.returncode})"), flush=True)
         if not passed:

@@ -51,6 +51,8 @@ func run_contracts() -> void:
 	await _state_contracts(deck)
 	await _keyboard_contracts(deck)
 	await _workspace_contracts(deck)
+	await _save_failure_contracts(deck)
+	await _restart_performance_contracts(deck)
 	await _settings_contracts(deck)
 	await _diagnostics_shortcut_contracts(deck)
 	await _footer_contracts(deck)
@@ -376,6 +378,21 @@ func _workspace_contracts(deck: Variant) -> void:
 		)
 	if dialog != null:
 		dialog.hide()
+	var renamed: String = deck.model.workspaces.daily.name
+	var saved_panels: Dictionary = deck.model.saved_workspaces.daily.panels.duplicate(true)
+	deck.set_panel_state("resources", "closed" if deck.state("resources").open else "open")
+	await settle()
+	check(deck.is_layout_dirty(), "panel edit after Rename is dirty")
+	deck.revert_workspace()
+	await settle()
+	check(deck.model.workspaces.daily.name == renamed, "Rename survives panel edit and Revert")
+	check(
+		_json_layout_equal(
+			deck.model.workspaces.daily.panels, saved_panels, "rename/revert/panels"
+		),
+		"Revert after Rename restores saved panels"
+	)
+	check(not deck.is_layout_dirty(), "Revert after Rename restores clean panel baseline")
 	var count: int = deck.model.workspaces.size()
 	deck.duplicate_workspace()
 	await settle()
@@ -422,6 +439,107 @@ func _workspace_contracts(deck: Variant) -> void:
 	deck.model.load_from(backup)
 	deck._rebuild_navigation()
 	deck._apply_layout()
+	await settle()
+
+
+func _save_failure_contracts(deck: Variant) -> void:
+	var backup := "user://atlas_before_io_failure.json"
+	check(deck.model.save_to(backup) == OK, "save failure test backs up preferences")
+	var original_path: String = deck._save_path
+	var collision := "user://atlas_save_collision_%d.json" % Time.get_ticks_usec()
+	# Collision at the atomic temporary-file path forces real FileAccess failure,
+	# without permissions assumptions, production seams, or expected engine errors.
+	var directory := ProjectSettings.globalize_path(collision + ".tmp")
+	check(DirAccess.make_dir_absolute(directory) == OK, "create isolated Save I/O collision")
+	deck.save_workspace()
+	var active: String = deck.model.active
+	var baseline: Dictionary = deck.model.saved_workspaces[active].duplicate(true)
+	deck._save_path = collision
+	var opened: bool = deck.state("resources").open
+	deck.set_panel_state("resources", "closed" if opened else "open")
+	await settle()
+	check(deck.is_layout_dirty(), "I/O failure panel edit starts dirty")
+	deck.save_workspace()
+	await settle()
+	check(
+		_json_layout_equal(deck.model.saved_workspaces[active], baseline, "failed-save/baseline"),
+		"failed Save I/O preserves previous baseline"
+	)
+	check(deck.is_layout_dirty(), "failed Save I/O leaves edited layout dirty")
+	var preference_error: Variant = deck.get("preference_error")
+	check(
+		preference_error is String and not preference_error.is_empty(),
+		"failed Save I/O exposes preference_error"
+	)
+	deck.open_command(true)
+	await settle()
+	var copy := _visible_copy(deck.command_card).to_lower()
+	check(
+		"fail" in copy or "error" in copy or "could not" in copy,
+		"failed Save I/O is visible in Command footer"
+	)
+	deck.close_command()
+	deck._save_path = original_path
+	check(DirAccess.remove_absolute(directory) == OK, "remove isolated Save I/O collision")
+	check(deck.model.load_from(backup), "restore preferences after failed Save")
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	deck.save_layout()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(backup))
+	await settle()
+
+
+func _restart_performance_contracts(deck: Variant) -> void:
+	var backup := "user://atlas_before_restart.json"
+	check(deck.model.save_to(backup) == OK, "restart test backs up preferences")
+	var original_path: String = deck._save_path
+	var path := "user://atlas_restart_%d.json" % Time.get_ticks_usec()
+	var settings_path := path + ".cfg"
+	deck._save_path = path
+	deck.set_panel_state("performance", "open")
+	deck.save_workspace()
+	await settle()
+	check(
+		deck.state("performance").open and not deck.is_layout_dirty(),
+		"saved Performance starts open and clean"
+	)
+	var settings: ClientSettings = main._settings.clone()
+	settings.diagnostics_enabled = false
+	settings.diagnostics_graph_enabled = false
+	check(
+		settings.save_to(settings_path) == OK,
+		"restart persists global diagnostics false independently"
+	)
+	var restarted: Variant = MainScene.instantiate()
+	restarted.fixture_workspace_path = path
+	restarted.fixture_settings_path = settings_path
+	main.hide()
+	add_child(restarted)
+	restarted._server_management.probes.transport = _fixture_probe
+	await settle()
+	check(
+		not restarted._settings.diagnostics_enabled,
+		"actual main restart loads global diagnostics false"
+	)
+	check(
+		restarted.workspace.state("performance").open,
+		"actual main startup preserves saved Performance Open with diagnostics false"
+	)
+	check(
+		not restarted.workspace.is_layout_dirty(),
+		"actual main startup preserves clean saved Performance baseline"
+	)
+	check(restarted.forbidden_connections == 0, "restart fixture requests no SDK connection")
+	restarted.queue_free()
+	await settle()
+	main.show()
+	deck._save_path = original_path
+	check(deck.model.load_from(backup), "restore preferences after restart")
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	deck.save_layout()
+	for file: String in [backup, path, settings_path]:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(file))
 	await settle()
 
 
