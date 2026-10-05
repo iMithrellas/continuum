@@ -77,7 +77,7 @@ static func defaults() -> Dictionary:
 			if id == "build" and key == "inspector":
 				design = ["right", 16, "top", 12, 300, 300]
 			if id == "build" and key == "resources":
-				design[3] = 200
+				design[3] = 324
 			if id == "welfare":
 				if key == "people":
 					design = ["right", 16, "top", 12, 380, 420]

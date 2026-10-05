@@ -714,7 +714,8 @@ func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
 	var was_compact := compact
-	compact = area.size.x < 720 or area.size.y < 400
+	var minimum := _floating_minimum()
+	compact = area.size.x < minimum.x or area.size.y < minimum.y
 	if compact != was_compact:
 		_cancel_gestures()
 	var order: Array = windows.keys()
@@ -796,6 +797,51 @@ func _apply_layout() -> void:
 	_queue_body_focus_reveal()
 	_resize_diagnostics_host()
 	layout_changed.emit()
+
+
+## Anchor-based budgets also protect copied presets, without constraining user geometry.
+func _floating_minimum() -> Vector2:
+	var minimum := Vector2(640, 400)
+	var bodies: Array[Dictionary] = []
+	for key: String in windows:
+		if key in ["status", "session", "performance"] or not _designed_micro_open(key):
+			continue
+		minimum.x = maxf(minimum.x, 960)
+		if state(key).minimized:
+			continue
+		var anchor: Dictionary = state(key).design
+		bodies.append(anchor)
+		# Welfare's wide top-right roster must leave the centered clock readable.
+		if (
+			anchor.x == "right"
+			and anchor.y == "top"
+			and anchor.width >= 380
+			and _designed_micro_open("status")
+		):
+			var clock: WorkspaceWindow = windows["status"]
+			# Reserve inline controls without depending on transient hover visibility.
+			var clock_width := clock.micro_content.get_combined_minimum_size().x + 86
+			minimum.x = maxf(
+				minimum.x, maxf(1040, 2 * (anchor.width + anchor.dx + 12) + clock_width)
+			)
+		# Reserve the possible three-row top telemetry stack for bottom-right bodies.
+		if (
+			anchor.x == "right"
+			and anchor.y == "bottom"
+			and _designed_micro_open("performance")
+			and state("performance").design.y == "top"
+		):
+			minimum.y = maxf(minimum.y, anchor.height + anchor.dy + 130)
+	for top: Dictionary in bodies:
+		if top.y != "top":
+			continue
+		for bottom: Dictionary in bodies:
+			if bottom.y != "bottom" or bottom.x != top.x:
+				continue
+			if top.dx + top.width <= bottom.dx or bottom.dx + bottom.width <= top.dx:
+				continue
+			minimum.y = maxf(minimum.y, top.dy + top.height + bottom.dy + bottom.height + 12)
+	return minimum
 
 
 ## Only the selected body uses this free band. The map still fills the entire deck.
