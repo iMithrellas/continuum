@@ -77,20 +77,30 @@ func _ready() -> void:
 	if _rich:
 		main.map.zoom_at(2.0, main.map.size * 0.5)
 	main._goto_colonist(0)
-	var pointer := InputEventMouseMotion.new()
-	pointer.position = Vector2.ZERO
-	pointer.global_position = Vector2.ZERO
-	Input.parse_input_event(pointer)
+	# Never arm the production left-edge dwell while automated layout settles.
+	_park_pointer(true)
 	await settle()
-	if _command:
+	if _command and not _settings:
 		check(main.workspace.has_method("open_command"), "deck exposes open_command")
 		if main.workspace.has_method("open_command"):
 			main.workspace.call("open_command", true)
+	else:
+		main.workspace.close_command()
 	if _settings:
 		await show_settings()
 	_park_pointer()
 	await settle()
 	await run_contracts()
+	check(
+		main.workspace.is_command_open() == (_command and not _settings),
+		"fixture Command visibility matches requested capture (Settings always closes Command)"
+	)
+	print(
+		(
+			"ATLAS_FIXTURE_COMPOSITION workspace=%s requested_command=%s settings=%s actual_command=%s"
+			% [_workspace, _command, _settings, main.workspace.is_command_open()]
+		)
+	)
 	check(main.forbidden_connections == 0, "fixture requests no SDK connections")
 	check(main.recorded_acknowledgements.is_empty(), "fixture dispatches no acknowledgements")
 	check(_reducer_boundary.rejected_intents == 0, "fixture setup/tests issue no reducer intents")
@@ -212,15 +222,19 @@ func _sample_series() -> void:
 	print("ATLAS_FIXTURE_DATA generated typed rows; 61 one-minute clock samples; no server")
 
 
-func _park_pointer() -> void:
-	if DisplayServer.get_name() == "headless":
-		return
+func _park_pointer(prefer_status := false) -> void:
 	var point: Vector2 = main.workspace.windows.status.get_global_rect().get_center()
-	if main.workspace.is_command_open():
+	if not prefer_status and main.workspace.is_command_open():
 		point = main.workspace.command_card.get_global_rect().position + Vector2(20, 20)
-	elif main._menu.visible:
+	elif not prefer_status and main._menu.visible:
 		point = main._menu._modal.get_global_rect().position + Vector2(10, 10)
-	Input.warp_mouse(get_viewport().get_final_transform() * point)
+	var physical: Vector2 = get_viewport().get_final_transform() * point
+	if DisplayServer.get_name() != "headless":
+		Input.warp_mouse(physical)
+	var motion := InputEventMouseMotion.new()
+	motion.position = physical
+	motion.global_position = physical
+	Input.parse_input_event(motion)
 
 
 func _fixture_probe(_entry: Dictionary, complete: Callable) -> void:

@@ -62,7 +62,7 @@ func run_contracts() -> void:
 	deck.revert_workspace()
 	deck.close_command()
 	main.configure_diagnostics(_workspace == "diagnostics", false, false)
-	if _command:
+	if _command and not _settings:
 		deck.open_command(true)
 	_park_pointer()
 	await settle()
