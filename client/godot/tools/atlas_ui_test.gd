@@ -76,7 +76,7 @@ func _readonly_contracts(deck: Variant) -> void:
 	var original_active: String = deck.model.active
 	var original_compact_panel: String = deck._compact_panel
 	var original_scale: float = get_window().content_scale_factor
-	for preset: String in ["daily", "diagnostics"]:
+	for preset: String in ["daily", "build", "welfare", "diagnostics"]:
 		deck.model.workspaces = WorkspaceLayout.defaults()
 		deck.model.saved_workspaces = deck.model.workspaces.duplicate(true)
 		deck.model.active = preset
@@ -88,14 +88,14 @@ func _readonly_contracts(deck: Variant) -> void:
 		await settle()
 		_readonly_painted_checks(deck, preset + "/default")
 		if deck.compact:
-			# Every authorized regular body can occupy the compact slot. Keep the
-			# defaults' micro panels, but isolate each subject from other bodies.
+			# Reveal from the default preset so its anchor budget stays intact.
+			# Isolate collapsed subjects separately: choosing a sole floating tab
+			# may legitimately leave compact mode once other bodies are closed.
 			for key: String in deck.windows:
 				if key in MICRO_PANELS or not deck.authorized.get(key, false):
 					continue
-				for other: String in deck.windows:
-					if other not in MICRO_PANELS:
-						deck.set_panel_state(other, "closed")
+				deck.model.workspaces[preset] = WorkspaceLayout.defaults()[preset]
+				deck._apply_layout()
 				deck.open_command(true)
 				deck.reveal_panel(key)
 				deck.close_command()
@@ -104,7 +104,11 @@ func _readonly_contracts(deck: Variant) -> void:
 					deck.windows[key].is_visible_in_tree(),
 					preset + ": compact reveal reaches " + key
 				)
-				_readonly_painted_checks(deck, preset + "/reveal/" + key)
+				if deck.compact:
+					_readonly_painted_checks(deck, preset + "/reveal/" + key)
+				for other: String in deck.windows:
+					if other not in MICRO_PANELS and other != key:
+						deck.set_panel_state(other, "closed")
 				deck.set_panel_state(key, "collapsed")
 				deck.focus_panel(key)
 				await settle()
@@ -112,7 +116,8 @@ func _readonly_contracts(deck: Variant) -> void:
 					deck.windows[key].is_visible_in_tree() and deck.windows[key].collapsed,
 					preset + ": compact selected collapsed tab reachable: " + key
 				)
-				_readonly_painted_checks(deck, preset + "/collapsed/" + key)
+				if deck.compact:
+					_readonly_painted_checks(deck, preset + "/collapsed/" + key)
 		# Pure viewport/scale adaptation must not write responsive geometry back
 		# into either normalized rectangles or their default design anchors.
 		var geometry: Dictionary = deck.model.workspaces.duplicate(true)
@@ -239,6 +244,8 @@ func _readonly_painted_checks(deck: Variant, context: String) -> void:
 		for label: Label in window.content.find_children("*", "Label", true, false):
 			if (
 				label.is_visible_in_tree()
+				and label.get_viewport() == main.get_viewport()
+				and label.get_window().visible
 				and not label.text.strip_edges().is_empty()
 				and _unclipped_rect(label).has_area()
 			):
@@ -262,7 +269,22 @@ func _check_readonly_field(
 	var owned := false
 	for painted: Rect2 in _painted_rects(deck.windows[key]):
 		owned = owned or painted.grow(1).encloses(rect)
-	check(owned, context + ": field enclosed by owned painted surface: " + key)
+	check(
+		owned,
+		(
+			"%s: field enclosed by owned painted surface: %s path=%s text=%s rect=%s paints=%s same_viewport=%s owner_window_visible=%s"
+			% [
+				context,
+				key,
+				field.get_path(),
+				field.text if field is Label else "canvas",
+				rect,
+				_painted_rects(deck.windows[key]),
+				field.get_viewport() == main.get_viewport(),
+				field.get_window().visible
+			]
+		)
+	)
 	for other: String in deck.windows:
 		if other == key:
 			continue
@@ -310,6 +332,19 @@ func _geometry_contracts(deck: Variant) -> void:
 		var window: Variant = deck.windows[key]
 		if not deck.compact:
 			var expected_y := 52.0 if key == "session" else 12.0
+			if key == "performance":
+				# Expanded telemetry can outgrow its nominal top-right slot. Stack
+				# below both top micro panels only when its painted width collides.
+				var nominal: Rect2 = window.header_ground.get_global_rect()
+				nominal.position.y += 12.0 - window.position.y
+				var collides := false
+				var bottom := 12.0
+				for other: String in ["status", "session"]:
+					for painted: Rect2 in _painted_rects(deck.windows[other]):
+						collides = collides or nominal.intersects(painted)
+						bottom = maxf(bottom, painted.end.y + 10.0)
+				if collides:
+					expected_y = bottom
 			check(
 				is_equal_approx(window.position.y, expected_y),
 				"diagnostics micro panel top position: " + key
@@ -318,6 +353,21 @@ func _geometry_contracts(deck: Variant) -> void:
 			is_equal_approx(window.size.y, 30),
 			"micro window remains 30 logical pixels, including compact: " + key
 		)
+	for index in MICRO_PANELS.size():
+		for other in range(index + 1, MICRO_PANELS.size()):
+			for a: Rect2 in _painted_rects(deck.windows[MICRO_PANELS[index]]):
+				for b: Rect2 in _painted_rects(deck.windows[MICRO_PANELS[other]]):
+					check(
+						not a.intersects(b),
+						(
+							"expanded diagnostic micro paints stay disjoint: "
+							+ MICRO_PANELS[index]
+							+ "/"
+							+ MICRO_PANELS[other]
+						)
+					)
+	for label: Label in [main._clock, main._population]:
+		_check_readonly_field(deck, "status", label, "expanded-diagnostics/clock-crew")
 	deck.reveal_panel("people")
 	await settle()
 	var regular: Variant = deck.windows.people
