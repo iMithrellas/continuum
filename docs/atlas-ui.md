@@ -133,13 +133,15 @@ fixture interactive on the runner's private Xvfb display until closed. This is
 not the human desktop and must not be treated as a live-server session. All
 home/XDG state is isolated.
 
-Reference CSS dimensions are at 100% logical scale; the prototype's `uiScale`
-value of 125% is presentational state and does not actually scale its HTML. The
-Godot implementation applies real 125% UI scaling, so apparent pixel geometry
-differences at that setting are intentional. Private screenshots use software
-llvmpipe: rendered Performance/FPS values are not hardware performance
-measurements or representative live-server telemetry. Screenshot/test
-execution is evidence only; it does not by itself certify acceptance.
+Persisted UI scale options are exactly **100%, 125%, 150%, and 175%**; retain and
+restore each choice as a user preference. Reference CSS dimensions are at 100%
+logical scale; the prototype's `uiScale` value of 125% is presentational state
+and does not actually scale its HTML. Godot applies real scale through the
+window content scale, so apparent pixel geometry differences at 125% and other
+non-100% settings are intentional. Private screenshots use software llvmpipe:
+rendered Performance/FPS values are not hardware performance measurements or
+representative live-server telemetry. Screenshot/test execution is evidence
+only; it does not by itself certify acceptance before final review.
 
 The older `docs/ui-redesign.md` remains useful for shared simulation, map,
 honest-data, floating-only, and permission invariants. Its two-strip header
