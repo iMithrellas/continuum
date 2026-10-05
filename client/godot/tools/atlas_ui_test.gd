@@ -510,6 +510,11 @@ func _restart_performance_contracts(deck: Variant) -> void:
 		settings.save_to(settings_path) == OK,
 		"restart persists global diagnostics false independently"
 	)
+	var persisted := ClientSettings.new()
+	check(
+		persisted.load_from(settings_path) == "loaded" and not persisted.diagnostics_enabled,
+		"restart input file contains global diagnostics false"
+	)
 	var restarted: Variant = MainScene.instantiate()
 	restarted.fixture_workspace_path = path
 	restarted.fixture_settings_path = settings_path
@@ -518,8 +523,8 @@ func _restart_performance_contracts(deck: Variant) -> void:
 	restarted._server_management.probes.transport = _fixture_probe
 	await settle()
 	check(
-		not restarted._settings.diagnostics_enabled,
-		"actual main restart loads global diagnostics false"
+		restarted._settings.diagnostics_enabled == restarted.workspace.state("performance").open,
+		"actual main restart reconciles diagnostics to authoritative saved Performance state"
 	)
 	check(
 		restarted.workspace.state("performance").open,

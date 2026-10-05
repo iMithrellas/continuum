@@ -60,6 +60,7 @@ def main():
         run(name, PROJECT, "--scene", f"res://tools/{name}.tscn")
     for screen, scale in [("1440x900", 100), ("1440x900", 125), ("960x640", 100), ("960x640", 150), ("360x480", 150)]:
         run(f"atlas-{screen}-{scale}", PROJECT, "--scene", "res://tools/atlas_ui_test.tscn", "--", f"--screen={screen}", f"--scale={scale}")
+    run("command_card_review_test", PROJECT, "--scene", "res://tools/command_card_review_test.tscn")
     run("role_panels_test", PROJECT, "--scene", "res://tools/role_panels_test.tscn", "--", "--profile=developer")
     for name in ([] if review_only else ["server_browser_test", "diagnostics_test", "diagnostics_bar_test", "history_test", "session_observations_test", "ui_data_test", "ui_theme_test", "map_regions_test", "ui_scale_test", "large_map_foundations_test", "sdk_subscription_cache_test"]):
         run(name, PROJECT, "--script", f"res://tools/{name}.gd")

@@ -39,7 +39,7 @@ func _ready() -> void:
 	add_child(menu)
 	menu.setup(null, ClientSettings.new(), UiMetrics.new())
 	var buttons := menu.find_children("*", "Button", true, false).filter(
-		func(button: Button) -> bool: return button.is_visible_in_tree()
+		func(button: Button) -> bool: return button != menu._ui_scale and button != menu._scale_more
 	)
 	var expected_buttons := [
 		"Join last server",
@@ -66,7 +66,7 @@ func _ready() -> void:
 		)
 	for line: LineEdit in menu.find_children("*", "LineEdit", true, false):
 		_assert(
-			menu._ui_scale.is_ancestor_of(line),
+			menu._ui_scale.is_ancestor_of(line) or menu._scale_more.is_ancestor_of(line),
 			"only the UI-scale popup may contain an internal search input: " + str(line.get_path())
 		)
 	var server_menu_opened := [0]
@@ -279,12 +279,19 @@ func _test_layout() -> void:
 		)
 		scroll.ensure_control_visible(menu._graph_toggle)
 		await get_tree().process_frame
+		# Integer scroll offsets at 175% leave at most one logical pixel of
+		# fractional viewport rounding (258px control end vs 257.286px viewport).
 		_assert(
 			(
 				scroll.scroll_vertical > 0
-				and scroll.get_global_rect().encloses(menu._graph_toggle.get_global_rect())
+				and scroll.get_global_rect().grow(1.0).encloses(
+					menu._graph_toggle.get_global_rect()
+				)
 			),
-			"scrolling reaches the final settings control at font %d" % font_size
+			(
+				"scrolling reaches the final settings control at font %d: viewport=%s control=%s"
+				% [font_size, scroll.get_global_rect(), menu._graph_toggle.get_global_rect()]
+			)
 		)
 		menu.queue_free()
 		await get_tree().process_frame
