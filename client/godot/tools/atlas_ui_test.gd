@@ -46,6 +46,7 @@ func run_contracts() -> void:
 		ready = ready and WorkspaceLayout.PANEL_NAMES.has(key)
 	if not ready:
 		return
+	await _readonly_contracts(deck)
 	await _geometry_contracts(deck)
 	await _command_contracts(deck)
 	await _state_contracts(deck)
@@ -66,6 +67,211 @@ func run_contracts() -> void:
 		deck.open_command(true)
 	_park_pointer()
 	await settle()
+
+
+## Test only built-in designs. User-positioned overlapping windows are legal.
+func _readonly_contracts(deck: Variant) -> void:
+	var original_workspaces: Dictionary = deck.model.workspaces.duplicate(true)
+	var original_saved: Dictionary = deck.model.saved_workspaces.duplicate(true)
+	var original_active: String = deck.model.active
+	var original_compact_panel: String = deck._compact_panel
+	var original_scale: float = get_window().content_scale_factor
+	for preset: String in ["daily", "diagnostics"]:
+		deck.model.workspaces = WorkspaceLayout.defaults()
+		deck.model.saved_workspaces = deck.model.workspaces.duplicate(true)
+		deck.model.active = preset
+		deck._compact_panel = ""
+		deck.close_command()
+		deck._rebuild_navigation()
+		deck._apply_layout()
+		_park_pointer(true)
+		await settle()
+		_readonly_painted_checks(deck, preset + "/default")
+		if deck.compact:
+			# Every authorized regular body can occupy the compact slot. Keep the
+			# defaults' micro panels, but isolate each subject from other bodies.
+			for key: String in deck.windows:
+				if key in MICRO_PANELS or not deck.authorized.get(key, false):
+					continue
+				for other: String in deck.windows:
+					if other not in MICRO_PANELS:
+						deck.set_panel_state(other, "closed")
+				deck.open_command(true)
+				deck.reveal_panel(key)
+				deck.close_command()
+				await settle()
+				check(
+					deck.windows[key].is_visible_in_tree(),
+					preset + ": compact reveal reaches " + key
+				)
+				_readonly_painted_checks(deck, preset + "/reveal/" + key)
+				deck.set_panel_state(key, "collapsed")
+				deck.focus_panel(key)
+				await settle()
+				check(
+					deck.windows[key].is_visible_in_tree() and deck.windows[key].collapsed,
+					preset + ": compact selected collapsed tab reachable: " + key
+				)
+				_readonly_painted_checks(deck, preset + "/collapsed/" + key)
+		# Pure viewport/scale adaptation must not write responsive geometry back
+		# into either normalized rectangles or their default design anchors.
+		var geometry: Dictionary = deck.model.workspaces.duplicate(true)
+		for budget: Array in [
+			[Vector2i(1440, 900), 1.0], [Vector2i(360, 480), 1.5], [_screen, original_scale]
+		]:
+			get_window().size = budget[0]
+			get_window().content_scale_factor = budget[1]
+			await settle()
+			check(
+				main.map.get_global_rect().is_equal_approx(deck.area.get_global_rect()),
+				preset + ": viewport/scale adaptation retains full map"
+			)
+			for id: String in geometry:
+				for key: String in geometry[id].panels:
+					var before: Dictionary = geometry[id].panels[key]
+					var after: Dictionary = deck.model.workspaces[id].panels[key]
+					check(
+						after.rect == before.rect and after.get("design") == before.get("design"),
+						(
+							preset
+							+ ": responsive adaptation preserves normalized/design geometry: "
+							+ id
+							+ "/"
+							+ key
+						)
+					)
+	deck.model.workspaces = original_workspaces
+	deck.model.saved_workspaces = original_saved
+	deck.model.active = original_active
+	deck._compact_panel = original_compact_panel
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	await settle()
+
+
+func _painted_rects(window: Variant) -> Array[Rect2]:
+	var painted: Array[Rect2] = []
+	if not window.is_visible_in_tree():
+		return painted
+	# A tab does not paint the empty full-width frame beside it. Include the
+	# separate hovered control ground only when it is actually painted.
+	for ground: Control in [window.header_ground, window._body_ground, window._control_ground]:
+		if ground.is_visible_in_tree():
+			var rect := _unclipped_rect(ground)
+			if rect.has_area():
+				painted.append(rect)
+	return painted
+
+
+func _unclipped_rect(control: Control) -> Rect2:
+	var rect := control.get_global_rect().intersection(get_viewport().get_visible_rect())
+	var parent := control.get_parent()
+	while parent != null:
+		if parent is Control and parent.clip_contents:
+			rect = rect.intersection(parent.get_global_rect())
+		parent = parent.get_parent()
+	return rect
+
+
+func _readonly_painted_checks(deck: Variant, context: String) -> void:
+	check(
+		not deck.is_command_open(),
+		context + ": readonly check excludes intentional Command overlay"
+	)
+	var keys: Array[String] = []
+	var regular := 0
+	for key: String in deck.windows:
+		if deck.windows[key].is_visible_in_tree():
+			keys.append(key)
+			if key not in MICRO_PANELS:
+				regular += 1
+	if deck.compact:
+		check(regular == 1, context + ": exactly one reachable compact regular slot")
+	for index in keys.size():
+		for other_index in range(index + 1, keys.size()):
+			for a: Rect2 in _painted_rects(deck.windows[keys[index]]):
+				for b: Rect2 in _painted_rects(deck.windows[keys[other_index]]):
+					var overlap := a.intersection(b)
+					check(
+						overlap.size.x <= 0.01 or overlap.size.y <= 0.01,
+						(
+							"%s: default painted panels disjoint %s/%s overlap=%s"
+							% [context, keys[index], keys[other_index], overlap]
+						)
+					)
+	for label: Label in [main._clock, main._population]:
+		check(
+			(
+				not label.text.strip_edges().is_empty()
+				and label.is_visible_in_tree()
+				and label.get_visible_line_count() > 0
+			),
+			context + ": meaningful clock/crew text visible"
+		)
+		_check_readonly_field(deck, "status", label, context + "/clock-crew")
+	for key: String in keys:
+		if key in MICRO_PANELS:
+			continue
+		var window: Variant = deck.windows[key]
+		for label: Label in window.titlebar.find_children("*", "Label", true, false):
+			if label.is_visible_in_tree() and not label.text.strip_edges().is_empty():
+				check(
+					label.get_visible_line_count() > 0,
+					context + ": regular heading has visible text: " + key
+				)
+				_check_readonly_field(deck, key, label, context + "/heading")
+		if window.collapsed:
+			continue
+		if key == "trends":
+			# HistoryChart paints its observed rows directly, not with Labels.
+			check(
+				(
+					main._history_chart.is_visible_in_tree()
+					and not main._history_chart._points.is_empty()
+				),
+				context + ": real observed Trends data reachable"
+			)
+			_check_readonly_field(
+				deck, key, main._history_chart, context + "/first-chart-row", 36.0
+			)
+			continue
+		var first: Label = null
+		for label: Label in window.content.find_children("*", "Label", true, false):
+			if (
+				label.is_visible_in_tree()
+				and not label.text.strip_edges().is_empty()
+				and _unclipped_rect(label).has_area()
+			):
+				if first == null or label.global_position.y < first.global_position.y:
+					first = label
+		check(first != null, context + ": first data field reachable in " + key)
+		if first != null:
+			_check_readonly_field(deck, key, first, context + "/first-row")
+
+
+func _check_readonly_field(
+	deck: Variant, key: String, field: Control, context: String, first_row_height := 0.0
+) -> void:
+	var rect := field.get_global_rect()
+	if first_row_height > 0:
+		rect.size.y = minf(rect.size.y, first_row_height)
+	check(
+		rect.has_area() and _unclipped_rect(field).grow(1).encloses(rect),
+		context + ": field is not clipped in " + key
+	)
+	var owned := false
+	for painted: Rect2 in _painted_rects(deck.windows[key]):
+		owned = owned or painted.grow(1).encloses(rect)
+	check(owned, context + ": field enclosed by owned painted surface: " + key)
+	for other: String in deck.windows:
+		if other == key:
+			continue
+		for painted: Rect2 in _painted_rects(deck.windows[other]):
+			var overlap := rect.intersection(painted)
+			check(
+				overlap.size.x <= 0.01 or overlap.size.y <= 0.01,
+				"%s: %s field unobscured by %s overlap=%s" % [context, key, other, overlap]
+			)
 
 
 func _geometry_contracts(deck: Variant) -> void:
