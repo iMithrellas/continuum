@@ -376,6 +376,10 @@ func _ready() -> void:
 			_dirty = true
 	)
 	_create_diagnostics_overlay()
+	# A saved workspace owns panel visibility. The global flag only bootstraps
+	# defaults when no valid layout was loaded; graph preference remains global.
+	if workspace.model.last_load_status == "loaded":
+		_settings.diagnostics_enabled = workspace.state("performance").open
 	_configure_diagnostics_overlay()
 	workspace.layout_changed.connect(_sync_performance_diagnostics)
 	_setup_native_controller()
@@ -4988,12 +4992,14 @@ func _create_away_digest() -> void:
 	_digest_overlay = Control.new()
 	_digest_overlay.name = "AwayDigestModal"
 	_digest_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_digest_overlay.clip_contents = true
 	_digest_overlay.focus_mode = Control.FOCUS_ALL
 	_digest_overlay.visible = false
 	add_child(_digest_overlay)
 	_digest_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var center := CenterContainer.new()
 	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.clip_contents = true
 	_digest_overlay.add_child(center)
 	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var scroll := ScrollContainer.new()
@@ -5023,7 +5029,7 @@ func _create_away_digest() -> void:
 
 func _layout_away_digest() -> void:
 	var scroll: ScrollContainer = _digest.get_parent()
-	scroll.custom_minimum_size = Vector2(minf(500, maxf(280, size.x - 32)), maxf(0, size.y - 64))
+	scroll.custom_minimum_size = Vector2(minf(500, maxf(1, size.x - 32)), maxf(1, size.y - 64))
 	_digest.custom_minimum_size.x = scroll.custom_minimum_size.x
 
 
@@ -5041,6 +5047,7 @@ func _show_away_digest() -> void:
 func _sync_open_digest() -> void:
 	if is_instance_valid(_digest_overlay) and _digest_overlay.visible:
 		_digest.set_model(_away_digest_data())
+		_layout_away_digest()
 
 
 func _away_digest_data() -> Dictionary:
