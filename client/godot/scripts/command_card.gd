@@ -52,7 +52,8 @@ var _footer: PanelContainer
 var _footer_row: GridContainer
 var _footer_buttons: Dictionary = {}
 var _digest_label: Label
-var _digest_count := 0
+var _digest_count := -1
+var _preference_error: Label
 var _no_results: Label
 var _results: Array[Button] = []
 var _query := ""
@@ -136,6 +137,10 @@ func refresh() -> void:
 	_sync_workspaces()
 	_sync_panels()
 	_modified.visible = _deck.is_layout_dirty()
+	var preference_error: Variant = _deck.get("preference_error")
+	_preference_error.text = preference_error if preference_error is String else ""
+	_preference_error.tooltip_text = _preference_error.text
+	_preference_error.visible = not _preference_error.text.is_empty()
 	_delete_button.disabled = _deck.model.workspaces.size() < 2
 	_apply_filter()
 	if owned_focus and is_visible_in_tree():
@@ -172,10 +177,20 @@ func contains_point(point: Vector2) -> bool:
 	return is_visible_in_tree() and get_global_rect().has_point(point)
 
 
-func set_digest_count(count: int) -> void:
-	_digest_count = maxi(0, count)
+## Negative means coverage is unavailable; zero is an explicitly supplied empty recap.
+func set_recap_count(count: int) -> void:
+	_digest_count = maxi(-1, count)
 	if _digest_label != null:
-		_digest_label.text = str(_digest_count)
+		_digest_label.text = "—" if _digest_count < 0 else str(_digest_count)
+		_footer_buttons.digest.tooltip_text = (
+			"Since you left · Coverage unavailable"
+			if _digest_count < 0
+			else "Since you left · %d events" % _digest_count
+		)
+
+
+func set_digest_count(count: int) -> void:
+	set_recap_count(count)
 
 
 func _build() -> void:
@@ -329,11 +344,12 @@ func _build_footer(parent: Node) -> void:
 	stack.add_theme_constant_override("separation", 0)
 	_footer.add_child(stack)
 	var digest := _footer_button(stack, "digest")
-	_digest_label = _label(str(_digest_count), 12, INK, "readout")
+	_digest_label = _label("", 12, INK, "readout")
 	_digest_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_digest_label.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_digest_label.offset_right = -6
 	digest.add_child(_digest_label)
+	set_recap_count(_digest_count)
 	_footer_row = GridContainer.new()
 	_footer_row.columns = 3
 	_footer_row.add_theme_constant_override("h_separation", 2)
@@ -341,6 +357,19 @@ func _build_footer(parent: Node) -> void:
 	stack.add_child(_footer_row)
 	for action: String in ["settings", "servers", "disconnect"]:
 		_footer_button(_footer_row, action)
+	_preference_error = _label("", 11, Color("f26a57"))
+	_preference_error.name = "PreferenceSaveError"
+	_preference_error.mouse_filter = Control.MOUSE_FILTER_PASS
+	_preference_error.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_preference_error.max_lines_visible = 2
+	_preference_error.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_preference_error.clip_text = true
+	_preference_error.add_theme_constant_override("line_spacing", -2)
+	_preference_error.custom_minimum_size.y = clampf(
+		ceilf(_preference_error.get_theme_font("font").get_height(11)) * 2 - 2, 16, 32
+	)
+	_preference_error.hide()
+	stack.add_child(_preference_error)
 
 
 func _footer_button(parent: Node, action: String) -> Button:
@@ -410,7 +439,7 @@ func _make_workspace_button(id: String) -> Dictionary:
 	button.add_theme_stylebox_override("hover", _box(HOVER, LINE))
 	button.add_theme_stylebox_override("pressed", _box(HOVER, ACCENT))
 	button.add_theme_stylebox_override("hover_pressed", _box(HOVER, ACCENT))
-	var margin := _inset(button, Vector4(9, 7, 9, 7))
+	var margin := _inset(button, Vector4(9, 6, 9, 6))
 	margin.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	margin.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var row := _hbox(margin, 7)
@@ -424,8 +453,12 @@ func _make_workspace_button(id: String) -> Dictionary:
 	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	label.clip_text = true
 	label.add_theme_constant_override("line_spacing", -2)
+	# Autowrap + clip_text reports a one-pixel minimum until layout has a width.
+	# Reserve up to two font lines inside the fixed 44-pixel card instead.
+	var line_height := ceilf(label.get_theme_font("font").get_height(12))
+	label.custom_minimum_size = Vector2(16, clampf(line_height * 2 - 2, 16, 32))
 	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	label.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	label.size_flags_vertical = Control.SIZE_FILL
 	row.add_child(label)
 	return {"button": button, "label": label, "keycap": keycap, "active": null}
 
@@ -454,6 +487,13 @@ func _sync_panels() -> void:
 			group_total += 1
 			if state != "closed":
 				group_open += 1
+		# Permission arrival can create an earlier declared row after later ones.
+		# Keep retained (including hidden unauthorized) rows in registry order.
+		var row_index := 1
+		for key: String in keys:
+			if _panel_rows.has(key):
+				_group_nodes[group].section.move_child(_panel_rows[key].row, row_index)
+				row_index += 1
 		_group_nodes[group].count.text = "%d / %d" % [group_open, group_total]
 		total += group_total
 		opened += group_open
@@ -571,7 +611,7 @@ func _apply_filter() -> void:
 			row_visible = row_visible or action != "digest"
 			_results.append(button)
 	_footer_row.visible = row_visible
-	_footer.visible = footer_visible
+	_footer.visible = footer_visible or _preference_error.visible
 	_no_results.get_parent().visible = not _query.is_empty() and _results.is_empty()
 	_no_results.text = "Nothing matches “%s”." % _search.text.strip_edges()
 
