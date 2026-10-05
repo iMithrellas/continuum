@@ -31,6 +31,12 @@ func run_contracts() -> void:
 	deck._fit_command()
 	await settle()
 	await _save_feedback(card, deck)
+	if _command and not _settings:
+		deck.open_command(true)
+	else:
+		deck.close_command()
+	_park_pointer()
+	await settle()
 
 
 func _save_feedback(card: CommandCard, deck: WorkspaceDeck) -> void:
