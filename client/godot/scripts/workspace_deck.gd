@@ -40,6 +40,7 @@ var _tab_buttons: Dictionary = {}
 var _tab_alert_nodes: Dictionary = {}
 var _panel_buttons: Dictionary = {}
 var _drag_origins: Dictionary = {}
+var _geometry_requests: Dictionary = {}
 var _body_focus_reveal_pending := false
 var _body_focus_reveal_epoch := 0
 var _body_focus_reveal_callback := Callable()
@@ -259,9 +260,7 @@ func add_panel(key: String) -> VBoxContainer:
 	window.setup(WorkspaceLayout.PANEL_NAMES[key])
 	if key in ["status", "session", "performance"]:
 		window.set_micro_mode(true)
-		window.micro_content.minimum_size_changed.connect(
-			func() -> void: _apply_layout.call_deferred()
-		)
+	window.minimum_size_changed.connect(_apply_layout)
 	window.scroll.resized.connect(_queue_body_focus_reveal)
 	windows[key] = window
 	authorized[key] = true
@@ -269,14 +268,7 @@ func add_panel(key: String) -> VBoxContainer:
 	window.interaction_started.connect(
 		func() -> void:
 			_drag_origins[key] = state(key).duplicate(true)
-			var remembered := _floating_rect(key)
-			remembered.position = remembered.position.round()
-			remembered.size = remembered.size.round()
-			if (
-				window.position.distance_to(remembered.position) > 0.01
-				or window.size.distance_to(remembered.size) > 0.01
-			):
-				_drag_origins[key].rect = _remembered_geometry(key)
+			_geometry_requests.erase(key)
 	)
 	window.headers_requested.connect(
 		func() -> void:
@@ -288,14 +280,13 @@ func add_panel(key: String) -> VBoxContainer:
 			if _drag_origins.has(key):
 				model.workspaces[model.active].panels[key] = _drag_origins[key]
 				_drag_origins.erase(key)
-				_apply_layout()
-			else:
-				if not compact:
-					state(key).rect = _remembered_geometry(key)
+			_geometry_requests.erase(key)
+			_apply_layout()
 			save_layout()
 	)
 	window.geometry_requested.connect(
 		func(rect: Rect2, resizing: bool, unsnapped: bool) -> void:
+			_geometry_requests[key] = true
 			var others: Array[Rect2] = []
 			for other: WorkspaceWindow in windows.values():
 				if other != window and other.is_visible_in_tree():
@@ -339,13 +330,20 @@ func add_panel(key: String) -> VBoxContainer:
 	)
 	window.interaction_finished.connect(
 		func() -> void:
-			var original := _floating_rect(key)
-			var moved := window.position.distance_to(original.position.round()) > 0.01
-			var resized := window.size.distance_to(original.size.round()) > 0.01
-			if not compact and (moved or resized):
+			var moved := window.position.distance_to(window._start_rect.position) > 0.01
+			var resized := (
+				not window.collapsed
+				and key not in ["status", "session", "performance"]
+				and window.size.distance_to(window._start_rect.size) > 0.01
+			)
+			if not compact and _geometry_requests.has(key) and (moved or resized):
 				state(key).rect = _remembered_geometry(key)
 				state(key).erase("design")
+			elif _drag_origins.has(key):
+				model.workspaces[model.active].panels[key] = _drag_origins[key]
 			_drag_origins.erase(key)
+			_geometry_requests.erase(key)
+			_apply_layout()
 			save_layout()
 			_refresh_command()
 			layout_changed.emit()
@@ -716,6 +714,9 @@ func _report_preference_save(error: Error) -> void:
 func _apply_layout() -> void:
 	if not _ready_layout or area.size.x <= 0 or area.size.y <= 0:
 		return
+	for window: WorkspaceWindow in windows.values():
+		if not window._gesture.is_empty():
+			return
 	var was_compact := compact
 	var minimum := _floating_minimum()
 	compact = area.size.x < minimum.x or area.size.y < minimum.y

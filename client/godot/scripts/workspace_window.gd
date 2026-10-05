@@ -63,6 +63,7 @@ var body_padding := 10.0
 var metrics := UiMetrics.new()
 var drag_strip: HBoxContainer
 var _gesture := ""
+var _gesture_moved := false
 var _resize_edges := Vector2i.ZERO
 var _start_pointer := Vector2.ZERO
 var _start_rect := Rect2()
@@ -727,11 +728,10 @@ func _resize_input(event: InputEvent, handle: Control, edges: Vector2i) -> void:
 
 func _begin(event: InputEvent, gesture: String, handle: Control, edges := Vector2i.ZERO) -> void:
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+		var pointer: Vector2 = handle.get_global_transform_with_canvas() * event.position
 		focused.emit()
 		if not pinned and not compact and (gesture == "move" or (not collapsed and not micro_mode)):
-			_start_gesture(
-				gesture, handle.get_global_transform_with_canvas() * event.position, edges
-			)
+			_start_gesture(gesture, pointer, edges)
 		accept_event()
 
 
@@ -743,6 +743,7 @@ func begin_move_from_global(pointer: Vector2) -> void:
 
 func _start_gesture(gesture: String, pointer: Vector2, edges := Vector2i.ZERO) -> void:
 	_gesture = gesture
+	_gesture_moved = false
 	_resize_edges = edges
 	_start_pointer = pointer
 	_start_rect = Rect2(position, size)
@@ -782,6 +783,15 @@ func _input(event: InputEvent) -> void:
 			get_parent().get_global_transform_with_canvas().affine_inverse()
 		)
 		var delta: Vector2 = transform * event.position - transform * _start_pointer
+		var meaningful := delta
+		if _gesture == "resize":
+			meaningful = Vector2(
+				delta.x if _resize_edges.x != 0 else 0, delta.y if _resize_edges.y != 0 else 0
+			)
+		if not _gesture_moved and meaningful.length() <= 2:
+			get_viewport().set_input_as_handled()
+			return
+		_gesture_moved = true
 		var rect := _start_rect
 		if _gesture == "resize":
 			for axis in 2:
