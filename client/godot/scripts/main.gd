@@ -2873,6 +2873,11 @@ func _build_panels() -> void:
 		_sections[key] = workspace.add_panel(key)
 		if key in ["status", "session", "performance"]:
 			workspace.windows[key].set_micro_mode(true)
+	workspace.windows["people"].set_body_padding(0, 0, 0)
+	workspace.windows["resources"].set_body_padding(0, 0, 0)
+	workspace.windows["trends"].set_body_padding(0, 2, 6)
+	workspace.windows["trends"].set_title_subtitle("since connection")
+	_sections["trends"].add_theme_constant_override("separation", 0)
 	_build_telemetry()
 	_build_map_toolbar()
 	_build_action_feedback()
@@ -2940,13 +2945,8 @@ func _build_panels() -> void:
 
 	section = _sections["trends"]
 	side = section
-	var history_note := Label.new()
-	history_note.text = "Stocks · since connection"
-	history_note.tooltip_text = "Food, wood and stone stocks sampled from replicated colony state. Local observations only; not saved on the server. Mood and output samples remain available."
-	ThemeTokens.apply_label(history_note, "small")
-	history_note.add_theme_color_override("font_color", ThemeTokens.color("ink-muted"))
-	side.add_child(history_note)
 	_history_chart = HistoryChartControl.new()
+	_history_chart.tooltip_text = "Food, wood and stone stocks sampled from replicated colony state. Local observations only; not saved on the server. Mood and output samples remain available."
 	_history_chart.metrics = _metrics
 	_history_chart.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	side.add_child(_history_chart)
@@ -3139,7 +3139,6 @@ func _build_panels() -> void:
 
 	section = _sections["alerts"]
 	side = section
-	side.add_child(_heading("Colony attention"))
 	_alert_waiting = Label.new()
 	_alert_waiting.text = "Waiting for authoritative alert state."
 	ThemeTokens.apply_label(_alert_waiting, "body")
