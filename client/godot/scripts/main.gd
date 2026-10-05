@@ -3665,6 +3665,8 @@ func _refresh_permissions() -> void:
 func _heading(text: String) -> Label:
 	var label := Label.new()
 	label.text = text.to_upper()
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	label.tooltip_text = text
 	ThemeTokens.apply_label(label, "section")
 	return label
 
