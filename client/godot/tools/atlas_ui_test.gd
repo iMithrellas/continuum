@@ -47,6 +47,7 @@ func run_contracts() -> void:
 	if not ready:
 		return
 	await _readonly_contracts(deck)
+	await _gesture_contracts(deck)
 	await _geometry_contracts(deck)
 	await _command_contracts(deck)
 	await _state_contracts(deck)
@@ -294,6 +295,137 @@ func _check_readonly_field(
 				overlap.size.x <= 0.01 or overlap.size.y <= 0.01,
 				"%s: %s field unobscured by %s overlap=%s" % [context, key, other, overlap]
 			)
+
+
+func _gesture_contracts(deck: Variant) -> void:
+	var workspaces: Dictionary = deck.model.workspaces.duplicate(true)
+	var saved: Dictionary = deck.model.saved_workspaces.duplicate(true)
+	var active: String = deck.model.active
+	var slot: String = deck._compact_panel
+	var size_before := get_window().size
+	var scale_before := get_window().content_scale_factor
+	get_window().size = Vector2i(1440, 900)
+	get_window().content_scale_factor = 1.0
+	await settle()
+	print(
+		(
+			"ATLAS_GESTURE_PROBE driver=%s physical=1440x900 scale=100 input=parsed-events"
+			% DisplayServer.get_name()
+		)
+	)
+	for key: String in ["status", "session", "performance", "activity", "people"]:
+		deck.model.workspaces = WorkspaceLayout.defaults()
+		deck.model.saved_workspaces = deck.model.workspaces.duplicate(true)
+		deck.model.active = "diagnostics"
+		for other: String in deck.windows:
+			deck.state(other).open = other == key
+		deck.state(key).minimized = key == "activity"
+		deck.close_command()
+		deck._rebuild_navigation()
+		deck._apply_layout()
+		await settle()
+		deck.save_workspace()
+		var window: Variant = deck.windows[key]
+		var before: Dictionary = deck.state(key).duplicate(true)
+		var baseline: Dictionary = deck.model.saved_workspaces[deck.model.active].duplicate(true)
+		for jitter: Variant in [null, Vector2.ZERO, Vector2(2, 0)]:
+			deck.model.revert_active()
+			deck._apply_layout()
+			await settle()
+			var point: Vector2 = window._active_header().get_global_rect().position + Vector2(8, 8)
+			await _pointer(true, point)
+			if jitter != null:
+				await _gesture_motion(point, jitter)
+			await _pointer(false, point + (jitter if jitter != null else Vector2.ZERO))
+			await settle()
+			_check_gesture_unchanged(
+				deck, key, before, baseline, "header stationary/zero/2px %s %s" % [key, jitter]
+			)
+		if key == "people":
+			for target: String in ["body", "grip"]:
+				deck.model.revert_active()
+				deck._apply_layout()
+				await settle()
+				var point: Vector2 = (
+					window.scroll.get_global_rect().get_center()
+					if target == "body"
+					else window.grip.get_global_rect().get_center()
+				)
+				await _click(point)
+				await settle()
+				_check_gesture_unchanged(
+					deck, key, before, baseline, target + " stationary press/release"
+				)
+			continue
+		deck.model.revert_active()
+		deck._apply_layout()
+		await settle()
+		var origin: Vector2 = window._active_header().get_global_rect().position + Vector2(8, 8)
+		await _drag(origin, Vector2(-20, 20))
+		check(
+			deck.state(key).rect.slice(0, 2) != before.rect.slice(0, 2),
+			"meaningful drag changes normalized position: " + key
+		)
+		check(
+			deck.state(key).rect.slice(2) == before.rect.slice(2),
+			"meaningful micro/tab drag preserves remembered body dimensions: " + key
+		)
+		check(
+			not deck.state(key).has("design") and deck.is_layout_dirty(),
+			"meaningful drag alone clears design and becomes dirty: " + key
+		)
+		deck.model.revert_active()
+		deck._apply_layout()
+		await settle()
+		origin = window._active_header().get_global_rect().position + Vector2(8, 8)
+		var position_before: Vector2 = window.position
+		await _pointer(true, origin)
+		await _gesture_motion(origin, Vector2(-20, 20), true)
+		check(
+			window.position.distance_to(position_before) > 2,
+			"cancel test starts with meaningful drag: " + key
+		)
+		await _key(KEY_ESCAPE)
+		await _pointer(false, origin + Vector2(-20, 20))
+		await settle()
+		_check_gesture_unchanged(
+			deck, key, before, baseline, "Escape after meaningful drag: " + key
+		)
+	get_window().size = size_before
+	get_window().content_scale_factor = scale_before
+	deck.model.workspaces = workspaces
+	deck.model.saved_workspaces = saved
+	deck.model.active = active
+	deck._compact_panel = slot
+	deck._rebuild_navigation()
+	deck._apply_layout()
+	await settle()
+
+
+func _check_gesture_unchanged(
+	deck: Variant, key: String, before: Dictionary, baseline: Dictionary, context: String
+) -> void:
+	for property: String in ["rect", "design", "open", "minimized", "pinned"]:
+		check(
+			deck.state(key).get(property) == before.get(property),
+			context + ": unchanged " + property
+		)
+	check(
+		deck.model.saved_workspaces[deck.model.active] == baseline,
+		context + ": saved baseline unchanged"
+	)
+	check(not deck.is_layout_dirty(), context + ": no layout dirty state (focus z is legitimate)")
+
+
+func _gesture_motion(origin: Vector2, delta: Vector2, unsnapped := false) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = get_viewport().get_final_transform() * (origin + delta)
+	motion.global_position = motion.position
+	motion.relative = get_viewport().get_final_transform().basis_xform(delta)
+	motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+	motion.alt_pressed = unsnapped
+	Input.parse_input_event(motion)
+	await get_tree().process_frame
 
 
 func _geometry_contracts(deck: Variant) -> void:

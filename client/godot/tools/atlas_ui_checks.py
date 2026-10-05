@@ -75,6 +75,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--render", action="store_true")
     parser.add_argument("--fixture-only", action="store_true")
+    parser.add_argument("--hover-only", action="store_true", help="with --render, run only two native-cursor hover gates; no screenshots")
     parser.add_argument("--xvfb", default=os.environ.get("XVFB") or shutil.which("Xvfb"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--screen", help="Single size WxH; otherwise use four reference budgets plus 360x480 at 150 percent")
@@ -84,6 +85,8 @@ def main():
     parser.add_argument("--settings", action="store_true")
     parser.add_argument("--keep-open", action="store_true")
     args = parser.parse_args()
+    if args.hover_only and (not args.render or args.fixture_only or args.keep_open):
+        parser.error("--hover-only requires --render and cannot combine with --fixture-only or --keep-open")
     if args.keep_open and (not args.render or not args.screen):
         parser.error("--keep-open requires --render and --screen")
     if args.render and not args.xvfb:
@@ -132,7 +135,7 @@ def main():
         if args.screen:
             width, height = map(int, args.screen.lower().split("x"))
             matrix = ((width, height, args.scale),)
-        if not args.fixture_only:
+        if not args.fixture_only and not args.hover_only:
             for width, height, scale in matrix:
                 name = f"test-{width}x{height}-{scale}"
                 command = base + [
@@ -143,7 +146,17 @@ def main():
         if args.render:
             xvfb = start_xvfb(args.xvfb, env, output)
             print(f"Private display: {env['DISPLAY']} (llvmpipe; not the human desktop)")
-            for width, height, scale in matrix:
+            if not args.fixture_only:
+                for width in (1440, 960):
+                    name = f"native-hover-{width}x900-100" if width == 1440 else "native-hover-960x640-100"
+                    height = 900 if width == 1440 else 640
+                    command = base + [
+                        "--display-driver", "x11", "--rendering-method", "gl_compatibility",
+                        "res://tools/atlas_ui_hover_test.tscn", "--",
+                        f"--screen={width}x{height}", "--scale=100", "--workspace=daily",
+                    ]
+                    check_case(command, name, "ATLAS_UI_HOVER_TEST_PASS")
+            for width, height, scale in (() if args.hover_only else matrix):
                 scenarios = [
                     ("diagnostics", ["--workspace=diagnostics", "--command"]),
                     ("daily", ["--workspace=daily"]),
