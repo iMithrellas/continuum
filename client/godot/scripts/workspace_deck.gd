@@ -6,8 +6,10 @@ signal workspace_changed
 signal header_layout_changed
 signal layout_changed
 signal command_action_requested(action: String)
+signal save_failed(message: String)
 
 var model := WorkspaceLayout.new()
+var preference_error := ""
 var windows: Dictionary = {}
 var authorized: Dictionary = {}
 var telemetry: HBoxContainer
@@ -537,6 +539,7 @@ func focus_panel(key: String) -> void:
 
 func _input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
+		_pointer_down = (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0
 		var point: Vector2 = get_global_transform_with_canvas().affine_inverse() * event.position
 		var at_edge: bool = point.x >= 0 and point.x <= 6 and point.y >= 0 and point.y <= size.y
 		if not at_edge:
@@ -677,14 +680,29 @@ func _changed() -> void:
 	save_layout()
 
 
-func save_layout() -> void:
+func save_layout() -> Error:
 	if not _ready_layout:
-		return
-	var error := model.save_to(_save_path)
-	_status.text = "Layout saved" if error == OK else "Layout save failed"
-	_status.tooltip_text = (
+		return ERR_UNCONFIGURED
+	var error := _save_preferences()
+	_report_preference_save(error)
+	return error
+
+
+func _save_preferences() -> Error:
+	return model.save_to(_save_path)
+
+
+func _report_preference_save(error: Error) -> void:
+	var previous_error := preference_error
+	preference_error = (
 		"" if error == OK else "Could not save local layout: %s" % error_string(error)
 	)
+	_status.text = "Layout saved" if error == OK else "Layout save failed"
+	_status.tooltip_text = preference_error
+	if error != OK:
+		save_failed.emit(preference_error)
+	if preference_error != previous_error:
+		_refresh_command()
 
 
 func _apply_layout() -> void:
@@ -897,9 +915,15 @@ func _process(delta: float) -> void:
 		or _dialog.visible
 		or (is_instance_valid(_confirmation) and _confirmation.visible)
 	):
+		_edge_armed = false
+		_edge_elapsed = 0
 		return
 	var point := get_local_mouse_position()
 	if not is_command_open():
+		if _edge_reveal_blocked():
+			_edge_armed = false
+			_edge_elapsed = 0
+			return
 		_edge_elapsed = (
 			_edge_elapsed + delta
 			if (
@@ -924,6 +948,16 @@ func _process(delta: float) -> void:
 		_close_elapsed += delta
 		if _close_elapsed >= 0.28:
 			close_command()
+
+
+func _edge_reveal_blocked() -> bool:
+	var focus := get_viewport().gui_get_focus_owner()
+	if focus is LineEdit or focus is TextEdit:
+		return true
+	for window: WorkspaceWindow in windows.values():
+		if not window._gesture.is_empty():
+			return true
+	return false
 
 
 func set_panel_state(key: String, value: String) -> void:
@@ -972,8 +1006,19 @@ func delete_workspace() -> void:
 
 
 func save_workspace() -> void:
+	if not _ready_layout:
+		return
+	var id := model.active
+	var had_baseline := model.saved_workspaces.has(id)
+	var previous_baseline: Dictionary = model.saved_workspaces.get(id, {}).duplicate(true)
 	model.save_active()
-	save_layout()
+	var error := _save_preferences()
+	if error != OK:
+		if had_baseline:
+			model.saved_workspaces[id] = previous_baseline
+		else:
+			model.saved_workspaces.erase(id)
+	_report_preference_save(error)
 	_refresh_command()
 
 
@@ -1157,7 +1202,7 @@ func _confirm_workspace() -> void:
 			return
 	else:
 		if _name_input.editable and not _name_input.text.strip_edges().is_empty():
-			model.workspaces[model.active].name = _name_input.text.strip_edges()
+			model.rename_active(_name_input.text)
 		for key: String in windows:
 			state(key).open = key in selected
 	map_only = false

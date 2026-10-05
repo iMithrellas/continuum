@@ -54,7 +54,7 @@ static func defaults() -> Dictionary:
 		"construction": ["left", 16, "top", 12, 300, 400],
 		"operations": ["left", 16, "bottom", 16, 300, 280],
 		"inspector": ["right", 328, "top", 12, 280, 300],
-		"trends": ["right", 16, "bottom", 56, 440, 180],
+		"trends": ["right", 16, "bottom", 56, 440, 143],
 		"admin": ["center", 0, "top", 60, 480, 250],
 		"developer": ["center", 0, "top", 330, 480, 450],
 	}
@@ -91,7 +91,7 @@ static func defaults() -> Dictionary:
 				elif key == "session":
 					design = ["right", 16, "top", 52, 220, 30]
 				elif key == "trends":
-					design = ["left", 16, "bottom", 16, 520, 180]
+					design = ["left", 16, "bottom", 16, 520, 143]
 				elif key == "activity":
 					design = ["right", 16, "bottom", 16, 360, 326]
 			var anchor := {
@@ -453,7 +453,18 @@ func save_active() -> void:
 
 func revert_active() -> void:
 	if saved_workspaces.has(active):
+		var current_name: String = workspaces[active].name
 		workspaces[active] = saved_workspaces[active].duplicate(true)
+		workspaces[active].name = current_name
+
+
+func rename_active(title: String) -> void:
+	var clean := title.strip_edges().left(40)
+	if clean.is_empty():
+		return
+	workspaces[active].name = clean
+	if saved_workspaces.has(active):
+		saved_workspaces[active].name = clean
 
 
 func is_active_dirty() -> bool:
