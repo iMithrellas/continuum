@@ -528,7 +528,8 @@ func focus_panel(key: String) -> void:
 		and area.get_child(-1) == windows[key]
 	):
 		return
-	_compact_panel = key
+	if not compact or key not in ["status", "session", "performance"]:
+		_compact_panel = key
 	var order: Array = windows.keys()
 	order.sort_custom(func(a: String, b: String) -> bool: return int(state(a).z) < int(state(b).z))
 	order.erase(key)
@@ -539,6 +540,8 @@ func focus_panel(key: String) -> void:
 	if windows[key].get_parent() == area:
 		area.move_child(windows[key], -1)
 	if _ready_layout:
+		if compact:
+			_apply_layout()
 		save_layout()
 
 
